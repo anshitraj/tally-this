@@ -22,6 +22,7 @@ import {
   Puzzle,
   Receipt,
   Scale,
+  Search,
   Settings,
   ShieldCheck,
   Upload,
