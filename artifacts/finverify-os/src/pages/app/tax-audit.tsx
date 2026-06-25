@@ -51,6 +51,22 @@ function num(v: string | number): string {
   return v;
 }
 
+function downloadCsv(check: CheckDetail) {
+  const esc = (v: string | number) => {
+    const s = String(v ?? "");
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const header = check.columns.map(c => esc(c.label)).join(",");
+  const lines = check.rows.map(r => check.columns.map(c => esc(r[c.key] ?? "")).join(","));
+  const csv = [header, ...lines].join("\n");
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${check.id}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export default function TaxAuditPage() {
   const [openCheck, setOpenCheck] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -261,8 +277,17 @@ export default function TaxAuditPage() {
             )}
 
             {detail && detail.check.rows.length > 0 && (
-              <div className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
-                <FileSpreadsheet className="h-3.5 w-3.5" /> {detail.check.rows.length} row(s) · export via Reports → CA-ready pack
+              <div className="mt-3 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <FileSpreadsheet className="h-3.5 w-3.5" /> {detail.check.rows.length} row(s)
+                </div>
+                <button
+                  type="button"
+                  onClick={() => downloadCsv(detail.check)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted"
+                >
+                  <Download className="h-3.5 w-3.5" /> Download CSV
+                </button>
               </div>
             )}
           </div>
