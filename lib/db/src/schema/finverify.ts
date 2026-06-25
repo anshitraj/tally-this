@@ -465,3 +465,64 @@ export type MonthlyClosePeriod = typeof monthlyClosePeriodsTable.$inferSelect;
 export type EvidenceItem = typeof evidenceItemsTable.$inferSelect;
 export type DocumentRequest = typeof documentRequestsTable.$inferSelect;
 export type Exception = typeof exceptionsTable.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Tally Audit / Ledger Scrutiny — masters & vouchers for the Tax Audit module
+// ---------------------------------------------------------------------------
+export const tallyLedgersTable = pgTable("tally_ledgers", {
+  id: serial("id").primaryKey(),
+  companyId: integer("company_id"),
+  name: text("name").notNull(),
+  group: text("group").notNull(),                 // Tally parent group, e.g. "Sundry Debtors"
+  openingBalance: numeric("opening_balance", { precision: 16, scale: 2 }).notNull().default("0"), // signed +Dr/-Cr
+  closingBalance: numeric("closing_balance", { precision: 16, scale: 2 }).notNull().default("0"),
+  prevYearClosing: numeric("prev_year_closing", { precision: 16, scale: 2 }),
+  prevYearGroup: text("prev_year_group"),
+  isMsme: boolean("is_msme").notNull().default(false),
+  msmeType: text("msme_type"),                    // Micro | Small | Medium
+  pan: text("pan"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const tallyVouchersTable = pgTable("tally_vouchers", {
+  id: serial("id").primaryKey(),
+  companyId: integer("company_id"),
+  date: text("date").notNull(),                   // ISO yyyy-mm-dd
+  type: text("type").notNull(),                   // Purchase | Sales | Receipt | Payment | Journal | Contra | Debit Note | Credit Note
+  number: text("number").notNull(),
+  party: text("party"),
+  narration: text("narration"),
+  amount: numeric("amount", { precision: 16, scale: 2 }).notNull().default("0"),
+  mode: text("mode"),                             // Cash | Bank | Journal
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const tallyVoucherLinesTable = pgTable("tally_voucher_lines", {
+  id: serial("id").primaryKey(),
+  companyId: integer("company_id"),
+  voucherNumber: text("voucher_number").notNull(),
+  ledger: text("ledger").notNull(),
+  group: text("group").notNull(),
+  debit: numeric("debit", { precision: 16, scale: 2 }).notNull().default("0"),
+  credit: numeric("credit", { precision: 16, scale: 2 }).notNull().default("0"),
+});
+
+export const tallyFixedAssetsTable = pgTable("tally_fixed_assets", {
+  id: serial("id").primaryKey(),
+  companyId: integer("company_id"),
+  name: text("name").notNull(),
+  block: text("block").notNull(),
+  rate: numeric("rate", { precision: 6, scale: 2 }).notNull().default("0"),
+  openingWdv: numeric("opening_wdv", { precision: 16, scale: 2 }).notNull().default("0"),
+  additions: numeric("additions", { precision: 16, scale: 2 }).notNull().default("0"),
+  additionDate: text("addition_date"),
+  deletions: numeric("deletions", { precision: 16, scale: 2 }).notNull().default("0"),
+  deletionDate: text("deletion_date"),
+  depreciation: numeric("depreciation", { precision: 16, scale: 2 }).notNull().default("0"),
+  closingWdv: numeric("closing_wdv", { precision: 16, scale: 2 }).notNull().default("0"),
+});
+
+export type TallyLedger = typeof tallyLedgersTable.$inferSelect;
+export type TallyVoucher = typeof tallyVouchersTable.$inferSelect;
+export type TallyVoucherLine = typeof tallyVoucherLinesTable.$inferSelect;
+export type TallyFixedAsset = typeof tallyFixedAssetsTable.$inferSelect;

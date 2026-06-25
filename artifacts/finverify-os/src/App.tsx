@@ -13,6 +13,7 @@ import TransactionsPage from "@/pages/app/transactions";
 import InvoicesPage from "@/pages/app/invoices";
 import LedgerMatchPage from "@/pages/app/ledger-match";
 import TrialBalancePage from "@/pages/app/trial-balance";
+import TaxAuditPage from "@/pages/app/tax-audit";
 import JournalEntriesPage from "@/pages/app/journal-entries";
 import ReconciliationPage from "@/pages/app/reconciliation";
 import GstTdsRisksPage from "@/pages/app/gst-tds-risks";
@@ -55,6 +56,7 @@ const TransactionsWithShell = withShell(TransactionsPage);
 const InvoicesWithShell = withShell(InvoicesPage);
 const LedgerMatchWithShell = withShell(LedgerMatchPage);
 const TrialBalanceWithShell = withShell(TrialBalancePage);
+const TaxAuditWithShell = withShell(TaxAuditPage);
 const JournalEntriesWithShell = withShell(JournalEntriesPage);
 const Gstr2bReconWithShell = withShell(Gstr2bReconPage);
 const ReconciliationWithShell = withShell(ReconciliationPage);
@@ -85,6 +87,7 @@ function AppRouter() {
       <Route path="/app/invoices" component={InvoicesWithShell} />
       <Route path="/app/ledger-match" component={LedgerMatchWithShell} />
       <Route path="/app/trial-balance" component={TrialBalanceWithShell} />
+      <Route path="/app/tax-audit" component={TaxAuditWithShell} />
       <Route path="/app/journal-entries" component={JournalEntriesWithShell} />
       <Route path="/app/gstr-2b-recon" component={Gstr2bReconWithShell} />
       <Route path="/app/reconciliation" component={ReconciliationWithShell} />

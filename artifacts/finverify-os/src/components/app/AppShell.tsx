@@ -3,19 +3,30 @@ import { useLocation } from "wouter";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertTriangle,
+  ArrowLeftRight,
   Bell,
   BookOpen,
+  Building2,
   Calendar,
   CheckSquare,
   ChevronLeft,
   ClipboardCheck,
+  Clock,
+  CreditCard,
+  FileBarChart,
+  FileCheck,
+  GitCompare,
   LayoutDashboard,
   LogOut,
   Menu,
   Puzzle,
+  Receipt,
+  Scale,
   Settings,
   ShieldCheck,
   Upload,
+  UserCheck,
+  Users,
   type LucideIcon,
 } from "lucide-react";
 import { BrandMark } from "@/components/app/finverify-ui";
@@ -32,11 +43,49 @@ const navGroups = [
     ],
   },
   {
-    label: "Work",
+    label: "Books & Ledgers",
+    items: [
+      { label: "Transactions", href: "/app/transactions", icon: ArrowLeftRight },
+      { label: "Invoices", href: "/app/invoices", icon: Receipt },
+      { label: "Ledger Match", href: "/app/ledger-match", icon: GitCompare },
+      { label: "Trial Balance", href: "/app/trial-balance", icon: Scale },
+      { label: "Journal Entries", href: "/app/journal-entries", icon: BookOpen },
+    ],
+  },
+  {
+    label: "Tax Audit",
+    items: [
+      { label: "Tax Audit & Scrutiny", href: "/app/tax-audit", icon: ShieldCheck },
+      { label: "GST & TDS Risks", href: "/app/gst-tds-risks", icon: AlertTriangle },
+      { label: "GSTR-2B Recon", href: "/app/gstr-2b-recon", icon: FileCheck },
+      { label: "Statutory Calendar", href: "/app/statutory-calendar", icon: Calendar },
+    ],
+  },
+  {
+    label: "Reconcile",
+    items: [
+      { label: "Reconciliation", href: "/app/reconciliation", icon: GitCompare },
+      { label: "Vendor Aging", href: "/app/vendor-aging", icon: Clock },
+      { label: "Payroll", href: "/app/payroll", icon: Users },
+      { label: "Gateway Settlements", href: "/app/gateway-settlements", icon: CreditCard },
+    ],
+  },
+  {
+    label: "Review & Report",
     items: [
       { label: "Verify", href: "/app/verify", icon: CheckSquare },
       { label: "Action Items", href: "/app/action-items", icon: ClipboardCheck },
+      { label: "CA Review", href: "/app/ca-review", icon: UserCheck },
+      { label: "Reports", href: "/app/reports", icon: FileBarChart },
+    ],
+  },
+  {
+    label: "System",
+    items: [
+      { label: "Integrations", href: "/app/integrations", icon: Puzzle },
+      { label: "Admin", href: "/app/admin", icon: Building2 },
       { label: "Settings", href: "/app/settings", icon: Settings },
+      { label: "Docs", href: "/app/docs", icon: BookOpen },
     ],
   },
 ] as const;
