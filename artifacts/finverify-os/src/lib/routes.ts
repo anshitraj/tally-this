@@ -6,6 +6,7 @@ export const APP_ROUTES = {
   ledgerMatch: "/app/ledger-match",
   trialBalance: "/app/trial-balance",
   taxAudit: "/app/tax-audit",
+  practice: "/app/practice",
   journalEntries: "/app/journal-entries",
   reconciliation: "/app/reconciliation",
   gstTdsRisks: "/app/gst-tds-risks",

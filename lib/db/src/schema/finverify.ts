@@ -522,6 +522,19 @@ export const tallyFixedAssetsTable = pgTable("tally_fixed_assets", {
   closingWdv: numeric("closing_wdv", { precision: 16, scale: 2 }).notNull().default("0"),
 });
 
+// CA practice — links a CA user to the client companies they audit.
+export const caClientLinksTable = pgTable("ca_client_links", {
+  id: serial("id").primaryKey(),
+  caUserId: integer("ca_user_id").notNull(),
+  caCompanyId: integer("ca_company_id"),          // the CA's own firm workspace
+  clientCompanyId: integer("client_company_id").notNull(),
+  clientName: text("client_name"),
+  status: text("status").notNull().default("active"), // active | archived
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export type CaClientLink = typeof caClientLinksTable.$inferSelect;
+
 export type TallyLedger = typeof tallyLedgersTable.$inferSelect;
 export type TallyVoucher = typeof tallyVouchersTable.$inferSelect;
 export type TallyVoucherLine = typeof tallyVoucherLinesTable.$inferSelect;

@@ -64,6 +64,16 @@ const migrations = [
     depreciation  NUMERIC(16,2) NOT NULL DEFAULT 0,
     closing_wdv   NUMERIC(16,2) NOT NULL DEFAULT 0
   )`,
+  `CREATE TABLE IF NOT EXISTS ca_client_links (
+    id                SERIAL PRIMARY KEY,
+    ca_user_id        INTEGER NOT NULL,
+    ca_company_id     INTEGER,
+    client_company_id INTEGER NOT NULL,
+    client_name       TEXT,
+    status            TEXT NOT NULL DEFAULT 'active',
+    created_at        TIMESTAMP NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_ca_client_links_user ON ca_client_links(ca_user_id)`,
   `CREATE INDEX IF NOT EXISTS idx_tally_ledgers_company ON tally_ledgers(company_id)`,
   `CREATE INDEX IF NOT EXISTS idx_tally_vouchers_company ON tally_vouchers(company_id)`,
   `CREATE INDEX IF NOT EXISTS idx_tally_voucher_lines_company ON tally_voucher_lines(company_id, voucher_number)`,

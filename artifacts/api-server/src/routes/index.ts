@@ -23,6 +23,7 @@ import periodLockRouter from "./periodLock";
 import excelExportRouter from "./excelExport";
 import vendorAgingRouter from "./vendorAging";
 import taxAuditRouter from "./taxAudit";
+import practiceRouter from "./practice";
 
 const router: IRouter = Router();
 
@@ -50,5 +51,6 @@ router.use(periodLockRouter);
 router.use(excelExportRouter);
 router.use(vendorAgingRouter);
 router.use(taxAuditRouter);
+router.use(practiceRouter);
 
 export default router;
