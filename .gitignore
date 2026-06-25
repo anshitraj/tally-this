@@ -52,3 +52,19 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Python bytecode / caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+
+# Go build output
+services/api-go/*.exe
+services/api-go/*.exe~
+*.test
+
+# Runtime logs
+logs/
+**/logs/*.log
