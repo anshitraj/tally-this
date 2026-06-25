@@ -59,6 +59,7 @@ const navGroups = [
       { label: "Tax Audit & Scrutiny", href: "/app/tax-audit", icon: ShieldCheck },
       { label: "GST & TDS Risks", href: "/app/gst-tds-risks", icon: AlertTriangle },
       { label: "GSTR-2B Recon", href: "/app/gstr-2b-recon", icon: FileCheck },
+      { label: "26AS TDS Recon", href: "/app/tds-recon", icon: FileCheck },
       { label: "Statutory Calendar", href: "/app/statutory-calendar", icon: Calendar },
     ],
   },

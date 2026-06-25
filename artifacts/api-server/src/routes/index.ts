@@ -24,6 +24,7 @@ import excelExportRouter from "./excelExport";
 import vendorAgingRouter from "./vendorAging";
 import taxAuditRouter from "./taxAudit";
 import practiceRouter from "./practice";
+import tdsReconRouter from "./tdsRecon";
 
 const router: IRouter = Router();
 
@@ -52,5 +53,6 @@ router.use(excelExportRouter);
 router.use(vendorAgingRouter);
 router.use(taxAuditRouter);
 router.use(practiceRouter);
+router.use(tdsReconRouter);
 
 export default router;

@@ -7,6 +7,7 @@ export const APP_ROUTES = {
   trialBalance: "/app/trial-balance",
   taxAudit: "/app/tax-audit",
   practice: "/app/practice",
+  tdsRecon: "/app/tds-recon",
   journalEntries: "/app/journal-entries",
   reconciliation: "/app/reconciliation",
   gstTdsRisks: "/app/gst-tds-risks",
