@@ -37,6 +37,8 @@ const CA_PERMISSIONS = [
   "reconciliation.approve",
   "reconciliation.reject",
   "uploads.read",
+  "uploads.create",
+  "uploads.delete",
   "ai.assist",
   "ca_review.process",
 ] as const;

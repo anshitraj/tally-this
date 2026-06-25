@@ -51,8 +51,10 @@ router.use(gstr2bRouter);
 router.use(periodLockRouter);
 router.use(excelExportRouter);
 router.use(vendorAgingRouter);
+// tdsRecon must precede taxAudit: GET /tax-audit/:checkId would otherwise
+// greedily match /tax-audit/tds-recon.
+router.use(tdsReconRouter);
 router.use(taxAuditRouter);
 router.use(practiceRouter);
-router.use(tdsReconRouter);
 
 export default router;
