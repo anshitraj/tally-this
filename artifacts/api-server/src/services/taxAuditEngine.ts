@@ -46,6 +46,17 @@ export interface AssetRow {
   deletions: number; deletionDate?: string; depreciation: number; closingWdv: number;
 }
 
+export type BillType = "New Ref" | "Agst Ref" | "Advance" | "On Account";
+
+export interface Bill {
+  party: string;
+  group: string;
+  ref: string;          // bill reference (invoice no.)
+  date: string;         // ISO yyyy-mm-dd of the original bill
+  amount: number;       // positive magnitude; sign derived from type
+  type: BillType;
+}
+
 export interface CheckResult {
   id: string;
   clause: string;
@@ -130,10 +141,40 @@ export const DEMO_ASSETS: AssetRow[] = [
   { name: "Furniture", block: "Furniture", rate: 10, openingWdv: 480000, additions: 60000, additionDate: "2025-09-20", deletions: 0, depreciation: 51000, closingWdv: 489000 },
 ];
 
+export const DEMO_BILLS: Bill[] = [
+  // Debtors
+  { party: "Sunrise Traders", group: DEBTOR_GROUP, ref: "SUN-01", date: "2025-06-10", amount: 560000, type: "New Ref" },
+  { party: "Zenith Exports", group: DEBTOR_GROUP, ref: "ZEN-01", date: "2026-01-15", amount: 310000, type: "New Ref" },
+  { party: "Orbit Media LLP", group: DEBTOR_GROUP, ref: "ORB-01", date: "2026-03-01", amount: 120000, type: "New Ref" },
+  { party: "Brightline Retail Pvt Ltd", group: DEBTOR_GROUP, ref: "BR-01", date: "2025-09-01", amount: 240000, type: "New Ref" },
+  { party: "Brightline Retail Pvt Ltd", group: DEBTOR_GROUP, ref: "BR-01", date: "2025-12-01", amount: 325000, type: "Agst Ref" }, // overpaid -> credit balance
+  // Creditors
+  { party: "Pioneer Supplies", group: CREDITOR_GROUP, ref: "PIO-01", date: "2025-08-01", amount: 210000, type: "New Ref" },
+  { party: "Pioneer Supplies", group: CREDITOR_GROUP, ref: "PIO-01", date: "2025-11-20", amount: 60000, type: "Agst Ref" },
+  { party: "Metro Logistics", group: CREDITOR_GROUP, ref: "MET-01", date: "2025-05-01", amount: 64000, type: "New Ref" },
+  { party: "Galaxy Hardware", group: CREDITOR_GROUP, ref: "GAL-01", date: "2026-01-20", amount: 88000, type: "New Ref" },
+  { party: "Apex Components Pvt Ltd", group: CREDITOR_GROUP, ref: "APX-01", date: "2026-02-10", amount: 42000, type: "Advance" },
+];
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 const r2 = (n: number) => Math.round(n * 100) / 100;
+
+function daysBetween(fromIso: string, toIso: string): number {
+  const a = Date.parse(fromIso), b = Date.parse(toIso);
+  if (Number.isNaN(a) || Number.isNaN(b)) return 0;
+  return Math.round((b - a) / 86_400_000);
+}
+
+function ageBucket(days: number): string {
+  if (days <= 0) return "Not due";
+  if (days <= 30) return "0-30 days";
+  if (days <= 60) return "31-60 days";
+  if (days <= 90) return "61-90 days";
+  if (days <= 180) return "91-180 days";
+  return ">180 days";
+}
 const isDebtor = (l: Ledger) => l.group === DEBTOR_GROUP;
 const isCreditor = (l: Ledger) => l.group === CREDITOR_GROUP;
 const drcr = (signed: number): DrCr => (signed >= 0 ? "Dr" : "Cr");
@@ -142,7 +183,7 @@ function lineGroups(v: Voucher) { return new Set(v.lines.map(l => l.group)); }
 // ---------------------------------------------------------------------------
 // The 20 checks
 // ---------------------------------------------------------------------------
-export function buildChecks(ledgers: Ledger[], vouchers: Voucher[], assets: AssetRow[]): CheckResult[] {
+export function buildChecks(ledgers: Ledger[], vouchers: Voucher[], assets: AssetRow[], bills: Bill[] = []): CheckResult[] {
   const checks: CheckResult[] = [];
 
   // A1 — Negative ledger balances
@@ -166,14 +207,40 @@ export function buildChecks(ledgers: Ledger[], vouchers: Voucher[], assets: Asse
   }
 
   // A3 — Debtors / Creditors ageing
-  {
+  if (bills.length > 0) {
+    // Bill-wise ageing: net each reference (New Ref/Advance positive, Agst Ref negative),
+    // then age the outstanding amount from the original bill date to year-end.
+    const byRef = new Map<string, { party: string; group: string; ref: string; date: string; outstanding: number }>();
+    for (const b of bills) {
+      const key = `${b.party}::${b.ref}`;
+      const signed = b.type === "Agst Ref" ? -b.amount : b.amount;
+      const existing = byRef.get(key);
+      if (existing) {
+        existing.outstanding += signed;
+        if (b.type !== "Agst Ref" && b.date < existing.date) existing.date = b.date; // earliest original bill date
+      } else {
+        byRef.set(key, { party: b.party, group: b.group, ref: b.ref, date: b.date, outstanding: signed });
+      }
+    }
+    const rows = [...byRef.values()]
+      .filter(r => Math.abs(r.outstanding) >= 1)
+      .map(r => {
+        const days = daysBetween(r.date, FY_END);
+        return { party: r.party, group: r.group, ref: r.ref, billDate: r.date, days, outstanding: r2(Math.abs(r.outstanding)), nature: r.outstanding >= 0 ? (isDebtor({ group: r.group } as Ledger) ? "Dr" : "Cr") : "(reverse)", bucket: ageBucket(days) };
+      })
+      .sort((a, b) => b.days - a.days);
+    checks.push({ id: "ageing", clause: "Scrutiny", title: "Debtors & Creditors Ageing (Bill-wise)", category: "Debtors & Creditors", severity: rows.some(r => r.bucket === ">180 days") ? "medium" : "info",
+      description: "Bill-wise outstanding aged from the original bill date to year-end. Balances over 180 days need confirmation or provisioning.",
+      columns: [{ key: "party", label: "Party" }, { key: "group", label: "Group" }, { key: "ref", label: "Bill Ref" }, { key: "billDate", label: "Bill Date" }, { key: "days", label: "Days", numeric: true }, { key: "outstanding", label: "Outstanding", numeric: true }, { key: "bucket", label: "Ageing Bucket" }], rows });
+  } else {
+    // Fallback (no bill-wise data imported): age by ledger balance + movement heuristic.
     const rows = ledgers.filter(l => isDebtor(l) || isCreditor(l)).map(l => {
       const bal = Math.abs(l.closingBalance);
       const moved = l.openingBalance !== l.closingBalance;
       return { ledger: l.name, group: l.group, balance: r2(bal), bucket: bal === 0 ? "Nil" : moved ? "0-90 days" : ">180 days", nature: drcr(l.closingBalance) };
     }).filter(r => r.balance > 0);
     checks.push({ id: "ageing", clause: "Scrutiny", title: "Debtors & Creditors Ageing", category: "Debtors & Creditors", severity: "info",
-      description: "Outstanding balances bucketed by age. Dormant balances (>180 days) need confirmation or provisioning.",
+      description: "Outstanding balances bucketed by age (ledger-level estimate — import bill-wise details for exact ageing).",
       columns: [{ key: "ledger", label: "Ledger" }, { key: "group", label: "Group" }, { key: "balance", label: "Balance", numeric: true }, { key: "bucket", label: "Ageing Bucket" }, { key: "nature", label: "Dr/Cr" }], rows });
   }
 

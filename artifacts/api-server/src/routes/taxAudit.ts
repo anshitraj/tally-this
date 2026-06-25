@@ -10,7 +10,7 @@
 import { Router, type IRouter } from "express";
 import multer from "multer";
 import ExcelJS from "exceljs";
-import { db, tallyLedgersTable, tallyVouchersTable, tallyVoucherLinesTable } from "@workspace/db";
+import { db, tallyLedgersTable, tallyVouchersTable, tallyVoucherLinesTable, tallyBillsTable } from "@workspace/db";
 import { sql, eq } from "drizzle-orm";
 import { getCompanyId, requirePermission, auditAction } from "../middleware/authz";
 import { buildChecks, FY_END } from "../services/taxAuditEngine";
@@ -23,7 +23,8 @@ const PYTHON_WORKER_URL = process.env.PYTHON_WORKER_URL ?? "http://localhost:809
 interface NormalizedLedger { name: string; group: string; opening_balance: number; closing_balance: number; prev_year_closing: number | null; prev_year_group: string | null; is_msme: boolean; msme_type: string | null; pan: string | null }
 interface NormalizedVoucher { date: string; type: string; number: string; party: string | null; narration: string | null; amount: number; mode: string | null }
 interface NormalizedLine { voucher_number: string; ledger: string; group: string; debit: number; credit: number }
-interface TallyParseResult { ok: boolean; warnings?: string[]; errors?: string[]; ledgers: NormalizedLedger[]; vouchers: NormalizedVoucher[]; voucher_lines: NormalizedLine[]; counts?: Record<string, number> }
+interface NormalizedBill { party: string; group: string; ref: string; date: string; amount: number; type: string }
+interface TallyParseResult { ok: boolean; warnings?: string[]; errors?: string[]; ledgers: NormalizedLedger[]; vouchers: NormalizedVoucher[]; voucher_lines: NormalizedLine[]; bills?: NormalizedBill[]; counts?: Record<string, number> }
 
 function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
@@ -36,6 +37,7 @@ async function writeTallyData(companyId: number, parsed: TallyParseResult): Prom
   await db.delete(tallyVoucherLinesTable).where(eq(tallyVoucherLinesTable.companyId, companyId));
   await db.delete(tallyVouchersTable).where(eq(tallyVouchersTable.companyId, companyId));
   await db.delete(tallyLedgersTable).where(eq(tallyLedgersTable.companyId, companyId));
+  await db.delete(tallyBillsTable).where(eq(tallyBillsTable.companyId, companyId));
 
   for (const batch of chunk(parsed.ledgers, 500)) {
     await db.insert(tallyLedgersTable).values(batch.map(l => ({
@@ -55,6 +57,11 @@ async function writeTallyData(companyId: number, parsed: TallyParseResult): Prom
     await db.insert(tallyVoucherLinesTable).values(batch.map(l => ({
       companyId, voucherNumber: l.voucher_number, ledger: l.ledger, group: l.group,
       debit: String(l.debit), credit: String(l.credit),
+    })));
+  }
+  for (const batch of chunk(parsed.bills ?? [], 500)) {
+    await db.insert(tallyBillsTable).values(batch.map(b => ({
+      companyId, party: b.party, group: b.group, ref: b.ref, date: b.date, amount: String(b.amount), type: b.type,
     })));
   }
   return parsed.counts ?? { ledgers: parsed.ledgers.length, vouchers: parsed.vouchers.length, voucher_lines: parsed.voucher_lines.length };
@@ -84,8 +91,8 @@ router.get("/tax-audit", requirePermission("reports.read"), async (req, res): Pr
   try {
     const companyId = await resolveCompanyId(req, res);
     if (companyId == null) return;
-    const { ledgers, vouchers, assets, source } = await loadData(companyId);
-    const checks = buildChecks(ledgers, vouchers, assets);
+    const { ledgers, vouchers, assets, bills, source } = await loadData(companyId);
+    const checks = buildChecks(ledgers, vouchers, assets, bills);
     const summary = checks.map(c => ({ id: c.id, clause: c.clause, title: c.title, category: c.category, severity: c.severity, count: c.rows.length, description: c.description }));
     const stats = {
       flagged: summary.filter(s => s.count > 0 && s.severity !== "info").length,
@@ -102,8 +109,8 @@ router.get("/tax-audit/:checkId", requirePermission("reports.read"), async (req,
   try {
     const companyId = await resolveCompanyId(req, res);
     if (companyId == null) return;
-    const { ledgers, vouchers, assets, source } = await loadData(companyId);
-    const checks = buildChecks(ledgers, vouchers, assets);
+    const { ledgers, vouchers, assets, bills, source } = await loadData(companyId);
+    const checks = buildChecks(ledgers, vouchers, assets, bills);
     const check = checks.find(c => c.id === req.params.checkId);
     if (!check) { res.status(404).json({ ok: false, error: "check_not_found" }); return; }
     res.json({ ok: true, source, check });
@@ -206,8 +213,8 @@ router.post("/tax-audit/evidence-pack", requirePermission("reports.read"), async
   try {
     const companyId = await resolveCompanyId(req, res);
     if (companyId == null) return;
-    const { ledgers, vouchers, assets, source } = await loadData(companyId);
-    const checks = buildChecks(ledgers, vouchers, assets);
+    const { ledgers, vouchers, assets, bills, source } = await loadData(companyId);
+    const checks = buildChecks(ledgers, vouchers, assets, bills);
 
     const companyRes = await db.execute(sql`SELECT name FROM companies WHERE id = ${companyId} LIMIT 1`);
     const company = (companyRes.rows[0] as { name: string } | undefined)?.name ?? "Company";

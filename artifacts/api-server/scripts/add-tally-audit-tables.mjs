@@ -76,6 +76,17 @@ const migrations = [
   `CREATE INDEX IF NOT EXISTS idx_ca_client_links_user ON ca_client_links(ca_user_id)`,
   `CREATE INDEX IF NOT EXISTS idx_tally_ledgers_company ON tally_ledgers(company_id)`,
   `CREATE INDEX IF NOT EXISTS idx_tally_vouchers_company ON tally_vouchers(company_id)`,
+  `CREATE TABLE IF NOT EXISTS tally_bills (
+    id          SERIAL PRIMARY KEY,
+    company_id  INTEGER,
+    party       TEXT NOT NULL,
+    "group"     TEXT NOT NULL,
+    ref         TEXT NOT NULL,
+    date        TEXT NOT NULL,
+    amount      NUMERIC(16,2) NOT NULL DEFAULT 0,
+    type        TEXT NOT NULL DEFAULT 'New Ref'
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_tally_bills_company ON tally_bills(company_id, party)`,
   `CREATE INDEX IF NOT EXISTS idx_tally_voucher_lines_company ON tally_voucher_lines(company_id, voucher_number)`,
   `CREATE INDEX IF NOT EXISTS idx_tally_fixed_assets_company ON tally_fixed_assets(company_id)`,
 ];

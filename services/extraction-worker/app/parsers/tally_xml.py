@@ -113,6 +113,7 @@ def parse_tally_xml(content: bytes) -> dict[str, Any]:
 
     vouchers: list[dict[str, Any]] = []
     voucher_lines: list[dict[str, Any]] = []
+    bills: list[dict[str, Any]] = []
     auto_no = 0
 
     for vch in root.iter("VOUCHER"):
@@ -150,6 +151,31 @@ def parse_tally_xml(content: bytes) -> dict[str, Any]:
             })
             max_abs = max(max_abs, abs(amt))
 
+            # Bill-wise details (for ageing) — BILLALLOCATIONS.LIST under the ledger entry.
+            for bill in ent.iter("BILLALLOCATIONS.LIST"):
+                bref = _text(bill.find("NAME"))
+                if not bref:
+                    continue
+                btype_raw = _text(bill.find("BILLTYPE")).lower()
+                if "agst" in btype_raw or "against" in btype_raw:
+                    btype = "Agst Ref"
+                elif "advance" in btype_raw:
+                    btype = "Advance"
+                elif "on account" in btype_raw:
+                    btype = "On Account"
+                else:
+                    btype = "New Ref"
+                bamt = abs(_num(_text(bill.find("AMOUNT"))))
+                bdate = _norm_date(_text(bill.find("BILLDATE")) or _text(bill.find("BILLCREDITPERIOD"))) or date
+                bills.append({
+                    "party": lname,
+                    "group": grp,
+                    "ref": bref,
+                    "date": bdate,
+                    "amount": round(bamt, 2),
+                    "type": btype,
+                })
+
         vouchers.append({
             "date": date,
             "type": _canonical_vch_type(vch_type),
@@ -169,8 +195,9 @@ def parse_tally_xml(content: bytes) -> dict[str, Any]:
         "ledgers": ledgers,
         "vouchers": vouchers,
         "voucher_lines": voucher_lines,
+        "bills": bills,
         "fixed_assets": [],
-        "counts": {"ledgers": len(ledgers), "vouchers": len(vouchers), "voucher_lines": len(voucher_lines)},
+        "counts": {"ledgers": len(ledgers), "vouchers": len(vouchers), "voucher_lines": len(voucher_lines), "bills": len(bills)},
     }
 
 

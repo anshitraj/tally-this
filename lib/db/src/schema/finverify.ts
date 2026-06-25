@@ -535,7 +535,19 @@ export const caClientLinksTable = pgTable("ca_client_links", {
 
 export type CaClientLink = typeof caClientLinksTable.$inferSelect;
 
+export const tallyBillsTable = pgTable("tally_bills", {
+  id: serial("id").primaryKey(),
+  companyId: integer("company_id"),
+  party: text("party").notNull(),
+  group: text("group").notNull(),
+  ref: text("ref").notNull(),                     // bill reference / invoice no.
+  date: text("date").notNull(),                   // ISO yyyy-mm-dd original bill date
+  amount: numeric("amount", { precision: 16, scale: 2 }).notNull().default("0"),
+  type: text("type").notNull().default("New Ref"), // New Ref | Agst Ref | Advance | On Account
+});
+
 export type TallyLedger = typeof tallyLedgersTable.$inferSelect;
+export type TallyBill = typeof tallyBillsTable.$inferSelect;
 export type TallyVoucher = typeof tallyVouchersTable.$inferSelect;
 export type TallyVoucherLine = typeof tallyVoucherLinesTable.$inferSelect;
 export type TallyFixedAsset = typeof tallyFixedAssetsTable.$inferSelect;

@@ -10,7 +10,7 @@ import { Router, type IRouter } from "express";
 import { db, companiesTable, caClientLinksTable } from "@workspace/db";
 import { sql, and, eq } from "drizzle-orm";
 import { getCompanyId, requirePermission, auditAction } from "../middleware/authz";
-import { buildChecks, DEMO_LEDGERS, DEMO_VOUCHERS, DEMO_ASSETS, type Ledger, type Voucher } from "../services/taxAuditEngine";
+import { buildChecks, DEMO_LEDGERS, DEMO_VOUCHERS, DEMO_ASSETS, DEMO_BILLS, type Ledger, type Voucher, type Bill } from "../services/taxAuditEngine";
 import { loadData } from "../services/taxAuditData";
 
 const router: IRouter = Router();
@@ -27,8 +27,8 @@ interface ClientSummary {
   topClauses: { clause: string; title: string; count: number; severity: string }[];
 }
 
-function summarize(name: string, companyId: number | null, linkId: number | null, ledgers: Ledger[], vouchers: Voucher[], source: "tally" | "demo"): ClientSummary {
-  const checks = buildChecks(ledgers, vouchers, DEMO_ASSETS);
+function summarize(name: string, companyId: number | null, linkId: number | null, ledgers: Ledger[], vouchers: Voucher[], bills: Bill[], source: "tally" | "demo"): ClientSummary {
+  const checks = buildChecks(ledgers, vouchers, DEMO_ASSETS, bills);
   const byCategory: Record<string, number> = {};
   for (const c of checks) if (c.rows.length > 0 && c.severity !== "info") byCategory[c.category] = (byCategory[c.category] ?? 0) + 1;
   const flaggedChecks = checks.filter(c => c.rows.length > 0 && c.severity !== "info");
@@ -51,14 +51,14 @@ function summarize(name: string, companyId: number | null, linkId: number | null
 // Demo clients — derived from the demo dataset with deterministic variations so
 // the console looks like a real multi-client practice.
 function demoClients(): ClientSummary[] {
-  const full = summarize("Nova Textiles Pvt Ltd", -1, null, DEMO_LEDGERS, DEMO_VOUCHERS, "demo");
+  const full = summarize("Nova Textiles Pvt Ltd", -1, null, DEMO_LEDGERS, DEMO_VOUCHERS, DEMO_BILLS, "demo");
   // Client B: clean of cash-receipt 269ST issues
   const bVouchers = DEMO_VOUCHERS.filter(v => v.amount < 200000);
-  const b = summarize("Apex Foods LLP", -2, null, DEMO_LEDGERS, bVouchers, "demo");
+  const b = summarize("Apex Foods LLP", -2, null, DEMO_LEDGERS, bVouchers, DEMO_BILLS, "demo");
   // Client C: no negative balances, no post-year-end JVs
   const cLedgers = DEMO_LEDGERS.map(l => l.group === "Sundry Debtors" && l.closingBalance < 0 ? { ...l, closingBalance: Math.abs(l.closingBalance) } : l);
   const cVouchers = DEMO_VOUCHERS.filter(v => v.date <= "2026-03-31");
-  const c = summarize("Zenith Technologies", -3, null, cLedgers, cVouchers, "demo");
+  const c = summarize("Zenith Technologies", -3, null, cLedgers, cVouchers, DEMO_BILLS, "demo");
   return [full, b, c];
 }
 
@@ -80,7 +80,7 @@ router.get("/practice/clients", requirePermission("reports.read"), async (req, r
       clients = [];
       for (const link of links) {
         const data = await loadData(link.client_company_id);
-        clients.push(summarize(link.client_name ?? `Client #${link.client_company_id}`, link.client_company_id, link.id, data.ledgers, data.vouchers, data.source));
+        clients.push(summarize(link.client_name ?? `Client #${link.client_company_id}`, link.client_company_id, link.id, data.ledgers, data.vouchers, data.bills, data.source));
       }
     } else {
       source = "demo";

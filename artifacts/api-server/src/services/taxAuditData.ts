@@ -6,11 +6,11 @@
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import {
-  DEMO_LEDGERS, DEMO_VOUCHERS, DEMO_ASSETS,
-  type Ledger, type Voucher, type VoucherLine, type VoucherType, type AssetRow,
+  DEMO_LEDGERS, DEMO_VOUCHERS, DEMO_ASSETS, DEMO_BILLS,
+  type Ledger, type Voucher, type VoucherLine, type VoucherType, type AssetRow, type Bill, type BillType,
 } from "./taxAuditEngine";
 
-export interface TaxAuditData { ledgers: Ledger[]; vouchers: Voucher[]; assets: AssetRow[]; source: "tally" | "demo" }
+export interface TaxAuditData { ledgers: Ledger[]; vouchers: Voucher[]; assets: AssetRow[]; bills: Bill[]; source: "tally" | "demo" }
 
 export async function loadData(companyId: number): Promise<TaxAuditData> {
   try {
@@ -50,8 +50,16 @@ export async function loadData(companyId: number): Promise<TaxAuditData> {
           }));
         }
       } catch { /* assets table optional */ }
-      return { ledgers, vouchers, assets, source: "tally" };
+      let bills: Bill[] = [];
+      try {
+        const bRes = await db.execute(sql`SELECT party, "group", ref, date, amount, type FROM tally_bills WHERE company_id = ${companyId}`);
+        bills = (bRes.rows as Record<string, unknown>[]).map(r => ({
+          party: String(r.party), group: String(r.group), ref: String(r.ref),
+          date: String(r.date), amount: Number(r.amount), type: (r.type as BillType) ?? "New Ref",
+        }));
+      } catch { /* bills table optional */ }
+      return { ledgers, vouchers, assets, bills, source: "tally" };
     }
   } catch { /* tables missing — fall through to demo */ }
-  return { ledgers: DEMO_LEDGERS, vouchers: DEMO_VOUCHERS, assets: DEMO_ASSETS, source: "demo" };
+  return { ledgers: DEMO_LEDGERS, vouchers: DEMO_VOUCHERS, assets: DEMO_ASSETS, bills: DEMO_BILLS, source: "demo" };
 }
