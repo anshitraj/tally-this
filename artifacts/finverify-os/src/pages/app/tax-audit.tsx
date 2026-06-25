@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { useLocation, useSearch } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ShieldCheck, X, AlertTriangle, FileSpreadsheet, ChevronRight, Upload, Loader2, RotateCcw, Download, Building2, ArrowLeft } from "lucide-react";
+import { ShieldCheck, X, AlertTriangle, FileSpreadsheet, ChevronRight, Upload, Loader2, RotateCcw, Download, Building2, ArrowLeft, Plug } from "lucide-react";
 import PageHeader from "@/components/app/PageHeader";
 import { PageTransition } from "@/components/app/finverify-ui";
 import { useToast } from "@/hooks/use-toast";
@@ -139,6 +139,28 @@ export default function TaxAuditPage() {
     enabled: Boolean(openCheck),
   });
 
+  const [connectOpen, setConnectOpen] = useState(false);
+  const [conn, setConn] = useState({ host: "localhost", port: "9000", company: clientName || "", fromDate: "2025-04-01", toDate: "2026-03-31" });
+
+  const syncMutation = useMutation({
+    mutationFn: async () => {
+      const r = await fetch(`${BASE}/api/tax-audit/connector/sync${clientQs}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...conn, port: Number(conn.port) }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok || !body.ok) throw new Error(body?.error || `Sync failed (${r.status})`);
+      return body as { counts?: Record<string, number> };
+    },
+    onSuccess: (body) => {
+      const c = body.counts ?? {};
+      toast({ title: "Synced from Tally", description: `${c.ledgers ?? 0} ledgers · ${c.vouchers ?? 0} vouchers pulled.` });
+      setConnectOpen(false);
+      refresh();
+    },
+    onError: (e: Error) => toast({ title: "Tally sync failed", description: e.message, variant: "destructive" }),
+  });
+
   return (
     <PageTransition className="mx-auto max-w-6xl">
       <PageHeader
@@ -181,6 +203,13 @@ export default function TaxAuditPage() {
         >
           {importMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
           {importMutation.isPending ? "Importing…" : "Import Tally Export (XML)"}
+        </button>
+        <button
+          type="button"
+          onClick={() => setConnectOpen(true)}
+          className="inline-flex items-center gap-2 rounded-xl border border-border px-4 py-2 text-sm font-medium hover:bg-muted"
+        >
+          <Plug className="h-4 w-4" /> Connect to Tally
         </button>
         <button
           type="button"
@@ -248,6 +277,42 @@ export default function TaxAuditPage() {
               </section>
             );
           })}
+        </div>
+      )}
+
+      {connectOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setConnectOpen(false)}>
+          <div className="w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="mb-3 flex items-start justify-between">
+              <div>
+                <div className="flex items-center gap-2 text-base font-bold"><Plug className="h-4 w-4 text-primary" /> Connect to Tally</div>
+                <p className="mt-1 text-xs text-muted-foreground">Pull the Day Book live from a running Tally gateway — no manual export.</p>
+              </div>
+              <button type="button" onClick={() => setConnectOpen(false)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted"><X className="h-4 w-4" /></button>
+            </div>
+            <form onSubmit={e => { e.preventDefault(); syncMutation.mutate(); }} className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block"><span className="mb-1 block text-xs font-semibold text-muted-foreground">Host</span>
+                  <input value={conn.host} onChange={e => setConn(c => ({ ...c, host: e.target.value }))} className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm" /></label>
+                <label className="block"><span className="mb-1 block text-xs font-semibold text-muted-foreground">Port</span>
+                  <input value={conn.port} onChange={e => setConn(c => ({ ...c, port: e.target.value }))} className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm" /></label>
+              </div>
+              <label className="block"><span className="mb-1 block text-xs font-semibold text-muted-foreground">Company (exact Tally name)</span>
+                <input value={conn.company} onChange={e => setConn(c => ({ ...c, company: e.target.value }))} placeholder="As shown in Tally" className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm" /></label>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block"><span className="mb-1 block text-xs font-semibold text-muted-foreground">From date</span>
+                  <input type="date" value={conn.fromDate} onChange={e => setConn(c => ({ ...c, fromDate: e.target.value }))} className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm" /></label>
+                <label className="block"><span className="mb-1 block text-xs font-semibold text-muted-foreground">To date</span>
+                  <input type="date" value={conn.toDate} onChange={e => setConn(c => ({ ...c, toDate: e.target.value }))} className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm" /></label>
+              </div>
+              <div className="rounded-lg bg-muted/50 px-3 py-2 text-[11px] text-muted-foreground">
+                In Tally: F1 → Settings → Connectivity → enable "act as server" (default port 9000). Tally must be reachable from the API host.
+              </div>
+              <button type="submit" disabled={syncMutation.isPending || !conn.company.trim()} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-60">
+                {syncMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin" /> Syncing…</> : <><Plug className="h-4 w-4" /> Sync now</>}
+              </button>
+            </form>
+          </div>
         </div>
       )}
 

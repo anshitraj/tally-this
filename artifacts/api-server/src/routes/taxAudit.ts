@@ -31,6 +31,35 @@ function chunk<T>(arr: T[], size: number): T[][] {
   return out;
 }
 
+/** Replace a company's tally_* rows with freshly parsed data. Shared by file import and the live connector. */
+async function writeTallyData(companyId: number, parsed: TallyParseResult): Promise<Record<string, number>> {
+  await db.delete(tallyVoucherLinesTable).where(eq(tallyVoucherLinesTable.companyId, companyId));
+  await db.delete(tallyVouchersTable).where(eq(tallyVouchersTable.companyId, companyId));
+  await db.delete(tallyLedgersTable).where(eq(tallyLedgersTable.companyId, companyId));
+
+  for (const batch of chunk(parsed.ledgers, 500)) {
+    await db.insert(tallyLedgersTable).values(batch.map(l => ({
+      companyId, name: l.name, group: l.group,
+      openingBalance: String(l.opening_balance), closingBalance: String(l.closing_balance),
+      prevYearClosing: l.prev_year_closing != null ? String(l.prev_year_closing) : null,
+      prevYearGroup: l.prev_year_group, isMsme: l.is_msme, msmeType: l.msme_type, pan: l.pan,
+    })));
+  }
+  for (const batch of chunk(parsed.vouchers, 500)) {
+    await db.insert(tallyVouchersTable).values(batch.map(v => ({
+      companyId, date: v.date, type: v.type, number: v.number,
+      party: v.party, narration: v.narration, amount: String(v.amount), mode: v.mode,
+    })));
+  }
+  for (const batch of chunk(parsed.voucher_lines, 500)) {
+    await db.insert(tallyVoucherLinesTable).values(batch.map(l => ({
+      companyId, voucherNumber: l.voucher_number, ledger: l.ledger, group: l.group,
+      debit: String(l.debit), credit: String(l.credit),
+    })));
+  }
+  return parsed.counts ?? { ledgers: parsed.ledgers.length, vouchers: parsed.vouchers.length, voucher_lines: parsed.voucher_lines.length };
+}
+
 /**
  * Resolve the target company for a request. Defaults to the authenticated
  * company. A CA may scope to a client via ?client=<id> (or body.client) — but
@@ -113,38 +142,50 @@ router.post("/tax-audit/import", requirePermission("uploads.create"), upload.sin
     return;
   }
 
-  // 2. Replace existing rows for this company
-  await db.delete(tallyVoucherLinesTable).where(eq(tallyVoucherLinesTable.companyId, companyId));
-  await db.delete(tallyVouchersTable).where(eq(tallyVouchersTable.companyId, companyId));
-  await db.delete(tallyLedgersTable).where(eq(tallyLedgersTable.companyId, companyId));
+  const counts = await writeTallyData(companyId, parsed);
+  await auditAction(req, "tax_audit.import", "tally_import", null, { fileName: file.originalname, ...counts });
+  res.json({ ok: true, source: "tally", counts, warnings: parsed.warnings });
+});
 
-  // 3. Insert normalized data (chunked to stay under Postgres param limits)
-  for (const batch of chunk(parsed.ledgers, 500)) {
-    await db.insert(tallyLedgersTable).values(batch.map(l => ({
-      companyId, name: l.name, group: l.group,
-      openingBalance: String(l.opening_balance), closingBalance: String(l.closing_balance),
-      prevYearClosing: l.prev_year_closing != null ? String(l.prev_year_closing) : null,
-      prevYearGroup: l.prev_year_group, isMsme: l.is_msme, msmeType: l.msme_type, pan: l.pan,
-    })));
-  }
-  for (const batch of chunk(parsed.vouchers, 500)) {
-    await db.insert(tallyVouchersTable).values(batch.map(v => ({
-      companyId, date: v.date, type: v.type, number: v.number,
-      party: v.party, narration: v.narration, amount: String(v.amount), mode: v.mode,
-    })));
-  }
-  for (const batch of chunk(parsed.voucher_lines, 500)) {
-    await db.insert(tallyVoucherLinesTable).values(batch.map(l => ({
-      companyId, voucherNumber: l.voucher_number, ledger: l.ledger, group: l.group,
-      debit: String(l.debit), credit: String(l.credit),
-    })));
+/**
+ * Live Tally Connector — pull a Day Book straight from a running Tally gateway
+ * (no manual export). Forwards connection details to the worker, then ingests.
+ */
+router.post("/tax-audit/connector/sync", requirePermission("uploads.create"), async (req, res): Promise<void> => {
+  const companyId = await resolveCompanyId(req, res);
+  if (companyId == null) return;
+  const b = (req.body ?? {}) as Record<string, unknown>;
+  const company = typeof b.company === "string" ? b.company.trim() : "";
+  if (!company) { res.status(400).json({ ok: false, error: "Tally company name is required" }); return; }
+  const payload = {
+    host: typeof b.host === "string" && b.host ? b.host : "localhost",
+    port: Number(b.port) || 9000,
+    company,
+    from_date: typeof b.fromDate === "string" ? b.fromDate : "",
+    to_date: typeof b.toDate === "string" ? b.toDate : "",
+    report: typeof b.report === "string" && b.report ? b.report : "Day Book",
+  };
+
+  let parsed: TallyParseResult;
+  try {
+    const r = await fetch(`${PYTHON_WORKER_URL}/connector/tally-fetch`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload), signal: AbortSignal.timeout(70_000),
+    });
+    parsed = await r.json() as TallyParseResult;
+  } catch {
+    res.status(502).json({ ok: false, error: "Extraction worker unavailable. Start the Python worker and retry." });
+    return;
   }
 
-  await auditAction(req, "tax_audit.import", "tally_import", null, {
-    fileName: file.originalname, ...parsed.counts,
-  });
+  if (!parsed.ok) {
+    res.status(422).json({ ok: false, error: (parsed.errors && parsed.errors[0]) || "Tally returned no data.", warnings: parsed.warnings });
+    return;
+  }
 
-  res.json({ ok: true, source: "tally", counts: parsed.counts ?? { ledgers: parsed.ledgers.length, vouchers: parsed.vouchers.length, voucher_lines: parsed.voucher_lines.length }, warnings: parsed.warnings });
+  const counts = await writeTallyData(companyId, parsed);
+  await auditAction(req, "tax_audit.connector_sync", "tally_import", null, { host: payload.host, company, ...counts });
+  res.json({ ok: true, source: "tally", counts });
 });
 
 /**

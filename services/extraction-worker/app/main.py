@@ -8,6 +8,7 @@ from .routes.parse import router as parse_router
 from .routes.extract import router as extract_router
 from .routes.extract_expense import router as expense_router
 from .routes.tally import router as tally_router
+from .routes.connector import router as connector_router
 
 app = FastAPI(
     title="FinVerify Extraction Worker",
@@ -26,6 +27,7 @@ app.include_router(parse_router)
 app.include_router(extract_router)
 app.include_router(expense_router)
 app.include_router(tally_router)
+app.include_router(connector_router)
 
 
 @app.on_event("startup")
@@ -64,6 +66,7 @@ async def health():
             "parse/pdf-text",
             "parse/pdf-table",
             "parse/tally",
+            "connector/tally-fetch",
             "extract/bank-statement",
             "extract/tally-ledger",
             "extract/gateway-statement",
