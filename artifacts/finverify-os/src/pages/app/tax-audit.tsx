@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
+import { useLocation, useSearch } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ShieldCheck, X, AlertTriangle, FileSpreadsheet, ChevronRight, Upload, Loader2, RotateCcw, Download } from "lucide-react";
+import { ShieldCheck, X, AlertTriangle, FileSpreadsheet, ChevronRight, Upload, Loader2, RotateCcw, Download, Building2, ArrowLeft } from "lucide-react";
 import PageHeader from "@/components/app/PageHeader";
 import { PageTransition } from "@/components/app/finverify-ui";
 import { useToast } from "@/hooks/use-toast";
@@ -72,17 +73,28 @@ export default function TaxAuditPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
   const qc = useQueryClient();
+  const [, navigate] = useLocation();
+
+  const params = new URLSearchParams(useSearch());
+  const client = params.get("client");
+  const clientName = params.get("name");
+  const clientQs = client ? `?client=${encodeURIComponent(client)}` : "";
+
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ["tax-audit", client] });
+    qc.invalidateQueries({ queryKey: ["tax-audit-detail"] });
+  };
 
   const { data, isLoading } = useQuery<TaxAuditIndex>({
-    queryKey: ["tax-audit"],
-    queryFn: () => fetch(`${BASE}/api/tax-audit`).then(r => r.json()),
+    queryKey: ["tax-audit", client],
+    queryFn: () => fetch(`${BASE}/api/tax-audit${clientQs}`).then(r => r.json()),
   });
 
   const importMutation = useMutation({
     mutationFn: async (file: File) => {
       const form = new FormData();
       form.append("file", file);
-      const r = await fetch(`${BASE}/api/tax-audit/import`, { method: "POST", body: form });
+      const r = await fetch(`${BASE}/api/tax-audit/import${clientQs}`, { method: "POST", body: form });
       const body = await r.json().catch(() => ({}));
       if (!r.ok || !body.ok) throw new Error(body?.error || `Import failed (${r.status})`);
       return body as { counts?: Record<string, number> };
@@ -90,26 +102,25 @@ export default function TaxAuditPage() {
     onSuccess: (body) => {
       const c = body.counts ?? {};
       toast({ title: "Tally data imported", description: `${c.ledgers ?? 0} ledgers · ${c.vouchers ?? 0} vouchers. Scrutiny refreshed.` });
-      qc.invalidateQueries({ queryKey: ["tax-audit"] });
-      qc.invalidateQueries({ queryKey: ["tax-audit-detail"] });
+      refresh();
     },
     onError: (e: Error) => toast({ title: "Import failed", description: e.message, variant: "destructive" }),
   });
 
   const resetMutation = useMutation({
     mutationFn: async () => {
-      const r = await fetch(`${BASE}/api/tax-audit/import`, { method: "DELETE" });
+      const r = await fetch(`${BASE}/api/tax-audit/import${clientQs}`, { method: "DELETE" });
       if (!r.ok) throw new Error("Reset failed");
     },
     onSuccess: () => {
       toast({ title: "Reverted to demo data" });
-      qc.invalidateQueries({ queryKey: ["tax-audit"] });
+      refresh();
     },
   });
 
   const packMutation = useMutation({
     mutationFn: async () => {
-      const r = await fetch(`${BASE}/api/tax-audit/evidence-pack`, { method: "POST" });
+      const r = await fetch(`${BASE}/api/tax-audit/evidence-pack${clientQs}`, { method: "POST" });
       if (!r.ok) throw new Error(`Export failed (${r.status})`);
       const blob = await r.blob();
       const cd = r.headers.get("Content-Disposition") || "";
@@ -123,8 +134,8 @@ export default function TaxAuditPage() {
   });
 
   const { data: detail } = useQuery<{ ok: boolean; check: CheckDetail }>({
-    queryKey: ["tax-audit-detail", openCheck],
-    queryFn: () => fetch(`${BASE}/api/tax-audit/${openCheck}`).then(r => r.json()),
+    queryKey: ["tax-audit-detail", openCheck, client],
+    queryFn: () => fetch(`${BASE}/api/tax-audit/${openCheck}${clientQs}`).then(r => r.json()),
     enabled: Boolean(openCheck),
   });
 
@@ -136,6 +147,23 @@ export default function TaxAuditPage() {
           ? `FY ending ${data.fyEnd} · ${data.stats.flagged} of ${data.stats.total} checks flagged · ${data.stats.highSeverity} high-severity`
           : "Loading ledger scrutiny…"}
       />
+
+      {client && (
+        <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-2.5">
+          <div className="flex items-center gap-2 text-sm">
+            <Building2 className="h-4 w-4 text-primary" />
+            <span className="text-muted-foreground">Viewing client</span>
+            <span className="font-bold text-foreground">{clientName || `#${client}`}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate("/app/tax-audit")}
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" /> Back to my workspace
+          </button>
+        </div>
+      )}
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <input

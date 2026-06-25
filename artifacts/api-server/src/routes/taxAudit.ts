@@ -31,9 +31,30 @@ function chunk<T>(arr: T[], size: number): T[][] {
   return out;
 }
 
+/**
+ * Resolve the target company for a request. Defaults to the authenticated
+ * company. A CA may scope to a client via ?client=<id> (or body.client) — but
+ * ONLY if an active ca_client_links row ties this CA user to that client.
+ * Returns null after sending a 403 when the link is absent (cross-tenant guard).
+ */
+async function resolveCompanyId(req: import("express").Request, res: import("express").Response): Promise<number | null> {
+  const own = getCompanyId(req);
+  const raw = req.query.client ?? (req.body as Record<string, unknown> | undefined)?.client;
+  if (raw == null || raw === "") return own;
+  const clientId = Number(raw);
+  if (!Number.isInteger(clientId) || clientId <= 0) { res.status(400).json({ ok: false, error: "invalid client id" }); return null; }
+  if (clientId === own) return own;
+  try {
+    const link = await db.execute(sql`SELECT 1 FROM ca_client_links WHERE ca_user_id = ${req.auth!.userId} AND client_company_id = ${clientId} AND status = 'active' LIMIT 1`);
+    if (!link.rows || link.rows.length === 0) { res.status(403).json({ ok: false, error: "Not authorised for this client" }); return null; }
+  } catch { res.status(403).json({ ok: false, error: "Not authorised for this client" }); return null; }
+  return clientId;
+}
+
 router.get("/tax-audit", requirePermission("reports.read"), async (req, res): Promise<void> => {
   try {
-    const companyId = getCompanyId(req);
+    const companyId = await resolveCompanyId(req, res);
+    if (companyId == null) return;
     const { ledgers, vouchers, assets, source } = await loadData(companyId);
     const checks = buildChecks(ledgers, vouchers, assets);
     const summary = checks.map(c => ({ id: c.id, clause: c.clause, title: c.title, category: c.category, severity: c.severity, count: c.rows.length, description: c.description }));
@@ -50,7 +71,8 @@ router.get("/tax-audit", requirePermission("reports.read"), async (req, res): Pr
 
 router.get("/tax-audit/:checkId", requirePermission("reports.read"), async (req, res): Promise<void> => {
   try {
-    const companyId = getCompanyId(req);
+    const companyId = await resolveCompanyId(req, res);
+    if (companyId == null) return;
     const { ledgers, vouchers, assets, source } = await loadData(companyId);
     const checks = buildChecks(ledgers, vouchers, assets);
     const check = checks.find(c => c.id === req.params.checkId);
@@ -67,7 +89,8 @@ router.get("/tax-audit/:checkId", requirePermission("reports.read"), async (req,
  * real data (source:"tally").
  */
 router.post("/tax-audit/import", requirePermission("uploads.create"), upload.single("file"), async (req, res): Promise<void> => {
-  const companyId = getCompanyId(req);
+  const companyId = await resolveCompanyId(req, res);
+  if (companyId == null) return;
   const file = req.file;
   if (!file) { res.status(400).json({ ok: false, error: "No file uploaded" }); return; }
 
@@ -140,7 +163,8 @@ function safeSheetName(idx: number, title: string): string {
 
 router.post("/tax-audit/evidence-pack", requirePermission("reports.read"), async (req, res): Promise<void> => {
   try {
-    const companyId = getCompanyId(req);
+    const companyId = await resolveCompanyId(req, res);
+    if (companyId == null) return;
     const { ledgers, vouchers, assets, source } = await loadData(companyId);
     const checks = buildChecks(ledgers, vouchers, assets);
 
@@ -207,7 +231,8 @@ router.post("/tax-audit/evidence-pack", requirePermission("reports.read"), async
 
 /** Clear imported Tally data for this company — reverts the cockpit to demo data. */
 router.delete("/tax-audit/import", requirePermission("uploads.create"), async (req, res): Promise<void> => {
-  const companyId = getCompanyId(req);
+  const companyId = await resolveCompanyId(req, res);
+  if (companyId == null) return;
   await db.delete(tallyVoucherLinesTable).where(eq(tallyVoucherLinesTable.companyId, companyId));
   await db.delete(tallyVouchersTable).where(eq(tallyVouchersTable.companyId, companyId));
   await db.delete(tallyLedgersTable).where(eq(tallyLedgersTable.companyId, companyId));
