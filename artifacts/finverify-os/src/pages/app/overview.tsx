@@ -15,7 +15,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { AlertTriangle, ArrowUpRight, FileText, Loader2, Package, Upload, WalletCards, Zap, type LucideIcon } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, FileText, Loader2, Package, ShieldCheck, Upload, WalletCards, Zap, type LucideIcon } from "lucide-react";
 import PageHeader from "@/components/app/PageHeader";
 import HealthWidget from "@/components/app/HealthWidget";
 import StatusBadge from "@/components/app/StatusBadge";
@@ -72,6 +72,11 @@ function GenerateCaPackButton({ navigate }: { navigate: (to: string) => void }) 
   );
 }
 
+interface TaxAuditMini {
+  source: "tally" | "demo";
+  stats: { flagged: number; total: number; highSeverity: number };
+}
+
 export default function OverviewPage() {
   const [, navigate] = useLocation();
   const user = getUser();
@@ -82,6 +87,11 @@ export default function OverviewPage() {
       if (!response.ok) throw new Error(`Overview request failed: ${response.status}`);
       return response.json();
     },
+  });
+
+  const { data: taxAudit } = useQuery<TaxAuditMini>({
+    queryKey: ["tax-audit"],
+    queryFn: () => fetch(`${BASE}/api/tax-audit`).then(r => r.json()),
   });
 
   if (isLoading) {
@@ -121,6 +131,7 @@ export default function OverviewPage() {
   ];
   const quickActions: Array<{ label: string; href: string; icon: LucideIcon }> = [
     { label: "Upload files", href: "/app/uploads", icon: Upload },
+    { label: "Tax Audit scrutiny", href: "/app/tax-audit", icon: ShieldCheck },
     { label: "Verify finances", href: "/app/verify", icon: Zap },
     { label: "Review risks", href: "/app/gst-tds-risks", icon: AlertTriangle },
     { label: "Action Items", href: "/app/action-items", icon: ArrowUpRight },
@@ -169,6 +180,27 @@ export default function OverviewPage() {
           </div>
         </div>
       </div>
+
+      {taxAudit?.stats && (
+        <button
+          type="button"
+          onClick={() => navigate("/app/tax-audit")}
+          className="mt-5 flex w-full items-center justify-between gap-4 rounded-2xl border border-primary/30 bg-primary/5 p-5 text-left transition hover:border-primary/50 hover:bg-primary/10"
+        >
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary/15 text-primary"><ShieldCheck className="h-5 w-5" /></div>
+            <div>
+              <div className="text-sm font-bold">Tax Audit & Ledger Scrutiny</div>
+              <div className="text-xs text-muted-foreground">
+                {taxAudit.stats.flagged} of {taxAudit.stats.total} checks flagged
+                {taxAudit.stats.highSeverity > 0 && <span className="font-semibold text-red-600"> · {taxAudit.stats.highSeverity} high-severity</span>}
+                {taxAudit.source === "demo" && <span className="text-amber-600"> · demo data</span>}
+              </div>
+            </div>
+          </div>
+          <span className="flex items-center gap-1 text-sm font-semibold text-primary">Open cockpit <ArrowUpRight className="h-4 w-4" /></span>
+        </button>
+      )}
 
       <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="Total transactions" value={data.totalTransactions} detail={`${data.verifiedTransactions} verified`} icon={WalletCards} tone="info" />
