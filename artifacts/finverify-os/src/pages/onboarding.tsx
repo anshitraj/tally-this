@@ -200,7 +200,8 @@ export default function OnboardingPage() {
         company: form.company.companyName || user.company,
       },
     });
-    navigate(APP_ROUTES.uploads);
+    // CAs land on the Tax Audit cockpit (the headline screen); others on Upload.
+    navigate(form.account.role === "CA / Auditor" ? APP_ROUTES.taxAudit : APP_ROUTES.uploads);
   };
 
   const updateAccount = (patch: Partial<OnboardingState["account"]>) => setForm(currentForm => ({ ...currentForm, account: { ...currentForm.account, ...patch } }));
@@ -229,7 +230,7 @@ export default function OnboardingPage() {
                 {current === "Firm" && "Create your CA firm workspace"}
                 {current === "Client" && "Add the client company"}
                 {current === "Sources" && "Select what the client can upload now"}
-                {current === "Guide" && "Start with any files you have"}
+                {current === "Guide" && (form.account.role === "CA / Auditor" ? "Run your first ledger scrutiny" : "Start with any files you have")}
               </h1>
               <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
                 {current === "Guide" ? "You do not need all files to start. FinVerify will show matching options based on uploaded sources." : "This keeps the upload-based MVP guided and CA-friendly without claiming live integrations."}
@@ -303,16 +304,26 @@ export default function OnboardingPage() {
           )}
 
           {current === "Guide" && (
-            <div className="rounded-2xl border border-border bg-background p-5">
-              <div className="mb-3 flex items-center gap-2 text-sm font-semibold"><UploadCloud className="h-4 w-4 text-primary" />First upload guide</div>
-              <p className="text-sm leading-6 text-muted-foreground">
-                Upload any files you have. You do not need all files to start. FinVerify will show matching options based on uploaded sources.
-              </p>
-              <div className="mt-4 grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
-                <div>Bank + Tally {"->"} Ledger reconciliation</div>
-                <div>Bank + Invoices {"->"} Payment reconciliation</div>
-                <div>Bank + Gateway {"->"} Settlement reconciliation</div>
-                <div>GST/TDS only {"->"} GST/TDS review pack</div>
+            <div className="space-y-4">
+              <div className="rounded-2xl border border-primary/30 bg-primary/5 p-5">
+                <div className="mb-2 flex items-center gap-2 text-sm font-bold text-primary"><ShieldCheck className="h-4 w-4" />Tax Audit & Ledger Scrutiny — start here</div>
+                <p className="text-sm leading-6 text-muted-foreground">
+                  Export a Day Book from Tally (<span className="font-mono text-xs">Gateway of Tally → Display → Day Book → Alt+E → XML</span>) and import it on the Tax Audit screen. FinVerify runs 20 clause-mapped checks — 269SS/ST, 40A(3), MSME, depreciation, negative balances and more — then exports a CA-ready evidence pack.
+                </p>
+                <div className="mt-3 text-xs font-semibold text-primary">No Tally file yet? The cockpit opens with demo data so you can explore every check.</div>
+              </div>
+              <div className="rounded-2xl border border-border bg-background p-5">
+                <div className="mb-3 flex items-center gap-2 text-sm font-semibold"><UploadCloud className="h-4 w-4 text-primary" />Reconciliation guide</div>
+                <p className="text-sm leading-6 text-muted-foreground">
+                  Upload any files you have. You do not need all files to start. FinVerify will show matching options based on uploaded sources.
+                </p>
+                <div className="mt-4 grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+                  <div>Tally Day Book {"->"} Tax Audit scrutiny</div>
+                  <div>Bank + Tally {"->"} Ledger reconciliation</div>
+                  <div>Bank + Invoices {"->"} Payment reconciliation</div>
+                  <div>Bank + Gateway {"->"} Settlement reconciliation</div>
+                  <div>GST/TDS only {"->"} GST/TDS review pack</div>
+                </div>
               </div>
             </div>
           )}
@@ -322,7 +333,7 @@ export default function OnboardingPage() {
               <ArrowLeft className="h-4 w-4" /> Back
             </button>
             <button type="button" onClick={() => (isLast ? finish() : setStep(currentStep => currentStep + 1))} className="fv-button-primary">
-              {isLast ? "Go to Upload Center" : "Continue"} <ArrowRight className="h-4 w-4" />
+              {isLast ? (form.account.role === "CA / Auditor" ? "Open Tax Audit Cockpit" : "Go to Upload Center") : "Continue"} <ArrowRight className="h-4 w-4" />
             </button>
           </div>
         </motion.section>
