@@ -8,9 +8,10 @@
  *      — so the dashboards always render with meaningful numbers.
  */
 import { Router, type IRouter } from "express";
-import { db } from "@workspace/db";
-import { sql } from "drizzle-orm";
-import { getCompanyId, requirePermission } from "../middleware/authz";
+import multer from "multer";
+import { db, tallyLedgersTable, tallyVouchersTable, tallyVoucherLinesTable } from "@workspace/db";
+import { sql, eq } from "drizzle-orm";
+import { getCompanyId, requirePermission, auditAction } from "../middleware/authz";
 import {
   buildChecks, FY_END,
   DEMO_LEDGERS, DEMO_VOUCHERS, DEMO_ASSETS,
@@ -18,6 +19,19 @@ import {
 } from "../services/taxAuditEngine";
 
 const router: IRouter = Router();
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+const PYTHON_WORKER_URL = process.env.PYTHON_WORKER_URL ?? "http://localhost:8091";
+
+interface NormalizedLedger { name: string; group: string; opening_balance: number; closing_balance: number; prev_year_closing: number | null; prev_year_group: string | null; is_msme: boolean; msme_type: string | null; pan: string | null }
+interface NormalizedVoucher { date: string; type: string; number: string; party: string | null; narration: string | null; amount: number; mode: string | null }
+interface NormalizedLine { voucher_number: string; ledger: string; group: string; debit: number; credit: number }
+interface TallyParseResult { ok: boolean; warnings?: string[]; errors?: string[]; ledgers: NormalizedLedger[]; vouchers: NormalizedVoucher[]; voucher_lines: NormalizedLine[]; counts?: Record<string, number> }
+
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
 
 async function loadData(companyId: number): Promise<{ ledgers: Ledger[]; vouchers: Voucher[]; assets: AssetRow[]; source: "tally" | "demo" }> {
   try {
@@ -91,6 +105,79 @@ router.get("/tax-audit/:checkId", requirePermission("reports.read"), async (req,
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : "tax_audit_failed" });
   }
+});
+
+/**
+ * Import a Tally XML export: forward to the Python worker for parsing, then
+ * replace this company's tally_* rows. After import, GET /api/tax-audit reads
+ * real data (source:"tally").
+ */
+router.post("/tax-audit/import", requirePermission("uploads.create"), upload.single("file"), async (req, res): Promise<void> => {
+  const companyId = getCompanyId(req);
+  const file = req.file;
+  if (!file) { res.status(400).json({ ok: false, error: "No file uploaded" }); return; }
+
+  // 1. Parse via Python worker
+  let parsed: TallyParseResult;
+  try {
+    const form = new FormData();
+    form.append("file", new Blob([new Uint8Array(file.buffer)], { type: file.mimetype || "application/xml" }), file.originalname);
+    form.append("company_id", String(companyId));
+    const r = await fetch(`${PYTHON_WORKER_URL}/parse/tally`, { method: "POST", body: form, signal: AbortSignal.timeout(30_000) });
+    if (!r.ok) { res.status(502).json({ ok: false, error: `Parser returned ${r.status}` }); return; }
+    parsed = await r.json() as TallyParseResult;
+  } catch {
+    res.status(502).json({ ok: false, error: "Extraction worker unavailable. Start the Python worker and retry." });
+    return;
+  }
+
+  if (!parsed.ok || (parsed.ledgers.length === 0 && parsed.vouchers.length === 0)) {
+    res.status(422).json({ ok: false, error: "No ledgers or vouchers found in file.", warnings: parsed.warnings, errors: parsed.errors });
+    return;
+  }
+
+  // 2. Replace existing rows for this company
+  await db.delete(tallyVoucherLinesTable).where(eq(tallyVoucherLinesTable.companyId, companyId));
+  await db.delete(tallyVouchersTable).where(eq(tallyVouchersTable.companyId, companyId));
+  await db.delete(tallyLedgersTable).where(eq(tallyLedgersTable.companyId, companyId));
+
+  // 3. Insert normalized data (chunked to stay under Postgres param limits)
+  for (const batch of chunk(parsed.ledgers, 500)) {
+    await db.insert(tallyLedgersTable).values(batch.map(l => ({
+      companyId, name: l.name, group: l.group,
+      openingBalance: String(l.opening_balance), closingBalance: String(l.closing_balance),
+      prevYearClosing: l.prev_year_closing != null ? String(l.prev_year_closing) : null,
+      prevYearGroup: l.prev_year_group, isMsme: l.is_msme, msmeType: l.msme_type, pan: l.pan,
+    })));
+  }
+  for (const batch of chunk(parsed.vouchers, 500)) {
+    await db.insert(tallyVouchersTable).values(batch.map(v => ({
+      companyId, date: v.date, type: v.type, number: v.number,
+      party: v.party, narration: v.narration, amount: String(v.amount), mode: v.mode,
+    })));
+  }
+  for (const batch of chunk(parsed.voucher_lines, 500)) {
+    await db.insert(tallyVoucherLinesTable).values(batch.map(l => ({
+      companyId, voucherNumber: l.voucher_number, ledger: l.ledger, group: l.group,
+      debit: String(l.debit), credit: String(l.credit),
+    })));
+  }
+
+  await auditAction(req, "tax_audit.import", "tally_import", null, {
+    fileName: file.originalname, ...parsed.counts,
+  });
+
+  res.json({ ok: true, source: "tally", counts: parsed.counts ?? { ledgers: parsed.ledgers.length, vouchers: parsed.vouchers.length, voucher_lines: parsed.voucher_lines.length }, warnings: parsed.warnings });
+});
+
+/** Clear imported Tally data for this company — reverts the cockpit to demo data. */
+router.delete("/tax-audit/import", requirePermission("uploads.create"), async (req, res): Promise<void> => {
+  const companyId = getCompanyId(req);
+  await db.delete(tallyVoucherLinesTable).where(eq(tallyVoucherLinesTable.companyId, companyId));
+  await db.delete(tallyVouchersTable).where(eq(tallyVouchersTable.companyId, companyId));
+  await db.delete(tallyLedgersTable).where(eq(tallyLedgersTable.companyId, companyId));
+  await auditAction(req, "tax_audit.import_clear", "tally_import", null, {});
+  res.json({ ok: true, source: "demo" });
 });
 
 export default router;

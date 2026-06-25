@@ -1,8 +1,9 @@
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { ShieldCheck, X, AlertTriangle, FileSpreadsheet, ChevronRight } from "lucide-react";
+import { useRef, useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { ShieldCheck, X, AlertTriangle, FileSpreadsheet, ChevronRight, Upload, Loader2, RotateCcw } from "lucide-react";
 import PageHeader from "@/components/app/PageHeader";
 import { PageTransition } from "@/components/app/finverify-ui";
+import { useToast } from "@/hooks/use-toast";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -52,10 +53,42 @@ function num(v: string | number): string {
 
 export default function TaxAuditPage() {
   const [openCheck, setOpenCheck] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const { toast } = useToast();
+  const qc = useQueryClient();
 
   const { data, isLoading } = useQuery<TaxAuditIndex>({
     queryKey: ["tax-audit"],
     queryFn: () => fetch(`${BASE}/api/tax-audit`).then(r => r.json()),
+  });
+
+  const importMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const form = new FormData();
+      form.append("file", file);
+      const r = await fetch(`${BASE}/api/tax-audit/import`, { method: "POST", body: form });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok || !body.ok) throw new Error(body?.error || `Import failed (${r.status})`);
+      return body as { counts?: Record<string, number> };
+    },
+    onSuccess: (body) => {
+      const c = body.counts ?? {};
+      toast({ title: "Tally data imported", description: `${c.ledgers ?? 0} ledgers · ${c.vouchers ?? 0} vouchers. Scrutiny refreshed.` });
+      qc.invalidateQueries({ queryKey: ["tax-audit"] });
+      qc.invalidateQueries({ queryKey: ["tax-audit-detail"] });
+    },
+    onError: (e: Error) => toast({ title: "Import failed", description: e.message, variant: "destructive" }),
+  });
+
+  const resetMutation = useMutation({
+    mutationFn: async () => {
+      const r = await fetch(`${BASE}/api/tax-audit/import`, { method: "DELETE" });
+      if (!r.ok) throw new Error("Reset failed");
+    },
+    onSuccess: () => {
+      toast({ title: "Reverted to demo data" });
+      qc.invalidateQueries({ queryKey: ["tax-audit"] });
+    },
   });
 
   const { data: detail } = useQuery<{ ok: boolean; check: CheckDetail }>({
@@ -72,6 +105,36 @@ export default function TaxAuditPage() {
           ? `FY ending ${data.fyEnd} · ${data.stats.flagged} of ${data.stats.total} checks flagged · ${data.stats.highSeverity} high-severity`
           : "Loading ledger scrutiny…"}
       />
+
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".xml,text/xml,application/xml"
+          className="hidden"
+          onChange={e => { const f = e.target.files?.[0]; if (f) importMutation.mutate(f); e.target.value = ""; }}
+        />
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          disabled={importMutation.isPending}
+          className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+        >
+          {importMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+          {importMutation.isPending ? "Importing…" : "Import Tally Export (XML)"}
+        </button>
+        {data?.source === "tally" && (
+          <button
+            type="button"
+            onClick={() => resetMutation.mutate()}
+            disabled={resetMutation.isPending}
+            className="inline-flex items-center gap-2 rounded-xl border border-border px-4 py-2 text-sm font-medium text-muted-foreground hover:bg-muted disabled:opacity-60"
+          >
+            <RotateCcw className="h-4 w-4" /> Reset to demo
+          </button>
+        )}
+        <span className="text-xs text-muted-foreground">Tally → Gateway of Tally → Display → Day Book → Alt+E → XML</span>
+      </div>
 
       {data?.source === "demo" && (
         <div className="mb-4 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">

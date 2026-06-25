@@ -7,6 +7,7 @@ from .config import PYTHON_WORKER_PORT, GEMINI_MODEL, gemini_key
 from .routes.parse import router as parse_router
 from .routes.extract import router as extract_router
 from .routes.extract_expense import router as expense_router
+from .routes.tally import router as tally_router
 
 app = FastAPI(
     title="FinVerify Extraction Worker",
@@ -24,6 +25,7 @@ app.add_middleware(
 app.include_router(parse_router)
 app.include_router(extract_router)
 app.include_router(expense_router)
+app.include_router(tally_router)
 
 
 @app.on_event("startup")
@@ -61,6 +63,7 @@ async def health():
             "parse/excel",
             "parse/pdf-text",
             "parse/pdf-table",
+            "parse/tally",
             "extract/bank-statement",
             "extract/tally-ledger",
             "extract/gateway-statement",
