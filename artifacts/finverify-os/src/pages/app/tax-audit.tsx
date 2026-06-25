@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ShieldCheck, X, AlertTriangle, FileSpreadsheet, ChevronRight, Upload, Loader2, RotateCcw } from "lucide-react";
+import { ShieldCheck, X, AlertTriangle, FileSpreadsheet, ChevronRight, Upload, Loader2, RotateCcw, Download } from "lucide-react";
 import PageHeader from "@/components/app/PageHeader";
 import { PageTransition } from "@/components/app/finverify-ui";
 import { useToast } from "@/hooks/use-toast";
@@ -91,6 +91,21 @@ export default function TaxAuditPage() {
     },
   });
 
+  const packMutation = useMutation({
+    mutationFn: async () => {
+      const r = await fetch(`${BASE}/api/tax-audit/evidence-pack`, { method: "POST" });
+      if (!r.ok) throw new Error(`Export failed (${r.status})`);
+      const blob = await r.blob();
+      const cd = r.headers.get("Content-Disposition") || "";
+      const name = /filename="?([^"]+)"?/.exec(cd)?.[1] || "FinVerify_Tax_Audit.xlsx";
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = name; a.click();
+      URL.revokeObjectURL(url);
+    },
+    onError: (e: Error) => toast({ title: "Export failed", description: e.message, variant: "destructive" }),
+  });
+
   const { data: detail } = useQuery<{ ok: boolean; check: CheckDetail }>({
     queryKey: ["tax-audit-detail", openCheck],
     queryFn: () => fetch(`${BASE}/api/tax-audit/${openCheck}`).then(r => r.json()),
@@ -122,6 +137,15 @@ export default function TaxAuditPage() {
         >
           {importMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
           {importMutation.isPending ? "Importing…" : "Import Tally Export (XML)"}
+        </button>
+        <button
+          type="button"
+          onClick={() => packMutation.mutate()}
+          disabled={packMutation.isPending}
+          className="inline-flex items-center gap-2 rounded-xl border border-border px-4 py-2 text-sm font-medium hover:bg-muted disabled:opacity-60"
+        >
+          {packMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+          Evidence Pack (Excel)
         </button>
         {data?.source === "tally" && (
           <button

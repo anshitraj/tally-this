@@ -9,6 +9,7 @@
  */
 import { Router, type IRouter } from "express";
 import multer from "multer";
+import ExcelJS from "exceljs";
 import { db, tallyLedgersTable, tallyVouchersTable, tallyVoucherLinesTable } from "@workspace/db";
 import { sql, eq } from "drizzle-orm";
 import { getCompanyId, requirePermission, auditAction } from "../middleware/authz";
@@ -168,6 +169,87 @@ router.post("/tax-audit/import", requirePermission("uploads.create"), upload.sin
   });
 
   res.json({ ok: true, source: "tally", counts: parsed.counts ?? { ledgers: parsed.ledgers.length, vouchers: parsed.vouchers.length, voucher_lines: parsed.voucher_lines.length }, warnings: parsed.warnings });
+});
+
+/**
+ * Evidence pack — a CA-ready .xlsx with a cover sheet plus one worksheet per
+ * audit check (the working papers an auditor attaches to the file).
+ */
+const XL_BRAND = "FF5C2E";
+const XL_HEADER_FILL: ExcelJS.FillPattern = { type: "pattern", pattern: "solid", fgColor: { argb: XL_BRAND } };
+const XL_HEADER_FONT: Partial<ExcelJS.Font> = { bold: true, color: { argb: "FFFFFFFF" }, size: 11 };
+const SEV_COLOR: Record<string, string> = { high: "FFDC2626", medium: "FFF97F06", low: "FF2563EB", info: "FF6B7280" };
+
+function safeSheetName(idx: number, title: string): string {
+  const clean = title.replace(/[:\\/?*[\]]/g, " ").replace(/\s+/g, " ").trim();
+  return `${String(idx).padStart(2, "0")} ${clean}`.slice(0, 31);
+}
+
+router.post("/tax-audit/evidence-pack", requirePermission("reports.read"), async (req, res): Promise<void> => {
+  try {
+    const companyId = getCompanyId(req);
+    const { ledgers, vouchers, assets, source } = await loadData(companyId);
+    const checks = buildChecks(ledgers, vouchers, assets);
+
+    const companyRes = await db.execute(sql`SELECT name FROM companies WHERE id = ${companyId} LIMIT 1`);
+    const company = (companyRes.rows[0] as { name: string } | undefined)?.name ?? "Company";
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = "FinVerify OS";
+    wb.created = new Date();
+
+    // Cover sheet
+    const cover = wb.addWorksheet("Summary");
+    cover.columns = [{ width: 6 }, { width: 40 }, { width: 16 }, { width: 12 }, { width: 14 }];
+    const title = cover.addRow(["", "FinVerify OS — Tax Audit Working Papers"]);
+    title.font = { bold: true, size: 14, color: { argb: XL_BRAND } };
+    title.height = 26;
+    cover.addRow([]);
+    cover.addRow(["", "Company", company]);
+    cover.addRow(["", "FY ending", FY_END]);
+    cover.addRow(["", "Data source", source === "tally" ? "Imported Tally data" : "Demo data"]);
+    cover.addRow(["", "Generated on", new Date().toLocaleString("en-IN")]);
+    cover.addRow([]);
+    const hdr = cover.addRow(["#", "Check", "Clause", "Severity", "Flagged"]);
+    hdr.eachCell(c => { c.fill = XL_HEADER_FILL; c.font = XL_HEADER_FONT; });
+    checks.forEach((c, i) => {
+      const row = cover.addRow([i + 1, c.title, c.clause, c.severity.toUpperCase(), c.rows.length]);
+      row.getCell(4).font = { bold: true, color: { argb: SEV_COLOR[c.severity] ?? SEV_COLOR.info } };
+    });
+
+    // One sheet per check
+    checks.forEach((c, i) => {
+      const ws = wb.addWorksheet(safeSheetName(i + 1, c.title));
+      const t = ws.addRow([`${c.clause} — ${c.title}`]);
+      t.font = { bold: true, size: 12, color: { argb: XL_BRAND } };
+      ws.addRow([c.description]);
+      ws.addRow([]);
+      ws.columns = c.columns.map(col => ({ width: col.numeric ? 18 : 26 }));
+      const headerRow = ws.addRow(c.columns.map(col => col.label));
+      headerRow.eachCell(cell => { cell.fill = XL_HEADER_FILL; cell.font = XL_HEADER_FONT; cell.alignment = { horizontal: "center" }; });
+      if (c.rows.length === 0) {
+        ws.addRow(["No exceptions — check passed."]);
+      } else {
+        c.rows.forEach(r => {
+          const row = ws.addRow(c.columns.map(col => r[col.key] ?? ""));
+          c.columns.forEach((col, ci) => {
+            if (col.numeric) { const cell = row.getCell(ci + 1); cell.numFmt = "#,##0.00"; cell.alignment = { horizontal: "right" }; }
+          });
+        });
+      }
+      if (c.notes?.length) { ws.addRow([]); c.notes.forEach(n => ws.addRow([`Note: ${n}`])); }
+    });
+
+    await auditAction(req, "tax_audit.evidence_pack", "tally_import", null, { checks: checks.length, source });
+
+    const filename = `FinVerify_Tax_Audit_${company.replace(/\s+/g, "_")}_${FY_END}.xlsx`;
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    if (!res.headersSent) res.status(500).json({ ok: false, error: err instanceof Error ? err.message : "evidence_pack_failed" });
+  }
 });
 
 /** Clear imported Tally data for this company — reverts the cockpit to demo data. */
