@@ -40,6 +40,7 @@ interface SecurityPosture {
   fileStorageMode: string;
   aiMode: string;
   aiProviderStatus?: {
+    claude?: "configured" | "missing";
     gemini: "configured" | "missing";
     nvidia: "configured" | "missing";
     openrouter: "disabled" | "configured" | "missing";
@@ -299,10 +300,9 @@ export default function SettingsPage() {
         <div className="space-y-4">
           <div className="grid md:grid-cols-2 gap-3">
             {[
+              { label: "Claude", value: security?.aiProviderStatus?.claude ?? "missing" },
               { label: "Gemini", value: security?.aiProviderStatus?.gemini ?? "missing" },
-              { label: "NVIDIA", value: security?.aiProviderStatus?.nvidia ?? "missing" },
-              { label: "OpenRouter", value: security?.aiProviderStatus?.openrouter ?? "disabled" },
-              { label: "Primary model", value: security?.aiProviderStatus?.currentPrimaryModel ?? "gemini-2.5-flash" },
+              { label: "Primary model", value: security?.aiProviderStatus?.currentPrimaryModel ?? "rule-based" },
               { label: "Fallback", value: security?.aiProviderStatus?.ruleBasedFallbackActive ? "Rule-based mode active" : "Primary only" },
               { label: "Output status", value: "AI suggested / pending review" },
             ].map(item => (

@@ -91,6 +91,13 @@
     transform: translateY(-1px);
   }
 
+  .fv-button-primary:disabled,
+  .fv-button-secondary:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+    transform: none;
+  }
+
   .fv-button-secondary {
     @apply inline-flex items-center justify-center gap-2 rounded-xl border bg-card px-4 py-2 text-sm font-semibold transition;
     border-color: rgba(13, 148, 136, 0.45);

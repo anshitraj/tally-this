@@ -1,11 +1,16 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
 import { motion } from "framer-motion";
-import { ArrowLeft, CheckCircle, Chrome, Database, Eye, EyeOff, Github, Loader2 } from "lucide-react";
+import { ArrowLeft, Chrome, Database, Eye, EyeOff, Github, Loader2 } from "lucide-react";
 import { login } from "@/lib/auth";
+import { peekPendingJob } from "@/components/jobs/jobUi";
+import { BrandMark } from "@/components/app/finverify-ui";
+import { ProductDemo } from "@/components/marketing/ProductDemo";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
-const AUTH_TIMEOUT_MS = 12000;
+const AUTH_TIMEOUT_MS = 20000;
+// Loading the sample workspace writes a few hundred rows; give it room on a slow database.
+const DEMO_TIMEOUT_MS = 60000;
 
 type AuthMode = "signin" | "register";
 
@@ -23,7 +28,10 @@ interface AuthResponse {
 }
 
 function nextRouteFor(email: string) {
-  return localStorage.getItem(`finverify_onboarding_complete:${email}`) === "true" ? "/app/overview" : "/onboarding";
+  if (localStorage.getItem(`finverify_onboarding_complete:${email}`) !== "true") return "/onboarding";
+  // A file dropped on the home page before sign-in goes straight to its job.
+  const job = peekPendingJob();
+  return job ? `/app/jobs/${job}` : "/app/overview";
 }
 
 async function readAuthResponse(response: Response): Promise<AuthResponse> {
@@ -34,9 +42,9 @@ async function readAuthResponse(response: Response): Promise<AuthResponse> {
   return data;
 }
 
-async function authFetch(path: string, body: unknown): Promise<AuthResponse> {
+async function authFetch(path: string, body: unknown, timeoutMs = AUTH_TIMEOUT_MS): Promise<AuthResponse> {
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), AUTH_TIMEOUT_MS);
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(`${BASE}${path}`, {
       method: "POST",
@@ -46,7 +54,7 @@ async function authFetch(path: string, body: unknown): Promise<AuthResponse> {
     }).then(readAuthResponse);
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
-      throw new Error("Sign-in is taking too long. Please check the backend/database connection and try again.");
+      throw new Error("This is taking longer than usual. Please try again in a moment.");
     }
     throw err;
   } finally {
@@ -56,7 +64,7 @@ async function authFetch(path: string, body: unknown): Promise<AuthResponse> {
 
 export default function LoginPage() {
   const [, navigate] = useLocation();
-  const [mode, setMode] = useState<AuthMode>("signin");
+  const [mode, setMode] = useState<AuthMode>(() => new URLSearchParams(window.location.search).get("mode") === "signup" ? "register" : "signin");
   const [name, setName] = useState("");
   const [companyName, setCompanyName] = useState("");
   const [email, setEmail] = useState("");
@@ -102,7 +110,7 @@ export default function LoginPage() {
     setError("");
     setDemoLoading(true);
     try {
-      const data = await authFetch("/api/auth/demo", { intent: "load_demo_workspace" });
+      const data = await authFetch("/api/auth/demo", { intent: "load_demo_workspace" }, DEMO_TIMEOUT_MS);
 
       login({
         token: data.token,
@@ -110,7 +118,7 @@ export default function LoginPage() {
         user: data.user,
       });
       localStorage.setItem(`finverify_onboarding_complete:${data.user.email}`, "true");
-      navigate("/app/overview");
+      navigate(nextRouteFor(data.user.email));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Demo workspace could not be loaded");
     } finally {
@@ -122,35 +130,16 @@ export default function LoginPage() {
     <div className="fv-login-shell">
       <div className="fv-login-brand-panel">
         <div>
-          <div className="flex items-center gap-2 mb-12">
-            <div className="fv-brand-accent-bg w-7 h-7 rounded-lg flex items-center justify-center">
-              <CheckCircle className="w-4 h-4 text-white" />
-            </div>
-            <span className="font-semibold text-white">FinVerify OS</span>
-          </div>
+          <div className="mb-8"><BrandMark light /></div>
           <h2 className="text-3xl font-bold text-white mb-4 leading-tight">
-            Your real finance data,<br />verified before CA review
+            Less entry.<br />More clarity.
           </h2>
-          <p className="text-white/60 text-sm">
-            Create your workspace, upload statements and exports, and review only the records stored in your database.
+          <p className="text-white/70 text-sm">
+            Upload a file. Review only what needs attention. Download the result.
           </p>
         </div>
-        <div className="space-y-4">
-          {[
-            "Upload-based verification from your files",
-            "Database-backed users and sessions",
-            "Rule-first reconciliation and risk checks",
-            "Demo data loads only when you ask for it",
-          ].map(item => (
-            <div key={item} className="flex items-center gap-3">
-              <div className="w-5 h-5 rounded-full bg-white/15 flex items-center justify-center flex-shrink-0">
-                <CheckCircle className="fv-text-brand-accent w-3 h-3" />
-              </div>
-              <span className="text-white/80 text-sm">{item}</span>
-            </div>
-          ))}
-        </div>
-        <p className="text-white/30 text-xs">(c) 2026 FinVerify OS. Upload-based finance verification.</p>
+        <div className="fv-auth-preview"><ProductDemo /></div>
+        <p className="text-white/40 text-xs">© 2026 TallyThis</p>
       </div>
 
       <div className="fv-login-form-panel">
@@ -167,22 +156,17 @@ export default function LoginPage() {
             Back to home
           </button>
 
-          <div className="lg:hidden flex items-center gap-2 mb-8">
-            <div className="fv-brand-icon w-7 h-7 rounded-lg flex items-center justify-center">
-              <CheckCircle className="w-4 h-4 text-white" />
-            </div>
-            <span className="font-semibold">FinVerify OS</span>
-          </div>
+          <div className="lg:hidden mb-8"><BrandMark /></div>
 
-          <h1 className="text-2xl font-bold mb-1">{isRegister ? "Create workspace" : "Sign in"}</h1>
+          <h1 className="text-2xl font-bold mb-1">{isRegister ? "Create your free account" : "Welcome back"}</h1>
           <p className="text-muted-foreground text-sm mb-6">
-            {isRegister ? "Start with an empty database-backed workspace." : "Access your database-backed workspace."}
+            {isRegister ? "Takes under a minute. No card needed." : "Sign in to continue."}
           </p>
 
           <div className="mb-6 grid grid-cols-2 rounded-xl border border-border bg-muted/40 p-1">
             {[
               { id: "signin" as const, label: "Sign in" },
-              { id: "register" as const, label: "Create" },
+              { id: "register" as const, label: "Create account" },
             ].map(item => (
               <button
                 key={item.id}
@@ -240,12 +224,12 @@ export default function LoginPage() {
                   />
                 </div>
                 <div>
-                  <label className="text-sm font-medium mb-1.5 block">Company name</label>
+                  <label className="text-sm font-medium mb-1.5 block">Firm or business name</label>
                   <input
                     type="text"
                     value={companyName}
                     onChange={e => setCompanyName(e.target.value)}
-                    placeholder="Your startup Pvt Ltd"
+                    placeholder="Mehta & Associates"
                     className="w-full px-3 py-2.5 border border-border rounded-lg text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors"
                     required
                   />
@@ -293,7 +277,7 @@ export default function LoginPage() {
               disabled={submitting || demoLoading}
               className="fv-brand-accent-bg w-full py-2.5 font-semibold rounded-lg transition-colors text-sm disabled:opacity-60"
             >
-              {submitting ? "Working..." : isRegister ? "Create workspace" : "Sign in"}
+              {submitting ? "Working..." : isRegister ? "Create account" : "Sign in"}
             </button>
           </form>
 
@@ -303,9 +287,9 @@ export default function LoginPage() {
                 <Database className="h-4 w-4" />
               </div>
               <div>
-                <p className="text-sm font-semibold">Need test data?</p>
+                <p className="text-sm font-semibold">Just looking around?</p>
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  Load NovaStack sample finance records to test uploads, reconciliation, invoices, ledgers, GST/TDS risks, payroll, gateway settlements, CA review, reports, and settings.
+                  Open a sample workspace with example data. Nothing you do there touches a real account.
                 </p>
               </div>
             </div>
@@ -316,11 +300,9 @@ export default function LoginPage() {
               className="flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-background px-3 py-2.5 text-sm font-semibold transition-colors hover:bg-muted/50 disabled:opacity-60"
             >
               {demoLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
-              {demoLoading ? "Loading demo workspace..." : "Load demo workspace"}
+              {demoLoading ? "Opening sample workspace…" : "Try the sample workspace"}
             </button>
-            <p className="mt-2 text-[11px] leading-4 text-muted-foreground">
-              This intentionally seeds sample records. Real signup still starts empty.
-            </p>
+
           </div>
         </motion.div>
       </div>

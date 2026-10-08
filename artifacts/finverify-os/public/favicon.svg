@@ -1,5 +1,1 @@
-<svg width="180" height="180" viewBox="0 0 180 180" fill="none" xmlns="http://www.w3.org/2000/svg">
-<rect width="180" height="180" rx="42" fill="#065F46"/>
-<path d="M90 47a43 43 0 1 0 43 43h-18a25 25 0 1 1-7.32-17.68L86.5 93.5 77 84l-12.5 12.5L86.5 118.5l39.2-39.2A43 43 0 0 0 90 47Z" fill="#FFFFFF"/>
-<path d="M126 49l12 12-12 12-12-12 12-12Z" fill="#F97F06"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none"><title>TallyThis</title><rect width="64" height="64" rx="14" fill="#143e2c"/><path d="M12 17h35M27 17v33" stroke="#f8faf7" stroke-width="6"/><path d="m37 39 7 7 13-20" stroke="#f8faf7" stroke-width="6"/></svg>

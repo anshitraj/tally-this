@@ -1,0 +1,5 @@
+Synthetic scanned statement note
+This file is not a customer document.
+A scanned bank PDF has no text layer.
+FinVerify should say: This document appears to be scanned. OCR/AI extraction is required.
+It must not report zero transactions as a successful parse.

@@ -9,6 +9,8 @@ import { sql } from "drizzle-orm";
 export type WorkflowRunType =
   | "upload_parse"
   | "import_records"
+  | "bank_to_tally"
+  | "ecommerce_gst"
   | "bank_tally_reconciliation"
   | "bank_invoice_reconciliation"
   | "bank_gateway_reconciliation"
@@ -33,6 +35,19 @@ const DEFAULT_STEPS: Record<WorkflowRunType, RunStep[]> = {
     { label: "Saving metadata", status: "pending", percent: 30 },
     { label: "Detecting rows and columns", status: "pending", percent: 60 },
     { label: "Preparing summary", status: "pending", percent: 90 },
+    { label: "Completed", status: "pending", percent: 100 },
+  ],
+  bank_to_tally: [
+    { label: "Reading bank statement", status: "pending", percent: 15 },
+    { label: "Normalizing transactions", status: "pending", percent: 45 },
+    { label: "Checking totals", status: "pending", percent: 70 },
+    { label: "Preparing Tally export", status: "pending", percent: 90 },
+    { label: "Completed", status: "pending", percent: 100 },
+  ],
+  ecommerce_gst: [
+    { label: "Reading marketplace file", status: "pending", percent: 20 },
+    { label: "Normalizing sales", status: "pending", percent: 55 },
+    { label: "Building GSTR-1 draft tabs", status: "pending", percent: 80 },
     { label: "Completed", status: "pending", percent: 100 },
   ],
   import_records: [
@@ -107,6 +122,8 @@ const DEFAULT_STEPS: Record<WorkflowRunType, RunStep[]> = {
 function runTitle(runType: WorkflowRunType, meta?: Record<string, string>): string {
   const labels: Record<WorkflowRunType, string> = {
     upload_parse: `Upload & parse${meta?.fileName ? ` — ${meta.fileName}` : ""}`,
+    bank_to_tally: "Bank Statement → Tally",
+    ecommerce_gst: "E-commerce GST",
     import_records: "Import records",
     bank_tally_reconciliation: "Bank + Tally reconciliation",
     bank_invoice_reconciliation: "Bank + Invoice reconciliation",
@@ -129,6 +146,7 @@ export async function createWorkflowRun(input: {
   month?: string;
   year?: number;
   createdBy?: number | null;
+  clientId?: number | null;
   meta?: Record<string, string>;
 }): Promise<string> {
   const steps = DEFAULT_STEPS[input.runType] ?? [];
@@ -151,9 +169,9 @@ export async function createWorkflowRun(input: {
 
   try {
     const result = await db.execute(sql`
-      INSERT INTO workflow_runs (company_id, month, year, run_type, title, status, progress_percent, current_step, steps_json, created_by, created_at, updated_at)
+      INSERT INTO workflow_runs (company_id, client_id, month, year, run_type, title, status, progress_percent, current_step, steps_json, created_by, created_at, updated_at)
       VALUES (
-        ${input.companyId}, ${month}, ${year}, ${input.runType},
+        ${input.companyId}, ${input.clientId ?? input.companyId}, ${month}, ${year}, ${input.runType},
         ${title},
         'running', 0,
         ${steps[0]?.label ?? "Starting"},
@@ -245,34 +263,51 @@ export async function saveRunArtifact(runId: string, input: {
   title: string;
   storageKey?: string | null;
   jsonData?: unknown;
-}): Promise<void> {
-  if (runId.startsWith("local-")) return;
+  companyId?: number;
+}): Promise<boolean> {
+  if (runId.startsWith("local-")) return false;
   try {
+    if (input.companyId != null) {
+      const owned = await db.execute(sql`
+        SELECT 1 FROM workflow_runs WHERE id = ${runId} AND company_id = ${input.companyId} LIMIT 1
+      `);
+      if (!owned.rows?.length) return false;
+    }
     await db.execute(sql`
       INSERT INTO run_artifacts (run_id, artifact_type, title, storage_key, json_data, created_at)
       VALUES (${runId}, ${input.artifactType}, ${input.title}, ${input.storageKey ?? null}, ${JSON.stringify(input.jsonData ?? {})}::jsonb, NOW())
     `);
-  } catch { /* non-fatal */ }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
  * Get run progress for polling.
  */
-export async function getRunProgress(runId: string): Promise<{
+export async function getRunProgress(runId: string, companyId?: number): Promise<{
   runId: string;
   status: string;
   progressPercent: number;
   currentStep: string;
   steps: RunStep[];
+  resultLink?: string | null;
+  error?: string | null;
 } | null> {
   if (runId.startsWith("local-")) return null;
   try {
-    const result = await db.execute(sql`
-      SELECT id, status, progress_percent, COALESCE(current_step, '') as current_step, steps_json
+    const result = companyId == null
+      ? await db.execute(sql`
+      SELECT id, status, progress_percent, COALESCE(current_step, '') as current_step, steps_json, failed_reason
       FROM workflow_runs WHERE id = ${runId} LIMIT 1
+    `)
+      : await db.execute(sql`
+      SELECT id, status, progress_percent, COALESCE(current_step, '') as current_step, steps_json, failed_reason
+      FROM workflow_runs WHERE id = ${runId} AND company_id = ${companyId} LIMIT 1
     `);
     const row = result.rows[0] as {
-      id: string; status: string; progress_percent: number; current_step: string; steps_json: unknown;
+      id: string; status: string; progress_percent: number; current_step: string; steps_json: unknown; failed_reason?: string | null;
     } | undefined;
     if (!row) return null;
     return {
@@ -281,6 +316,8 @@ export async function getRunProgress(runId: string): Promise<{
       progressPercent: row.progress_percent,
       currentStep: row.current_step,
       steps: Array.isArray(row.steps_json) ? row.steps_json as RunStep[] : [],
+      resultLink: null,
+      error: row.failed_reason ?? null,
     };
   } catch {
     return null;

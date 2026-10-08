@@ -1,14 +1,40 @@
-# FinVerify OS
+# TallyThis
 
-FinVerify OS is a pre-CA finance verification layer for Indian startups, agencies, D2C brands, SaaS teams, creator businesses, and mid-sized companies.
+Support: [contact@tallythis.xyz](mailto:contact@tallythis.xyz). Website domain is pending confirmation (`tally.xyz` versus `tallythis.xyz`); no production DNS or mail service has been provisioned by these code changes.
 
-> Your startup's finance data, verified before it reaches your CA.
+Production launch requirements and the code audit are in [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md). Brand changes preserve the existing package names, database schemas and browser storage keys for compatibility.
 
-## What Problem It Solves
+TallyThis is accounting automation for CAs, accountants, and finance teams.
 
-Before a CA can review books, someone has to match bank entries, invoices, ledgers, payroll, GST/TDS files, expenses, and payment gateway settlements. That work often happens across Excel sheets, email, exports, and screenshots. FinVerify OS gives founders and finance teams a rules-first workflow to identify verified records, missing documents, mismatches, duplicate entries, and items that need CA review.
+> Upload. Verify. Export.
 
-This is not generic accounting software, not a CA replacement, and not a fake live integration demo.
+Upload a bank statement, Tally export, marketplace report, invoice register, or invoice PDFs. TallyThis works out what the file is (bank, marketplace, file type), normalizes it, shows only what needs a person, and exports Tally XML, CSV, or a draft GST JSON. Choices are pick-from-a-list, not typing. It does not file returns and it does not replace a CA.
+
+## What you use first
+
+- Bank Statement → Tally
+- Bank ↔ Tally
+- E-commerce GST
+- Invoice ↔ Bank
+- Clients, Reports, Activity, Settings
+- Advanced keeps the older upload center, tax audit, payroll, gateway, and CA review screens
+
+Workflow details: [`docs/PRODUCT_WORKFLOWS.md`](docs/PRODUCT_WORKFLOWS.md). Service split: [`docs/MIGRATION_GO_PYTHON.md`](docs/MIGRATION_GO_PYTHON.md).
+
+## Interface and product walkthroughs
+
+The landing page and workspace share a forest green and white visual system, a custom TallyThis wordmark and T/check symbol, and responsive layouts. The main navigation shows Clients, Bank → Tally, Bank ↔ Tally, E-commerce GST, Invoice ↔ Bank, Reports and Activity. The logo opens the workspace home; History, Settings and specialist pages remain under Advanced. Reports links directly to saved job outputs, offers a CA review PDF, and keeps individual reports under More options.
+
+Landing and sign-in animations are **illustrative sample walkthroughs**, implemented as local UI timelines with typing, row checks, review choices and export states. They do not run parsers, upload sample files or create accounting records. They pause offscreen or in background tabs, have pause/replay controls, and show a static completed illustration when reduced motion is requested. Real file uploads continue into the existing accounting jobs, including files selected before sign-in.
+
+Bank logos identify uploaded statement sources, not bank connections or partnerships. Asset sources are recorded in [`public/brands/SOURCES.md`](artifacts/finverify-os/public/brands/SOURCES.md).
+
+UI regression checks (with browser-only API fixtures; the running frontend defaults to port 21950):
+
+```powershell
+$env:BASE_URL = 'http://localhost:21950'
+pnpm --filter @workspace/finverify-os exec playwright test e2e/refresh.spec.ts --output=../../tmp/ui-refresh-tests
+```
 
 ## Current Implementation
 
@@ -22,7 +48,7 @@ This is not generic accounting software, not a CA replacement, and not a fake li
 
 ## System Architecture
 
-The canonical high-level architecture is documented in [`ARCHITECTURE.md`](./ARCHITECTURE.md). It follows the upload-based FinVerify flow: React/Vite frontend, Express `/api/*`, validation, audit logging, Neon/Postgres, optional private R2 file storage, parser/extractor, rules-first matching, reports, risk engine, CA review queue, and optional server-side AI extraction with schema validation and human review.
+The canonical high-level architecture is documented in [`ARCHITECTURE.md`](./ARCHITECTURE.md). It follows the upload-based TallyThis flow: React/Vite frontend, Express `/api/*`, validation, audit logging, Neon/Postgres, optional private R2 file storage, parser/extractor, rules-first matching, reports, risk engine, CA review queue, and optional server-side AI extraction with schema validation and human review.
 
 ## What Is Real
 
@@ -43,16 +69,24 @@ The canonical high-level architecture is documented in [`ARCHITECTURE.md`](./ARC
 - Server-side CSV, Excel, and PDF parsing for row counts, detected columns, sheet/page metadata, text previews, and audit logging.
 - Production-style auth foundation: hashed passwords, signed bearer tokens, revocable database sessions, route permissions, and company-scoped queries.
 - Object storage abstraction for raw uploads and stored exports using metadata-only mode by default or S3/R2/GCS-compatible storage when configured.
-- Optional server-side AI provider layer with Gemini primary, NVIDIA fallback, OpenRouter disabled by default, strict JSON validation, usage logging, and rule-based fallback.
+- Optional server-side AI provider layer with Gemini primary, Claude (Anthropic) as last-resort fallback, NVIDIA optional, OpenRouter disabled by default, strict JSON validation, usage logging, and rule-based fallback.
+- Bank statement PDFs are read by column position (`services/pdfStatement.ts`): each amount is taken from the Withdrawal, Deposit or Balance column it sits under, and every row is proved against the bank's printed running balance (previous balance + deposit − withdrawal = balance), plus the printed opening/closing balance and row numbers when present. The bank is identified from the IFSC printed in the header (`services/bankDirectory.ts`). Password-protected PDFs are detected in the browser and the password is asked for before upload; it is used only to open the file.
+- Scanned statements, photos, and statements the table reader cannot fully prove are read a second time by Gemini, then Claude only if every Gemini model fails (locked PDFs are sent as page images). Each AI answer is scored by the same running-balance proof; a fully proved answer is used, otherwise the next model is tried. Invoice PDFs are read the same way and stay "AI extracted — pending review".
+- History (`/app/history`): every job the workspace has run, newest first, with who ran it. Search by file name, filter by job, open an item to see the saved result and download the Tally file, CSV, report or GST draft again. Backed by `GET /api/jobs/history` and `/api/jobs/history/:id`, scoped to the active client. Original uploaded files are not kept by the four jobs; only what was read from them is.
+- Database move: `pnpm --filter @workspace/db run copy-db` copies `DATABASE_URL_OLD` into an empty `DATABASE_URL_NEW` (schema, data, sequences, indexes), reading the old one only, then compares row counts and an MD5 of every table. The active database is now Neon Singapore (`aws-ap-southeast-1`); Neon has no Mumbai region.
+- Dev tool: `FV_PDF_PASSWORD=... pnpm --filter @workspace/api-server run read-statement -- <file.pdf> [--ai]` prints every row and the proof.
+- Drop-anything home page: `POST /api/jobs/detect` classifies uploaded files (bank statement, Tally export, marketplace report, invoice list or document) and opens the right job.
+- Bank → Tally XML includes create-only ledger masters (parties under Sundry Debtors/Creditors, expenses under their groups) so imports do not stop on a missing ledger. Existing ledgers are not altered.
 - Platform/security posture APIs for company profile, users, documents, GST records, audit logs, and security status.
+- Local Tally connector for customer-run Tally gateways. It pulls Tally Day Book XML through the Python worker, refreshes tax-audit Tally tables, creates ledger entries for reconciliation, and reruns rule-based matching.
 
 ## What Is Mocked Or Prototype-Only
 
 - Auth uses hashed passwords, signed bearer tokens, database-backed sessions, revocation on logout, role permissions, and company-scoped API queries. The frontend stores the bearer session in localStorage; production deployments should harden this further with secure cookies or an equivalent trusted session transport.
-- Current version is upload-based.
+- Current version is upload-first, with a local Tally connector available when Tally is reachable from the API host.
 - File storage is metadata-only unless private Cloudflare R2 or another compatible storage provider is configured. Large binaries are not stored in Neon.
-- Direct Tally, GST/GSP, bank feed, Zoho Books API, Razorpay/Cashfree/Stripe API, Gmail invoice import, WhatsApp collection, and Account Aggregator integrations are future work.
-- Image uploads are accepted as metadata/extraction-ready records; OCR is not wired yet.
+- Direct GST/GSP, bank feed, Zoho Books API, Razorpay/Cashfree/Stripe API, Gmail invoice import, WhatsApp collection, and Account Aggregator integrations are future work.
+- Without a Claude or Gemini key, scanned PDFs and photos fall back to local Tesseract OCR if installed, otherwise the user is asked for the bank's Excel/CSV download.
 - Optional demo seeding exists only for product validation and is disabled unless `ALLOW_DEMO_SEED=true`.
 
 ## Run Locally
@@ -67,6 +101,18 @@ Typecheck:
 
 ```bash
 pnpm run typecheck
+```
+
+Job automation tests (parsers, matching, Tally XML, file detection):
+
+```bash
+pnpm --filter @workspace/api-server test
+```
+
+Sample PDFs (text and scanned) for manual testing:
+
+```bash
+node artifacts/api-server/scripts/make-sample-statements.mjs ./tmp-samples
 ```
 
 Build:
@@ -111,10 +157,11 @@ pnpm --filter @workspace/db run push
 - `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_REDIRECT_URI`: GitHub OAuth app credentials. The redirect URI should be `/api/auth/github/callback`.
 - `CLOUDFLARE_R2_ACCOUNT_ID`, `CLOUDFLARE_R2_ENDPOINT`, `CLOUDFLARE_R2_BUCKET`, `CLOUDFLARE_R2_ACCESS_KEY_ID`, `CLOUDFLARE_R2_SECRET_ACCESS_KEY`: private R2 upload storage. `STORAGE_*` aliases are still supported for older code paths.
 - `CLOUDFLARE_R2_PUBLIC_URL`: optional custom public prefix, only if you deliberately configure one. Normal file access should use signed URLs.
-- `GEMINI_API_KEY`, `GEMINI_MODEL`, `GEMINI_FALLBACK_MODEL`: Gemini is the primary AI provider. If `GEMINI_MODEL` is missing, the backend uses the safe default `gemini-2.5-flash`.
+- `ANTHROPIC_API_KEY` (alias `CLAUDE_API_KEY`), `ANTHROPIC_MODEL`, `ANTHROPIC_EFFORT`, `ANTHROPIC_MAX_TOKENS`: Claude is the fallback used only when every Gemini model fails. Defaults: model `claude-opus-5-5`, effort `low`, 16000 max tokens. Organisation-level keys also need `ANTHROPIC_WORKSPACE_ID`. Requests use server-side refusal fallback (`fallbacks: "default"`).
+- `GEMINI_API_KEY`, `GEMINI_MODEL`, `GEMINI_FALLBACK_MODEL`: Gemini is the primary provider. Recommended: `GEMINI_MODEL=gemini-3.1-pro-preview` and `GEMINI_FALLBACK_MODEL=gemini-3.5-flash,gemini-2.5-flash` (comma-separated, tried in order). Pro models need a billed Google project; on a free-tier key they fail at once and the flash models are used. Brief "high demand" errors are retried.
 - `NVIDIA_API_KEY`, `NVIDIA_BASE_URL`, `NVIDIA_MODEL`: NVIDIA is the secondary provider using OpenAI-compatible chat completions.
 - `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `OPENROUTER_ENABLED=false`, `OPENROUTER_PRODUCTION_ONLY=true`: OpenRouter is an emergency fallback only and is disabled by default.
-- `AI_PROVIDER_ORDER=gemini,nvidia`, `AI_ENABLE_FALLBACKS=true`, `AI_ENABLE_STRUCTURED_OUTPUT=true`, `AI_ENABLE_LOGGING=true`, `AI_STORE_RAW_PROMPTS=false`, `AI_TIMEOUT_MS=30000`, `AI_MAX_RETRIES=1`: provider routing and safety controls.
+- `AI_PROVIDER_ORDER=gemini,claude`, `AI_ENABLE_FALLBACKS=true`, `AI_ENABLE_STRUCTURED_OUTPUT=true`, `AI_ENABLE_LOGGING=true`, `AI_STORE_RAW_PROMPTS=false`, `AI_TIMEOUT_MS=30000`, `AI_MAX_RETRIES=1`: provider routing and safety controls.
 - `STORAGE_FORCE_PATH_STYLE`: set `true` for compatible providers that require path-style addressing.
 - `ALLOW_DEMO_SEED`: set `true` to allow `/api/demo/seed`. Leave unset for real-data workspaces.
 
@@ -125,10 +172,11 @@ AI is optional, rule-first, and server-side only. Browser code never receives pr
 Provider order:
 
 1. Gemini main model from `GEMINI_MODEL`
-2. Gemini fallback model from `GEMINI_FALLBACK_MODEL`
-3. NVIDIA model from `NVIDIA_MODEL`
-4. OpenRouter only when explicitly enabled and allowed
-5. Rule-based fallback
+2. Gemini fallback models from `GEMINI_FALLBACK_MODEL`
+3. Claude from `ANTHROPIC_MODEL` (skipped when no key is set)
+4. NVIDIA model from `NVIDIA_MODEL` (only if listed in `AI_PROVIDER_ORDER`)
+5. OpenRouter only when explicitly enabled and allowed
+6. Rule-based fallback
 
 AI can assist with invoice extraction, bank narration interpretation, ledger suggestions, risk explanations, month-end summaries, CA-friendly notes, text cleanup, and column mapping suggestions. It must not mark transactions verified, make legal/tax judgments, invent financial fields, file GST/TDS, execute payments, or modify financial data without review.
 
@@ -156,7 +204,7 @@ Invoice AI extraction is available after an upload has parsed text. The flow is:
 8. The UI shows `AI extracted — pending review`; low-confidence results show `Needs review`.
 9. Accepted extractions create invoice records with `pending_reconciliation` status so deterministic reconciliation can use them.
 
-AI does not verify accounting truth. It does not confirm GST, TDS, legality, fraud, audit conclusions, or CA readiness. If AI providers fail, FinVerify returns `AI unavailable — using rule-based extraction` and keeps the result pending review.
+AI does not verify accounting truth. It does not confirm GST, TDS, legality, fraud, audit conclusions, or CA readiness. If AI providers fail, TallyThis returns `AI unavailable — using rule-based extraction` and keeps the result pending review.
 
 Dev-only invoice extraction smoke test:
 
@@ -174,7 +222,7 @@ curl http://localhost:8080/api/health
 
 Email/password signup and signin are real database-backed flows. A new signup creates an empty company workspace in Neon with founder permissions; it does not seed demo data.
 
-Google and GitHub OAuth use server-side authorization-code flow. The browser redirects to the provider, the backend exchanges the code using server-only client secrets, fetches the verified email/profile, links to an existing user by email when present, or creates a new empty workspace for first-time OAuth users. FinVerify then issues its own JWT session and stores a revocable session row.
+Google and GitHub OAuth use server-side authorization-code flow. The browser redirects to the provider, the backend exchanges the code using server-only client secrets, fetches the verified email/profile, links to an existing user by email when present, or creates a new empty workspace for first-time OAuth users. TallyThis then issues its own JWT session and stores a revocable session row.
 
 OAuth callback URLs for local development:
 
@@ -189,7 +237,8 @@ Demo data is never loaded automatically. `/api/demo/seed` remains disabled unles
 - Excel: server-side first-sheet row count, detected columns, and sheet names.
 - PDF: server-side text extraction, page count, and text preview.
 - Image invoices: accepted as metadata/extraction-ready uploads; OCR is future work.
-- Tally/Zoho/GST/payroll/gateway files: supported through upload-based workflows, not live connectors.
+- Tally files: supported through upload-based XML/CSV workflows and the local Tally connector when configured.
+- Zoho/GST/payroll/gateway files: supported through upload-based workflows, not live API connectors.
 
 When R2 is configured, raw uploaded files are written to a private bucket and Neon stores metadata only: provider, bucket, region, key, size, checksum, retention date, and deletion metadata. Files should be accessed with temporary signed URLs, not public bucket permissions. Stored report exports are available through `GET /api/reports/export-csv?type=...&store=true`.
 
@@ -216,15 +265,15 @@ Thresholds:
 - Persistent company/user model and multi-tenant isolation.
 - Robust CSV/XLSX mapping templates.
 - Document extraction for PDFs and images.
-- Direct Tally, Zoho Books, GST/GSP, gateway, bank feed, Gmail, WhatsApp, and Account Aggregator integrations.
+- Broader connector coverage for Zoho Books, GST/GSP, gateway, bank feed, Gmail, WhatsApp, and Account Aggregator integrations.
 - Audit logs, data retention controls, and production-grade export packages.
 
 ## Known Limitations
 
 - This version is a prototype for validation.
-- Current version is upload-based.
+- Current version is upload-first with a local Tally connector.
 - Document storage is metadata-only by default; S3/R2/GCS-compatible object storage is available when configured.
-- Direct Tally/GST/bank integrations are future work.
+- GST and bank integrations are future work; the Tally connector requires customer-side Tally gateway setup.
 - AI is optional and not required for app operation.
 - This tool does not replace CA, legal, tax, or compliance review.
 - Compliance findings are only potential risks that need CA review.

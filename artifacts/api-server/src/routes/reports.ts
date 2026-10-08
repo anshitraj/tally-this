@@ -58,7 +58,7 @@ function buildCaPackPDF(pack: CaPackData): Promise<Buffer> {
 
     const pageW = doc.page.width - 100;
     const H1 = 16, H2 = 13, BODY = 10, SMALL = 8.5;
-    const C_PRIMARY = "#1d4ed8";
+    const C_PRIMARY = "#143e2c";
     const C_MUTED = "#6b7280";
     const C_DANGER = "#dc2626";
     const C_SUCCESS = "#16a34a";
@@ -84,7 +84,7 @@ function buildCaPackPDF(pack: CaPackData): Promise<Buffer> {
     }
 
     // ── Header ──
-    doc.fontSize(H1 + 4).font("Helvetica-Bold").fillColor(C_PRIMARY).text("FinVerify OS", { align: "center" });
+    doc.fontSize(H1 + 4).font("Helvetica-Bold").fillColor(C_PRIMARY).text("TallyThis", { align: "center" });
     doc.fontSize(H1).font("Helvetica").fillColor("#111827").text("CA-Ready Pack", { align: "center" });
     doc.fontSize(BODY).font("Helvetica").fillColor(C_MUTED).text(`${pack.month}  ·  Generated ${new Date(pack.generatedAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}`, { align: "center" });
     doc.moveDown(1);

@@ -1,0 +1,343 @@
+import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import test from "node:test";
+import { counterpartyFrom, parseBankStatement, unifyParties } from "./bankStatement";
+import { buildTallyVoucherXml, LEDGER_OPTIONS, suggestLedger, validateTallyVoucherXml } from "./tallyVoucherXml";
+import { compareBankWithTally, parseTallyLedgerCsv } from "./statementCompare";
+import { buildGstDraftJson, mergeEcommercePacks, normalizeMarketplaceCsv } from "./ecommerceGst";
+import { detectFileKind, detectMarketplace } from "./fileDetect";
+import { compareInvoicesWithBank, parseInvoiceCsv } from "./invoiceVerify";
+import { recognizeStatement } from "./statementOcr";
+
+function repoFile(name: string) {
+  let dir = process.cwd();
+  for (let i = 0; i < 6; i += 1) {
+    const candidate = join(dir, name);
+    if (existsSync(candidate)) return candidate;
+    dir = join(dir, "..");
+  }
+  throw new Error(`Missing fixture ${name}`);
+}
+
+const bankCsv = readFileSync(repoFile("finverify_test_bank_statement_may_2026.csv"), "utf8");
+const tallyCsv = readFileSync(repoFile("finverify_test_tally_ledger_may_2026.csv"), "utf8");
+const amazonCsv = readFileSync(repoFile("fixtures/synthetic/amazon_sales_may_2026.csv"), "utf8");
+
+test("bank statement keeps debit and credit values", () => {
+  const summary = parseBankStatement(bankCsv, "finverify_test_bank_statement_may_2026.csv");
+  assert.equal(summary.transactions.length, 10);
+  assert.equal(summary.bankName, "HDFC Bank");
+  assert.equal(summary.transactions[0].debit, 5000);
+  assert.equal(summary.transactions[1].credit, 75000);
+  assert.ok(summary.debitTotal > 0);
+  assert.ok(summary.creditTotal > 0);
+  assert.match(summary.message, /Parsed successfully/);
+});
+
+test("tally xml balances and rejects empty input", () => {
+  const summary = parseBankStatement(bankCsv, "statement.csv");
+  const built = buildTallyVoucherXml({
+    companyName: "NovaStack Labs Pvt Ltd",
+    bankLedger: "HDFC Bank",
+    transactions: summary.transactions,
+  });
+  assert.equal(built.ok, true);
+  assert.equal(built.voucherCount, 10);
+  assert.equal(validateTallyVoucherXml(built.xml ?? "", 10).ok, true);
+  assert.match(built.xml ?? "", /<ENVELOPE>/);
+  const empty = buildTallyVoucherXml({ companyName: "NovaStack Labs Pvt Ltd", bankLedger: "HDFC Bank", transactions: [] });
+  assert.equal(empty.ok, false);
+  assert.equal(empty.xml, undefined);
+});
+
+test("bank and tally comparison stays on the uploaded rows", () => {
+  const bank = parseBankStatement(bankCsv, "bank.csv");
+  const tally = parseTallyLedgerCsv(tallyCsv);
+  const result = compareBankWithTally(bank.transactions, tally);
+  assert.equal(result.counts.bank, 10);
+  assert.equal(result.counts.tally, 10);
+  assert.ok(result.counts.confirmed + result.counts.suggested + result.counts.bankOnly + result.counts.amountDifferences >= 10);
+
+  const mismatch = compareBankWithTally(
+    [{ ...bank.transactions[0], debit: 9999, credit: null, narration: "UPI-ACME Corp", counterparty: "ACME Corp" }],
+    tally.filter(row => row.ledgerName.includes("ACME")),
+  );
+  assert.equal(mismatch.counts.amountDifferences, 1);
+
+  const onlyBank = compareBankWithTally(
+    [{ ...bank.transactions[0], narration: "Unique counterparty ZZTOP", counterparty: "ZZTOP", debit: 42, credit: null }],
+    [],
+  );
+  assert.equal(onlyBank.counts.bankOnly, 1);
+});
+
+test("amazon sales become a draft gst json", () => {
+  const pack = normalizeMarketplaceCsv(amazonCsv, "amazon", "amazon_sales_may_2026.csv");
+  assert.ok(pack.sales.length >= 3);
+  assert.ok(pack.tabs.b2b.length >= 1);
+  assert.ok(pack.tabs.b2c.length >= 1);
+  assert.ok(pack.tabs.hsn.length >= 1);
+  const gst = buildGstDraftJson(pack);
+  assert.equal(gst.ok, true);
+  if (gst.ok) assert.equal(gst.json.schema, "finverify.gstr1.draft.v1");
+});
+
+test("invoice register suggests a payment match", () => {
+  const bank = parseBankStatement(bankCsv, "bank.csv");
+  const invoices = parseInvoiceCsv("Invoice Number,Invoice Date,Vendor,Total\nINV-100,01/05/2026,ACME Corp,5000\nINV-404,02/05/2026,Missing Vendor,111\n");
+  const result = compareInvoicesWithBank(bank.transactions, invoices);
+  assert.ok(result.items.some(item => item.bucket === "matched" || item.bucket === "suggested"));
+  assert.ok(result.items.some(item => item.bucket === "invoice_without_payment"));
+});
+
+test("empty text does not pretend rows were found", () => {
+  const summary = parseBankStatement("   ", "scan.pdf");
+  assert.equal(summary.transactions.length, 0);
+  assert.match(summary.message, /scanned|not detected/i);
+});
+
+test("ocr fails closed when the engine is missing", async () => {
+  const previous = process.env.TESSERACT_PATH;
+  process.env.TESSERACT_PATH = "E:\\missing\\finverify-tesseract.exe";
+  try {
+    const result = await recognizeStatement({ buffer: Buffer.from("not-an-image"), fileName: "scan.png", kind: "image" });
+    assert.equal(result.available, false);
+    if (!result.available) {
+      assert.equal(result.reason, "OCR unavailable");
+      assert.match(result.note, /No transactions were created/);
+    }
+  } finally {
+    if (previous == null) delete process.env.TESSERACT_PATH;
+    else process.env.TESSERACT_PATH = previous;
+  }
+});
+
+test("Go does not own /api/jobs until response parity exists", () => {
+  const gateway = readFileSync(repoFile("services/api-go/cmd/api/main.go"), "utf8");
+  const jobs = readFileSync(repoFile("artifacts/api-server/src/routes/jobs.ts"), "utf8");
+  assert.doesNotMatch(gateway, /\/api\/jobs\//);
+  assert.match(gateway, /TypeScript fallback/);
+  for (const route of [
+    "/jobs/bank-statement/normalize",
+    "/jobs/bank-to-tally/xml",
+    "/jobs/bank-tally/compare",
+    "/jobs/runs/:id/decision",
+    "/jobs/ecommerce/normalize",
+    "/jobs/invoice-bank/compare",
+  ]) {
+    assert.match(jobs, new RegExp(route.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+});
+
+function fakeFile(originalname: string, text: string) {
+  return { originalname, mimetype: originalname.endsWith(".pdf") ? "application/pdf" : "text/csv", buffer: Buffer.from(text, "utf8") };
+}
+
+test("uploads are routed to the right job without asking", () => {
+  assert.equal(detectFileKind(fakeFile("statement.csv", bankCsv)).kind, "bank_statement");
+  assert.equal(detectFileKind(fakeFile("ledger.csv", tallyCsv)).kind, "tally_export");
+  const amazon = detectFileKind(fakeFile("mtr_may.csv", amazonCsv));
+  assert.equal(amazon.kind, "marketplace_report");
+  assert.equal(amazon.platform, "amazon");
+  const invoices = readFileSync(repoFile("fixtures/synthetic/invoice_register_may_2026.csv"), "utf8");
+  assert.equal(detectFileKind(fakeFile("register.csv", invoices)).kind, "invoice_register");
+  assert.equal(detectFileKind(fakeFile("scan.pdf", "%PDF")).kind, "bank_statement");
+  assert.equal(detectFileKind(fakeFile("INV-204.pdf", "%PDF")).kind, "invoice_document");
+});
+
+test("marketplace is detected from the file name or header", () => {
+  assert.equal(detectMarketplace("flipkart_sales_may.csv", ""), "flipkart");
+  assert.equal(detectMarketplace("sales.csv", "Sub Order No,Supplier ID,Taxable Value"), "meesho");
+  assert.equal(detectMarketplace("sales.csv", "Order ID,Invoice Number,Taxable Value"), "generic");
+});
+
+test("several marketplace reports merge into one pack", () => {
+  const flipkart = readFileSync(repoFile("fixtures/synthetic/flipkart_sales_may_2026.csv"), "utf8");
+  const a = normalizeMarketplaceCsv(amazonCsv, "amazon", "amazon.csv");
+  const b = normalizeMarketplaceCsv(flipkart, "flipkart", "flipkart.csv");
+  const merged = mergeEcommercePacks([a, b]);
+  assert.equal(merged.sales.length, a.sales.length + b.sales.length);
+  assert.equal(merged.platform, "amazon + flipkart");
+  assert.equal(merged.summary.documents, merged.sales.length);
+});
+
+test("ledger rules pick from the fixed choice list", () => {
+  assert.equal(suggestLedger("NEFT-SALARY MAY 2026"), "Salary Expenses");
+  assert.equal(suggestLedger("UPI-GOOGLE ADS/INV-22"), "Advertisement Expenses");
+  assert.equal(suggestLedger("SMS ALERT CHGS"), "Bank Charges");
+  assert.equal(suggestLedger("UPI-RANDOM PERSON"), "Suspense");
+  assert.equal(suggestLedger("POS KOLAR STORES"), "Suspense");
+  for (const name of ["Salary Expenses", "Advertisement Expenses", "Bank Charges", "Suspense"]) {
+    assert.ok((LEDGER_OPTIONS as readonly string[]).includes(name));
+  }
+});
+
+test("rows that break the running balance are sent to review", () => {
+  const csv = [
+    "Date,Narration,Debit,Credit,Balance",
+    "01/05/2026,Opening deposit,,1000,1000",
+    "02/05/2026,UPI-Shop,100,,900",
+    "03/05/2026,UPI-Cafe,50,,800",
+    "04/05/2026,UPI-Book,25,,775",
+  ].join("\n");
+  const summary = parseBankStatement(csv, "test.csv");
+  assert.equal(summary.transactions.length, 4);
+  const flagged = summary.transactions.filter(txn => txn.confidence < 0.9);
+  assert.equal(flagged.length, 1);
+  assert.equal(flagged[0].narration, "UPI-Cafe");
+  assert.ok(summary.warnings.some(warning => /running balance/.test(warning)));
+});
+
+test("newest-first statements do not raise balance warnings", () => {
+  const csv = [
+    "Date,Narration,Debit,Credit,Balance",
+    "04/05/2026,UPI-Book,25,,825",
+    "03/05/2026,UPI-Cafe,50,,850",
+    "02/05/2026,UPI-Shop,100,,900",
+    "01/05/2026,Opening deposit,,1000,1000",
+  ].join("\n");
+  const summary = parseBankStatement(csv, "test.csv");
+  assert.equal(summary.transactions.filter(txn => txn.confidence < 0.9).length, 0);
+});
+
+test("same-day unique amounts match without a shared reference", () => {
+  const bank = parseBankStatement(bankCsv, "bank.csv");
+  const tally = parseTallyLedgerCsv(tallyCsv);
+  const result = compareBankWithTally(bank.transactions, tally);
+  assert.equal(result.counts.confirmed, 10);
+  assert.equal(result.counts.suggested, 0);
+});
+
+test("a Tally bank-ledger export with debit and credit swapped still matches", () => {
+  const bank = parseBankStatement(bankCsv, "bank.csv");
+  const flipped = parseTallyLedgerCsv(tallyCsv).map(row => ({ ...row, debit: row.credit, credit: row.debit }));
+  const result = compareBankWithTally(bank.transactions, flipped);
+  assert.equal(result.counts.confirmed, 10);
+});
+
+test("two equal payments on nearby days stay suggestions, not automatic matches", () => {
+  const bank = parseBankStatement(bankCsv, "bank.csv");
+  const tally = parseTallyLedgerCsv(tallyCsv);
+  const first = bank.transactions[0];
+  const twin = { ...first, rowNumber: 99, date: "2026-05-02", narration: "UPI-Someone else/REF" };
+  const tallyTwin = { ...tally[0], id: "tally-twin", rowNumber: 99, date: "2026-05-02", ledgerName: "Someone else" };
+  const result = compareBankWithTally([first, twin], [tally[0], tallyTwin]);
+  assert.equal(result.counts.confirmed, 0);
+});
+
+test("amounts that landed in the wrong column are fixed from the running balance", () => {
+  // What a PDF table extractor produces when it loses column positions: every amount in one column.
+  const csv = [
+    "Date,Narration,Debit,Credit,Balance",
+    "01/06/2026,UPI-SHARMA TRADERS,,12500.00,187500.00",
+    "02/06/2026,NEFT CR-MEHTA EXPORTS,,45000.00,232500.00",
+    "04/06/2026,IMPS-AIRTEL BROADBAND,,1179.00,231321.00",
+    "06/06/2026,ATM WDL/ANDHERI,,10000.00,221321.00",
+  ].join("\n");
+  const summary = parseBankStatement(csv, "icici.pdf");
+  const [first, second, third, fourth] = summary.transactions;
+  assert.equal(second.credit, 45000);
+  assert.equal(third.debit, 1179);
+  assert.equal(third.credit, null);
+  assert.equal(fourth.debit, 10000);
+  assert.ok(first.confidence < 0.9, "earliest row has no prior balance, so it goes to review");
+  assert.equal(summary.debitTotal, 11179);
+});
+
+test("bank name comes from the header, not an IFSC code in a row", () => {
+  const csv = [
+    "ICICI Bank Ltd - Statement of Account",
+    "Date,Narration,Debit,Credit,Balance",
+    "01/06/2026,UPI-SHARMA/HDFC0001234,500,,9500",
+  ].join("\n");
+  assert.equal(parseBankStatement(csv, "statement.csv").bankName, "ICICI Bank");
+});
+
+test("Tally XML creates missing ledgers and posts parties to their own ledger", () => {
+  const bank = parseBankStatement(bankCsv, "bank.csv");
+  const result = buildTallyVoucherXml({
+    companyName: "Sharma Traders",
+    bankLedger: "HDFC Bank",
+    transactions: bank.transactions,
+    mappings: [
+      { counterparty: "ACME Corp", ledgerName: "Sundry Creditors" },
+      { counterparty: "Office supplies", ledgerName: "Office Expenses" },
+    ],
+  });
+  assert.equal(result.ok, true);
+  const xml = result.xml ?? "";
+  assert.doesNotMatch(xml, /SVCURRENTCOMPANY/, "import goes into whichever company is open in Tally");
+  assert.match(xml, /<LEDGER NAME="HDFC Bank" ACTION="Create">[\s\S]*?<PARENT>Bank Accounts<\/PARENT>/);
+  assert.match(xml, /<LEDGER NAME="ACME Corp" ACTION="Create">[\s\S]*?<PARENT>Sundry Creditors<\/PARENT>/);
+  assert.match(xml, /<LEDGER NAME="Office Expenses" ACTION="Create">[\s\S]*?<PARENT>Indirect Expenses<\/PARENT>/);
+  assert.doesNotMatch(xml, /<LEDGERNAME>Sundry Creditors<\/LEDGERNAME>/, "a group is never used as a ledger");
+  assert.doesNotMatch(xml, /<LEDGER NAME="Cash"/, "built-in Cash ledger is not recreated");
+  assert.equal(validateTallyVoucherXml(xml, bank.transactions.length).ok, true);
+});
+
+test("ledger masters can be left out", () => {
+  const bank = parseBankStatement(bankCsv, "bank.csv");
+  const result = buildTallyVoucherXml({ companyName: "X", bankLedger: "HDFC Bank", transactions: bank.transactions, createLedgers: false });
+  assert.doesNotMatch(result.xml ?? "", /<LEDGER NAME=/);
+});
+
+test("invoice number in the narration plus exact amount is a match", () => {
+  const bank = parseBankStatement(bankCsv, "bank.csv");
+  const invoices = parseInvoiceCsv(readFileSync(repoFile("fixtures/synthetic/invoice_register_may_2026.csv"), "utf8"));
+  const result = compareInvoicesWithBank(bank.transactions, invoices);
+  const matched = result.items.filter(item => item.bucket === "matched").map(item => item.invoice?.invoiceNumber).sort();
+  assert.deepEqual(matched, ["BILL-77", "INV-100"]);
+  assert.ok(result.items.some(item => item.bucket === "no_invoice_expected"), "salary and ATM rows are not flagged as missing invoices");
+});
+
+test("bank interest credited is income, loan interest debited is an expense", () => {
+  assert.equal(suggestLedger("158802222334:Int.Pd:01-01-2026 to 31-03-2026", [], "in"), "Interest Received");
+  assert.equal(suggestLedger("CREDIT INTEREST - Saving", [], "in"), "Interest Received");
+  assert.equal(suggestLedger("LOAN INT DEBIT 4455", [], "out"), "Interest Paid");
+  assert.equal(suggestLedger("FD MATURITY PROCEEDS :5150212235/24-08-25", [], "in"), "Fixed Deposits");
+  assert.equal(suggestLedger("Term Deposit-8882000002165143-BHARAT", [], "out"), "Fixed Deposits");
+  assert.equal(suggestLedger("PG KOTAK MAHINDRA LIFE", [], "out"), "Insurance Premium");
+});
+
+test("quarterly interest rows are one party", () => {
+  const csv = [
+    "Date,Narration,Debit,Credit,Balance",
+    "30/06/2026,Int.Pd:0211300197:01-04-2026 to 30-06-2026,,100.00,1100.00",
+    "30/09/2026,Int.Pd:0211300197:01-07-2026 to 30-09-2026,,110.00,1210.00",
+  ].join("\n");
+  const rows = parseBankStatement(csv, "s.csv").transactions;
+  assert.deepEqual(rows.map(row => row.counterparty), ["Bank interest", "Bank interest"]);
+});
+
+test("party names come out of real Indian narration formats", () => {
+  const cases: Array<[string, string | null]> = [
+    ["UPI/AMJAD PARVEZ/188085643285/Payment from Ph", "AMJAD PARVEZ"],
+    ["UPI/ANKIT KUMAR CHO/386145065356/Sent using Payt", "ANKIT KUMAR CHO"],
+    ["UPI 690674808367 navjitkaur02@ybl NAVJEET KAUR", "NAVJEET KAUR"],
+    ["UPI 643191763720 nareshkumargirdhar0001@ybl NARESH", "NARESH"],
+    ["UPI 529395980588 zeptoonline@ybl Zepto", "Zepto"],
+    ["N/INDBH03048748656/KKBK/BHARAT GIRIDHAR", "BHARAT GIRIDHAR"],
+    ["IMP-528618976442-8802222334-BHARAT GIRIDHAR", "BHARAT GIRIDHAR"],
+    ["Purchase-519417077479-130725 17:19:43-SWIGGY Bangalore IN", "SWIGGY Bangalore"],
+    ["VISA POS TXN AT IN/BOOKMYSHOW COM 124305400", "BOOKMYSHOW"],
+    ["VISA POS TXN AT IN/BOOKMYSHOW 022560889", "BOOKMYSHOW"],
+    ["PCD/5335/ENCALM LOUNGE/DELHI060725/11:40", "ENCALM LOUNGE"],
+    ["UPI-ACME Corp/INV-100/YESB0001234", "ACME Corp"],
+    ["Razorpay Settlement/RZP-9988", "Razorpay Settlement"],
+    ["NEFT-Google Workspace/GSuite", "Google Workspace"],
+    ["PG KOTAK MAHINDRA LIFE", "KOTAK MAHINDRA LIFE"],
+    ["Term Deposit-8882000002165143-BHARAT GIRIDHAR", "Fixed deposit"],
+    ["CREDIT INTEREST - Saving", "Bank interest"],
+    ["ATM WDL/ATM-Koramangala", "Cash withdrawal"],
+    ["UPI 566081058767 zeptomarketplac357841.rzp@hdfcban", "zeptomarketplac rzp"],
+  ];
+  for (const [narration, party] of cases) assert.equal(counterpartyFrom(narration), party, narration);
+});
+
+test("names the bank cut short are treated as one party", () => {
+  const row = (counterparty: string) => ({ counterparty } as unknown as Parameters<typeof unifyParties>[0][number]);
+  const rows = ["Brijesh Brij", "Brijesh Brije", "Vodafone Ide", "VODAFONE IDEA LIMITE", "Google", "Google India Se"].map(row);
+  unifyParties(rows);
+  assert.deepEqual(rows.map(item => item.counterparty), ["Brijesh Brije", "Brijesh Brije", "VODAFONE IDEA LIMITE", "VODAFONE IDEA LIMITE", "Google", "Google India Se"]);
+});

@@ -1,6 +1,6 @@
 import type { z } from "zod";
 
-export type AIProviderName = "gemini" | "nvidia" | "openrouter" | "rule_based";
+export type AIProviderName = "claude" | "gemini" | "nvidia" | "openrouter" | "rule_based";
 
 export type AIRequestPurpose =
   | "invoice_extraction"
@@ -43,6 +43,7 @@ export type AIJsonTask<T> = {
 };
 
 export type AIProviderSettings = {
+  claudeModel: string;
   geminiModel: string;
   geminiFallbackModel: string | null;
   nvidiaModel: string | null;
@@ -69,18 +70,19 @@ function boolFromEnv(name: string, fallback: boolean): boolean {
 }
 
 function providerOrderFromEnv(): AIProviderName[] {
-  const allowed = new Set<AIProviderName>(["gemini", "nvidia", "openrouter"]);
-  const configured = (process.env.AI_PROVIDER_ORDER ?? "gemini,nvidia")
+  const allowed = new Set<AIProviderName>(["claude", "gemini", "nvidia", "openrouter"]);
+  const configured = (process.env.AI_PROVIDER_ORDER ?? "gemini,claude,nvidia")
     .split(",")
     .map((item) => item.trim().toLowerCase() as AIProviderName)
     .filter((item) => allowed.has(item));
-  return configured.length > 0 ? configured : ["gemini", "nvidia"];
+  return configured.length > 0 ? configured : ["gemini", "claude", "nvidia"];
 }
 
 export function getAIProviderSettings(): AIProviderSettings {
   return {
+    claudeModel: process.env.ANTHROPIC_MODEL || "claude-opus-5-5",
     geminiModel: process.env.GEMINI_MODEL || "gemini-2.5-flash",
-    geminiFallbackModel: process.env.GEMINI_FALLBACK_MODEL || "gemini-2.0-flash",
+    geminiFallbackModel: process.env.GEMINI_FALLBACK_MODEL || "gemini-2.5-flash",
     nvidiaModel: process.env.NVIDIA_MODEL || null,
     openrouterModel: process.env.OPENROUTER_MODEL || null,
     openrouterEnabled: boolFromEnv("OPENROUTER_ENABLED", false),
@@ -92,6 +94,12 @@ export function getAIProviderSettings(): AIProviderSettings {
     timeoutMs: numberFromEnv("AI_TIMEOUT_MS", 30_000),
     maxRetries: numberFromEnv("AI_MAX_RETRIES", 1),
   };
+}
+
+/** Main model, then each comma-separated fallback model, without repeats. */
+export function geminiModels(settings: AIProviderSettings = getAIProviderSettings()): string[] {
+  const fallbacks = (settings.geminiFallbackModel ?? "").split(",").map(model => model.trim()).filter(Boolean);
+  return [...new Set([settings.geminiModel, ...fallbacks])];
 }
 
 export function estimateTokens(text: string): number {

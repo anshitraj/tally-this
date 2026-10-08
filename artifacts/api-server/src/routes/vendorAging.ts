@@ -17,27 +17,27 @@ router.get("/vendor-aging", requirePermission("reports.read"), async (req, res):
   try {
     const result = await db.execute(sql`
       SELECT
-        vendor,
+        vendor_name AS vendor,
         invoice_number,
         amount,
         gst_amount,
-        invoice_date,
-        due_date,
-        status,
-        (${asOf}::date - due_date::date) AS days_overdue,
+        date AS invoice_date,
+        (date::date + INTERVAL '30 days')::date AS due_date,
+        payment_status AS status,
+        (${asOf}::date - (date::date + INTERVAL '30 days')::date) AS days_overdue,
         CASE
-          WHEN due_date::date > ${asOf}::date THEN 'current'
-          WHEN (${asOf}::date - due_date::date) BETWEEN 1 AND 30 THEN '1_30'
-          WHEN (${asOf}::date - due_date::date) BETWEEN 31 AND 60 THEN '31_60'
-          WHEN (${asOf}::date - due_date::date) BETWEEN 61 AND 90 THEN '61_90'
+          WHEN (date::date + INTERVAL '30 days')::date > ${asOf}::date THEN 'current'
+          WHEN (${asOf}::date - (date::date + INTERVAL '30 days')::date) BETWEEN 1 AND 30 THEN '1_30'
+          WHEN (${asOf}::date - (date::date + INTERVAL '30 days')::date) BETWEEN 31 AND 60 THEN '31_60'
+          WHEN (${asOf}::date - (date::date + INTERVAL '30 days')::date) BETWEEN 61 AND 90 THEN '61_90'
           ELSE 'over_90'
         END AS aging_bucket
       FROM invoices
       WHERE company_id = ${companyId}
         AND type = 'purchase'
-        AND status NOT IN ('paid', 'cancelled')
-        AND due_date IS NOT NULL
-      ORDER BY days_overdue DESC, vendor, due_date
+        AND payment_status NOT IN ('paid', 'cancelled')
+        AND date IS NOT NULL
+      ORDER BY days_overdue DESC, vendor_name, date
       LIMIT 2000`);
 
     type Row = {

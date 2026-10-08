@@ -4,6 +4,7 @@ from fastapi import APIRouter, File, UploadFile, Form, HTTPException
 from ..parsers.csv_parser import parse_csv
 from ..extractors.bank import extract_bank_rows
 from ..extractors.tally import extract_tally_rows
+from ..extractors.marketplace import extract_marketplace_rows
 from ..models.extraction import ExtractionResponse
 
 router = APIRouter(prefix="/extract", tags=["extract"])
@@ -220,6 +221,26 @@ async def extract_payroll(
         confidence=0.95 if rows else 0.0,
         rows=rows, warnings=[], errors=[] if rows else ["No payroll rows found."],
         metadata={"raw_row_count": parsed["row_count"], "normalized_row_count": len(rows)},
+    )
+
+
+@router.post("/marketplace", response_model=ExtractionResponse)
+async def extract_marketplace(
+    file: UploadFile = File(...),
+    platform: str = Form("generic"),
+):
+    content = await _read_upload(file)
+    parsed = parse_csv(content, file.filename or "marketplace.csv")
+    rows = extract_marketplace_rows(parsed["rows"], platform.lower(), file.filename or "")
+    return ExtractionResponse(
+        ok=bool(rows),
+        source_type="marketplace",
+        extraction_method="csv_column_match",
+        confidence=0.9 if rows else 0.0,
+        rows=rows,
+        warnings=["Potential risk — needs CA review. This is not GST portal validation."],
+        errors=[] if rows else ["No marketplace rows found."],
+        metadata={"raw_row_count": parsed["row_count"], "normalized_row_count": len(rows), "platform": platform},
     )
 
 

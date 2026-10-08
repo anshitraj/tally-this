@@ -42,6 +42,45 @@ func ExtractCompanyID(r *http.Request) string {
 	return strconv.Itoa(claims.Cid)
 }
 
+// BooksCompany returns the company whose books this request may read or write.
+// The signed-in company is the default. A linked client is allowed through
+// ?client=, ?clientId=, or X-Client-Company-Id.
+func BooksCompany(db *sql.DB, w http.ResponseWriter, r *http.Request, auth AuthContext) (int, bool) {
+	raw := strings.TrimSpace(r.URL.Query().Get("client"))
+	if raw == "" {
+		raw = strings.TrimSpace(r.URL.Query().Get("clientId"))
+	}
+	if raw == "" {
+		raw = strings.TrimSpace(r.Header.Get("X-Client-Company-Id"))
+	}
+	if raw == "" || raw == "null" || raw == "undefined" {
+		return auth.CompanyID, true
+	}
+	clientID, err := strconv.Atoi(raw)
+	if err != nil || clientID <= 0 {
+		writeClientScopeError(w, http.StatusBadRequest, "invalid client id")
+		return 0, false
+	}
+	if clientID == auth.CompanyID {
+		return auth.CompanyID, true
+	}
+	var one int
+	err = db.QueryRowContext(r.Context(),
+		`SELECT 1 FROM ca_client_links WHERE ca_user_id = $1 AND client_company_id = $2 AND status = 'active' LIMIT 1`,
+		auth.UserID, clientID).Scan(&one)
+	if err != nil {
+		writeClientScopeError(w, http.StatusForbidden, "Not authorised for this client")
+		return 0, false
+	}
+	return clientID, true
+}
+
+func writeClientScopeError(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_, _ = w.Write([]byte(`{"ok":false,"error":"` + message + `"}`))
+}
+
 // AuthenticateRequest verifies the JWT and checks the backing DB session/user.
 func AuthenticateRequest(db *sql.DB, r *http.Request) (AuthContext, bool) {
 	token := bearerToken(r)

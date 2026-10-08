@@ -156,7 +156,7 @@ async function exchangeGitHubCode(config: OAuthProviderConfig, code: string): Pr
     Authorization: `Bearer ${tokenPayload.access_token}`,
     Accept: "application/vnd.github+json",
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "FinVerify-OS",
+    "User-Agent": "TallyThis-OS",
   };
   const [userResponse, emailsResponse] = await Promise.all([
     fetch("https://api.github.com/user", { headers }),
@@ -254,7 +254,7 @@ function callbackHtml(input: {
     user: input.user,
   }).replace(/</g, "\\u003c");
   const returnTo = JSON.stringify(input.returnTo);
-  return `<!doctype html><html><head><meta charset="utf-8"><title>FinVerify OS</title></head><body><script>
+  return `<!doctype html><html><head><meta charset="utf-8"><title>TallyThis</title></head><body><script>
 localStorage.setItem("finverify_auth", ${JSON.stringify(session)});
 window.location.replace(${returnTo});
 </script></body></html>`;

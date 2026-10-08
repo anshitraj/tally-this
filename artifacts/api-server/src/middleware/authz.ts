@@ -16,6 +16,7 @@ declare global {
   namespace Express {
     interface Request {
       auth?: AuthContext;
+      booksCompanyId?: number;
     }
   }
 }
@@ -72,7 +73,7 @@ export function getCompanyId(req: Request): number {
   if (!req.auth) {
     throw new Error("Authenticated company context is required");
   }
-  return req.auth.companyId;
+  return req.booksCompanyId ?? req.auth.companyId;
 }
 
 export function requireAuth(req: Request, res: Response, next: NextFunction) {

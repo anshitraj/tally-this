@@ -4,6 +4,25 @@
 
 ---
 
+## Job routes added on TypeScript
+
+These stay on the TypeScript API until a Go handler is compared against them:
+
+- `POST /api/jobs/bank-statement/normalize`
+- `POST /api/jobs/bank-to-tally/xml`
+- `POST /api/jobs/bank-tally/compare`
+- `POST /api/jobs/runs/:id/decision`
+- `POST /api/jobs/runs/:id/report`
+- `POST /api/jobs/ecommerce/normalize`
+- `POST /api/jobs/ecommerce/gst-json`
+- `POST /api/jobs/invoice-bank/compare`
+
+Go already lists workflow runs and progress when `DATABASE_URL` is set, and proxies these job routes to TypeScript.
+
+Python adds `POST /extract/marketplace`. Bank CSV/PDF parsing still falls back to TypeScript when the worker is not running.
+
+---
+
 ## Runtime / Port Map
 
 | Service | Language | Port | Status |

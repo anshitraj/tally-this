@@ -88,7 +88,7 @@ const DEMO_SECURITY: SecurityPosture = {
   dataExportDeleteControls: true,
   notes: [
     "Current workflows are upload-based unless a source is marked available in code.",
-    "No direct bank, GST, Tally, or gateway connection is live in this prototype.",
+    "Local Tally connector is available when Tally is reachable from the API host; bank, GST, and gateway API connections are not live.",
     "Potential risk — needs CA review before financial close.",
   ],
 };
@@ -146,7 +146,7 @@ export default function AdminPage() {
     <PageTransition className="mx-auto max-w-7xl">
       <PageHeader
         title="Admin Dashboard"
-        subtitle="Workspace operations, access control, document governance, and audit readiness for the upload-based FinVerify OS prototype."
+        subtitle="Workspace operations, access control, document governance, and audit readiness for the upload-based TallyThis prototype."
         actions={
           <div className="flex flex-wrap gap-2">
             <button type="button" onClick={() => navigate("/app/uploads")} className="fv-button-primary">

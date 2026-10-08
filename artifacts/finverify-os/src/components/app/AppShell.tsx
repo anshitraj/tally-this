@@ -1,84 +1,237 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  AlertTriangle,
-  Bell,
+  Activity,
+  ArrowLeftRight,
   BookOpen,
-  Calendar,
-  CheckSquare,
-  ChevronLeft,
-  ClipboardCheck,
-  LayoutDashboard,
+  Building2,
+  ChevronDown,
+  FileBarChart,
+  FileSpreadsheet,
+  GitCompare,
+  History,
   LogOut,
   Menu,
-  Puzzle,
+  Receipt,
   Settings,
-  ShieldCheck,
-  Upload,
+  ShoppingBag,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import { BrandMark } from "@/components/app/finverify-ui";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { getUser, logout } from "@/lib/auth";
+import { useClients } from "@/components/jobs/jobUi";
 import { cn } from "@/lib/utils";
 
-const navGroups = [
-  {
-    label: "Home",
-    items: [
-      { label: "Overview", href: "/app/overview", icon: LayoutDashboard },
-      { label: "Upload", href: "/app/uploads", icon: Upload },
-    ],
-  },
-  {
-    label: "Work",
-    items: [
-      { label: "Verify", href: "/app/verify", icon: CheckSquare },
-      { label: "Action Items", href: "/app/action-items", icon: ClipboardCheck },
-      { label: "Settings", href: "/app/settings", icon: Settings },
-    ],
-  },
-] as const;
+type NavItem = { label: string; href: string; icon: LucideIcon };
 
-/** Current active FY month — shown instead of cryptic WorkspacePill. */
-function MonthSelector() {
-  const months = [
-    "April 2026", "March 2026", "February 2026", "January 2026",
-    "December 2025", "November 2025", "October 2025",
+const primaryNav: NavItem[] = [
+  { label: "Clients", href: "/app/clients", icon: Building2 },
+];
+
+const automationNav: NavItem[] = [
+  {
+    label: "Bank → Tally",
+    href: "/app/jobs/bank-to-tally",
+    icon: FileSpreadsheet,
+  },
+  { label: "Bank ↔ Tally", href: "/app/jobs/bank-tally", icon: GitCompare },
+  {
+    label: "E-commerce GST",
+    href: "/app/jobs/ecommerce-gst",
+    icon: ShoppingBag,
+  },
+  { label: "Invoice ↔ Bank", href: "/app/jobs/invoice-bank", icon: Receipt },
+];
+
+const secondaryNav: NavItem[] = [
+  { label: "Reports", href: "/app/reports", icon: FileBarChart },
+  { label: "Activity", href: "/app/activity", icon: Activity },
+];
+
+const advancedNav: NavItem[] = [
+  { label: "History", href: "/app/history", icon: History },
+  { label: "Settings", href: "/app/settings", icon: Settings },
+  { label: "Upload center", href: "/app/uploads", icon: ArrowLeftRight },
+  { label: "Transactions", href: "/app/transactions", icon: ArrowLeftRight },
+  { label: "Invoices", href: "/app/invoices", icon: Receipt },
+  { label: "Reconciliation", href: "/app/reconciliation", icon: GitCompare },
+  { label: "CA Review", href: "/app/ca-review", icon: BookOpen },
+  { label: "Tax Audit", href: "/app/tax-audit", icon: BookOpen },
+  { label: "Practice console", href: "/app/practice", icon: Building2 },
+  { label: "GST & TDS", href: "/app/gst-tds-risks", icon: FileBarChart },
+  { label: "GSTR-2B", href: "/app/gstr-2b-recon", icon: FileBarChart },
+  { label: "26AS TDS", href: "/app/tds-recon", icon: FileBarChart },
+  { label: "Payroll", href: "/app/payroll", icon: Activity },
+  {
+    label: "Gateway settlements",
+    href: "/app/gateway-settlements",
+    icon: FileSpreadsheet,
+  },
+  { label: "Vendor aging", href: "/app/vendor-aging", icon: FileBarChart },
+  { label: "Ledger match", href: "/app/ledger-match", icon: GitCompare },
+  { label: "Trial balance", href: "/app/trial-balance", icon: FileBarChart },
+  { label: "Journal entries", href: "/app/journal-entries", icon: BookOpen },
+  { label: "Action items", href: "/app/action-items", icon: Activity },
+  { label: "Verify", href: "/app/verify", icon: GitCompare },
+  {
+    label: "Statutory calendar",
+    href: "/app/statutory-calendar",
+    icon: Activity,
+  },
+  { label: "Integrations", href: "/app/integrations", icon: Settings },
+  { label: "Admin", href: "/app/admin", icon: Building2 },
+  { label: "Docs", href: "/app/docs", icon: BookOpen },
+];
+
+/** One select for whose books you are working on. Hidden when there is only one choice. */
+function ClientSwitcher() {
+  const user = getUser();
+  const [, navigate] = useLocation();
+  const queryClient = useQueryClient();
+  const { clients, active, choose } = useClients();
+  const [workspaceName, setWorkspaceName] = useState(
+    user?.company || "My business",
+  );
+
+  useEffect(() => {
+    const refresh = () => {
+      void queryClient.invalidateQueries();
+    };
+    window.addEventListener("finverify-client", refresh);
+    return () => window.removeEventListener("finverify-client", refresh);
+  }, [queryClient]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/auth/me")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        const name = data?.company?.name || data?.user?.company;
+        if (!cancelled && name) setWorkspaceName(name);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const ownId = user?.companyId ?? null;
+  const options = [
+    ...(ownId
+      ? [{ id: ownId, name: workspaceName, linkId: null as number | null }]
+      : []),
+    ...clients
+      .filter((client) => client.companyId && client.companyId !== ownId)
+      .map((client) => ({
+        id: client.companyId as number,
+        name: client.name,
+        linkId: client.linkId,
+      })),
   ];
-  const [selected, setSelected] = useState(months[0]);
+  if (options.length < 2)
+    return (
+      <button
+        type="button"
+        className="fv-client-switcher"
+        onClick={() => navigate("/app/clients")}
+      >
+        <Building2 size={15} />
+        <span>{active?.name || options[0]?.name || "Select a client"}</span>
+        <ChevronDown size={13} />
+      </button>
+    );
+  const selected =
+    active?.id && options.some((option) => option.id === active.id)
+      ? active.id
+      : options[0].id;
+
   return (
-    <select
-      aria-label="Active month"
-      value={selected}
-      onChange={e => setSelected(e.target.value)}
-      className="hidden h-8 cursor-pointer items-center gap-1.5 rounded-xl border border-primary/20 bg-primary/5 px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10 focus:outline-none focus:ring-2 focus:ring-primary/20 md:inline-flex"
-    >
-      {months.map(m => <option key={m} value={m}>{m}</option>)}
-    </select>
+    <label className="fv-client-switcher">
+      <span className="hidden shrink-0 sm:inline">Client</span>
+      <select
+        aria-label="Client"
+        className="min-w-0 max-w-[11rem] truncate rounded-lg bg-transparent py-1 text-sm font-semibold text-foreground focus:outline-none sm:max-w-[16rem]"
+        value={String(selected)}
+        onChange={(event) => {
+          const id = Number(event.target.value);
+          const option = options.find((item) => item.id === id);
+          if (!option) return;
+          choose({
+            id: option.id,
+            name: option.name,
+            accounting: active?.accounting ?? "Tally",
+            linkId: option.linkId,
+          });
+        }}
+      >
+        {options.map((option) => (
+          <option key={option.id} value={option.id}>
+            {option.name}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
-
-const notifications: Array<{
-  title: string;
-  description: string;
-  time: string;
-  href: string;
-  icon: LucideIcon;
-  tone: "risk" | "review" | "upload";
-}> = [];
-
-interface AppShellProps {
-  children: ReactNode;
+function NavItems({
+  items,
+  location,
+  onNavigate,
+}: {
+  items: NavItem[];
+  location: string;
+  onNavigate: (href: string) => void;
+}) {
+  return (
+    <div className="space-y-0.5">
+      {items.map((item) => {
+        const Icon = item.icon;
+        const path = item.href.split("?")[0];
+        const active =
+          location === path ||
+          location.startsWith(`${path}/`) ||
+          (location === "/app" && path === "/app/overview");
+        return (
+          <button
+            key={item.href}
+            type="button"
+            onClick={() => onNavigate(item.href)}
+            aria-current={active ? "page" : undefined}
+            className={cn("fv-app-nav-item", active && "is-active")}
+          >
+            <Icon className="h-4 w-4 shrink-0" />
+            <span className="truncate">{item.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
-export default function AppShell({ children }: AppShellProps) {
+export default function AppShell({ children }: { children: ReactNode }) {
   const [location, navigate] = useLocation();
-  const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(() =>
+    advancedNav.some((item) => location.startsWith(item.href.split("?")[0])),
+  );
   const user = getUser();
+  const pageName =
+    [...primaryNav, ...automationNav, ...secondaryNav, ...advancedNav].find(
+      (item) => location === item.href || location.startsWith(`${item.href}/`),
+    )?.label || "Workspace";
+
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMobileOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [mobileOpen]);
 
   useEffect(() => {
     if (!user) navigate("/login");
@@ -86,94 +239,95 @@ export default function AppShell({ children }: AppShellProps) {
 
   if (!user) return null;
 
+  const go = (href: string) => {
+    navigate(href);
+    setMobileOpen(false);
+  };
+
   const handleLogout = () => {
-    logout();
+    void logout();
     navigate("/login");
   };
 
-  const Sidebar = () => (
-    <div className="flex h-full flex-col">
-      <div className={cn("flex h-20 items-center border-b border-white/10 px-4", collapsed ? "justify-center" : "justify-between")}>
-        <div className={cn("min-w-0", collapsed && "hidden")}>
-          <div className="fv-wordmark-chip inline-flex rounded-2xl px-3 py-2 shadow-sm">
-            <BrandMark />
-          </div>
-          <div className="mt-2 truncate text-xs text-white/65">{user.company}</div>
-        </div>
-        {collapsed && <div className="fv-wordmark-chip rounded-2xl p-2 shadow-sm"><BrandMark compact /></div>}
+  const sidebar = (
+    <div className="fv-sidebar-content">
+      <div className="fv-sidebar-brand">
+        <button
+          type="button"
+          onClick={() => go("/app/overview")}
+          aria-label="Home"
+        >
+          <BrandMark light />
+        </button>
+        <button
+          type="button"
+          className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted lg:hidden"
+          onClick={() => setMobileOpen(false)}
+          aria-label="Close menu"
+        >
+          <X className="h-4 w-4" />
+        </button>
       </div>
-
-      <nav className="flex-1 overflow-y-auto px-2 py-4">
-        {navGroups.map(group => (
-          <div key={group.label} className="mb-4">
-            {!collapsed && (
-              <div className="px-3 pb-1 text-[10px] font-bold uppercase tracking-[0.16em] text-white/45">
-                {group.label}
-              </div>
-            )}
-            <div className="space-y-1">
-              {group.items.map(item => {
-                const Icon = item.icon;
-                const active = location === item.href || (location === "/app" && item.href === "/app/overview");
-                return (
-                  <button
-                    key={item.href}
-                    type="button"
-                    title={collapsed ? item.label : undefined}
-                    onClick={() => {
-                      navigate(item.href);
-                      setMobileOpen(false);
-                    }}
-                    className={cn(
-                      "group relative flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium transition",
-                      collapsed && "justify-center",
-                      active
-                        ? "fv-brand-accent-bg shadow-sm"
-                        : "text-white/72 hover:bg-white/10 hover:text-white"
-                    )}
-                  >
-                    {active && <span className="absolute left-0 top-2 h-6 w-1 rounded-r-full bg-white/80" />}
-                    <Icon className={cn("h-4 w-4 shrink-0", active ? "text-white" : "text-white/60 group-hover:text-white")} />
-                    {!collapsed && <span className="truncate">{item.label}</span>}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        ))}
+      <nav className="flex-1 overflow-y-auto px-3 pb-4">
+        <div className="fv-nav-label">Your workspace</div>
+        <NavItems items={primaryNav} location={location} onNavigate={go} />
+        <div className="fv-nav-label">Choose a job</div>
+        <NavItems items={automationNav} location={location} onNavigate={go} />
+        <div className="fv-nav-divider">
+          <NavItems items={secondaryNav} location={location} onNavigate={go} />
+        </div>
+        <div className="mt-4">
+          <button
+            type="button"
+            onClick={() => setAdvancedOpen((open) => !open)}
+            aria-expanded={advancedOpen}
+            className="fv-app-advanced"
+          >
+            <span className="flex-1 text-left">Advanced</span>
+            <ChevronDown
+              className={cn(
+                "h-3.5 w-3.5 transition",
+                advancedOpen && "rotate-180",
+              )}
+            />
+          </button>
+          {advancedOpen && (
+            <NavItems items={advancedNav} location={location} onNavigate={go} />
+          )}
+        </div>
       </nav>
-
-      <div className={cn("border-t border-white/10 p-3", collapsed && "flex justify-center")}>
-        {collapsed ? (
-          <button type="button" onClick={handleLogout} className="rounded-xl p-2 text-white/65 hover:bg-white/10 hover:text-white" aria-label="Logout">
+      <div className="fv-sidebar-account">
+        <div className="flex items-center gap-3 rounded-xl px-2 py-1.5">
+          <div className="fv-account-avatar">
+            {user.name
+              .split(" ")
+              .map((part) => part[0])
+              .join("")
+              .slice(0, 2)
+              .toUpperCase()}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-semibold">{user.name}</div>
+            <div className="fv-account-email truncate">{user.email}</div>
+          </div>
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+            aria-label="Log out"
+            title="Log out"
+          >
             <LogOut className="h-4 w-4" />
           </button>
-        ) : (
-          <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
-            <div className="flex items-center gap-3">
-              <div className="fv-text-brand-primary flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-sm font-bold">
-                {user.name.split(" ").map(n => n[0]).join("").slice(0, 2)}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-semibold text-white">{user.name}</div>
-                <div className="mt-0.5 inline-flex rounded-full border border-white/10 bg-white/10 px-2 py-0.5 text-[11px] font-semibold capitalize text-white/75">
-                  {user.role}
-                </div>
-              </div>
-              <button type="button" onClick={handleLogout} className="rounded-lg p-1.5 text-white/65 hover:bg-white/10 hover:text-white" aria-label="Logout">
-                <LogOut className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
-        )}
+        </div>
       </div>
     </div>
   );
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background text-foreground">
-      <aside className={cn("fv-brand-primary-bg hidden shrink-0 border-r border-primary/20 transition-all duration-200 lg:flex", collapsed ? "w-[4.5rem]" : "w-64")}>
-        <Sidebar />
+    <div className="fv-app-shell flex h-screen overflow-hidden bg-background text-foreground">
+      <aside className="fv-app-sidebar hidden shrink-0 lg:flex">
+        {sidebar}
       </aside>
 
       <AnimatePresence>
@@ -184,137 +338,56 @@ export default function AppShell({ children }: AppShellProps) {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setMobileOpen(false)}
-              className="fixed inset-0 z-40 bg-black/35 lg:hidden"
+              className="fixed inset-0 z-40 bg-black/30 lg:hidden"
             />
             <motion.aside
-              initial={{ x: -288 }}
+              initial={{ x: -280 }}
               animate={{ x: 0 }}
-              exit={{ x: -288 }}
-              transition={{ type: "spring", damping: 28, stiffness: 220 }}
-              className="fv-brand-primary-bg fixed inset-y-0 left-0 z-50 flex w-72 flex-col border-r border-primary/20 lg:hidden"
+              exit={{ x: -280 }}
+              transition={{ type: "spring", damping: 30, stiffness: 260 }}
+              className="fv-app-sidebar fixed inset-y-0 left-0 z-50 flex w-72 flex-col lg:hidden"
+              aria-label="Workspace navigation"
             >
-              <Sidebar />
+              {sidebar}
             </motion.aside>
           </>
         )}
       </AnimatePresence>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-16 shrink-0 items-center gap-3 border-b border-border bg-background/90 px-4 backdrop-blur sm:px-5">
-          <button
-            type="button"
-            onClick={() => setCollapsed(v => !v)}
-            className="hidden rounded-xl p-2 text-muted-foreground hover:bg-muted hover:text-foreground lg:inline-flex"
-            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          >
-            {collapsed ? <Menu className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
-          </button>
+        <header className="fv-app-topbar">
           <button
             type="button"
             onClick={() => setMobileOpen(true)}
-            className="rounded-xl p-2 text-muted-foreground hover:bg-muted hover:text-foreground lg:hidden"
+            className="rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-foreground lg:hidden"
             aria-label="Open menu"
           >
             <Menu className="h-4 w-4" />
           </button>
-
-          <div className="fv-search-field hidden min-w-0 max-w-2xl flex-1 md:flex">
-            <Search className="fv-search-icon" />
-            <input
-              aria-label="Global search"
-              placeholder="Search invoices, UTRs, vendors, risks..."
-              className="fv-search-input"
-            />
-          </div>
-
-          <div className="ml-auto flex items-center gap-2">
-            <MonthSelector />
-            <select aria-label="Company switcher" className="fv-input hidden w-48 md:block">
-              <option>{user.company}</option>
-            </select>
-            <select aria-label="Month selector" className="fv-input hidden w-32 sm:block">
-              <option>May 2026</option>
-              <option>April 2026</option>
-            </select>
-            <button
-              type="button"
-              onClick={() => navigate("/app/uploads")}
-              className="fv-button-primary hidden sm:inline-flex"
-            >
-              <Upload className="h-4 w-4" />
-              Upload
+          {pageName === "Workspace" && (
+            <div className="lg:hidden">
+              <BrandMark compact />
+            </div>
+          )}
+          <div className="fv-app-breadcrumb">
+            <button type="button" onClick={() => go("/app/overview")}>
+              Workspace
             </button>
-            <Popover>
-              <PopoverTrigger asChild>
-                <button
-                  type="button"
-                  className="relative rounded-xl border border-border bg-card p-2 text-muted-foreground transition hover:border-primary/30 hover:bg-muted hover:text-foreground focus:outline-none focus:ring-2 focus:ring-secondary/20"
-                  aria-label="Open notifications"
-                >
-                  <Bell className="h-4 w-4" />
-                  {notifications.length > 0 && <span className="fv-brand-accent-bg absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full" />}
-                </button>
-              </PopoverTrigger>
-              <PopoverContent align="end" sideOffset={10} className="w-[22rem] rounded-2xl border-border bg-card p-0 shadow-[0_20px_60px_rgba(6,95,70,0.14)]">
-                <div className="flex items-start justify-between gap-4 border-b border-border px-4 py-3">
-                  <div>
-                    <div className="text-sm font-semibold text-foreground">Notifications</div>
-                    <div className="mt-0.5 text-xs text-muted-foreground">Finance checks that need attention</div>
-                  </div>
-                  <span className="fv-status-review rounded-full border px-2 py-0.5 text-[11px] font-semibold">
-                    {notifications.length} open
-                  </span>
-                </div>
-                <div className="max-h-[22rem] overflow-y-auto p-2">
-                  {notifications.length === 0 && (
-                    <div className="px-3 py-6 text-center text-xs text-muted-foreground">
-                      No notifications yet. Upload files or run reconciliation to create review events.
-                    </div>
-                  )}
-                  {notifications.map(item => {
-                    const ItemIcon = item.icon;
-                    return (
-                      <button
-                        key={item.title}
-                        type="button"
-                        onClick={() => navigate(item.href)}
-                        className="group flex w-full gap-3 rounded-xl px-3 py-3 text-left transition hover:bg-muted/60"
-                      >
-                        <span
-                          className={cn(
-                            "mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border",
-                            item.tone === "risk" && "fv-status-risk",
-                            item.tone === "review" && "fv-status-missing",
-                            item.tone === "upload" && "fv-status-verified"
-                          )}
-                        >
-                          <ItemIcon className="h-4 w-4" />
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="flex items-center justify-between gap-3">
-                            <span className="truncate text-sm font-semibold text-foreground">{item.title}</span>
-                            <span className="shrink-0 text-[11px] text-muted-foreground">{item.time}</span>
-                          </span>
-                          <span className="mt-1 block text-xs leading-5 text-muted-foreground">{item.description}</span>
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="flex items-center justify-between border-t border-border px-4 py-3">
-                  <button type="button" onClick={() => navigate("/app/action-items")} className="text-xs font-semibold text-primary hover:underline">
-                    Open Action Items
-                  </button>
-                  <button type="button" onClick={() => navigate("/app/settings")} className="text-xs font-medium text-muted-foreground hover:text-foreground">
-                    Notification settings
-                  </button>
-                </div>
-              </PopoverContent>
-            </Popover>
+            {pageName !== "Workspace" && (
+              <>
+                <span>/</span>
+                <strong>{pageName}</strong>
+              </>
+            )}
+          </div>
+          <div className="ml-auto flex min-w-0 items-center gap-2">
+            <ClientSwitcher />
           </div>
         </header>
-
-        <main className="min-h-0 flex-1 overflow-y-auto">
+        <main
+          id="workspace-content"
+          className="fv-app-main min-h-0 flex-1 overflow-y-auto"
+        >
           {children}
         </main>
       </div>

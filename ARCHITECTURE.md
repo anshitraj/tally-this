@@ -1,6 +1,30 @@
 # FinVerify OS Architecture
 
-FinVerify OS is an upload-based, rule-first finance verification system. The browser never receives AI provider keys, deterministic matching remains authoritative, and every compliance concern is routed as "Potential risk — needs CA review."
+FinVerify is accounting automation for CAs: upload a file, review exceptions, export a Tally or draft GST file.
+
+The browser talks to `/api`. Vite proxies that to the Go gateway on port 8090. Go serves health, workflow run reads, and some reconciliation routes, then proxies everything else to the TypeScript API on port 8080. The TypeScript API remains the fallback and still owns auth, uploads, the four job routes, reports, and CA review.
+
+Python (`services/extraction-worker`) parses CSV, Excel, and PDF tables and normalizes bank and marketplace rows when it is running. If it is down, the TypeScript parsers are the fallback. AI keys stay on the server. Matching math does not depend on a model.
+
+```mermaid
+flowchart LR
+  user["CA / accountant / finance team"]
+  frontend["React frontend"]
+  go["Go gateway :8090"]
+  ts["TypeScript API :8080"]
+  py["Python extraction :8091"]
+  db["Postgres"]
+
+  user --> frontend --> go
+  go --> ts
+  ts --> py
+  ts --> db
+  go --> db
+```
+
+Job results are stored on `workflow_runs` and `run_artifacts` for one company. A report is loaded by run id and company id.
+
+Compliance copy stays "Potential risk — needs CA review." Draft GST JSON is not a portal submission.
 
 ## High-Level Flow
 

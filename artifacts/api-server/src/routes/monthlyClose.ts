@@ -1,3 +1,4 @@
+import { resolveBooksCompanyId } from "../services/companyScope";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { getCompanyId, requirePermission } from "../middleware/authz";
 import { buildCurrentWorkflow } from "../services/workflowRecipeService";
@@ -18,14 +19,16 @@ router.get("/workflow/current-month", requirePermission("uploads.read"), current
 // ── Workflow runs — real progress polling ────────────────────────────────────
 
 router.get("/workflow/runs", requirePermission("uploads.read"), async (req, res): Promise<void> => {
-  const companyId = getCompanyId(req);
+  // Runs are stored on the books company, so a CA sees the active client's work.
+  const companyId = await resolveBooksCompanyId(req, res);
+  if (companyId == null) return;
   const runTypeFilter = typeof req.query.runType === "string" ? req.query.runType : null;
   try {
     const result = runTypeFilter
       ? await db.execute(sql`
           SELECT id, company_id, month, year, run_type, title, status,
                  progress_percent, COALESCE(current_step,'') as current_step,
-                 created_at, updated_at, completed_at, failed_reason
+                 created_at, updated_at, completed_at, failed_reason, metadata_json
           FROM workflow_runs
           WHERE company_id = ${companyId} AND run_type = ${runTypeFilter}
           ORDER BY created_at DESC LIMIT 50
@@ -33,7 +36,7 @@ router.get("/workflow/runs", requirePermission("uploads.read"), async (req, res)
       : await db.execute(sql`
           SELECT id, company_id, month, year, run_type, title, status,
                  progress_percent, COALESCE(current_step,'') as current_step,
-                 created_at, updated_at, completed_at, failed_reason
+                 created_at, updated_at, completed_at, failed_reason, metadata_json
           FROM workflow_runs
           WHERE company_id = ${companyId}
           ORDER BY created_at DESC LIMIT 50
@@ -63,7 +66,7 @@ router.patch("/workflow/runs/:id", requirePermission("uploads.create"), async (r
 
 router.get("/workflow/runs/:id/progress", requirePermission("uploads.read"), async (req, res): Promise<void> => {
   const runId = String(req.params.id);
-  const progress = await getRunProgress(runId);
+  const progress = await getRunProgress(runId, getCompanyId(req));
   if (!progress) {
     res.status(404).json({ error: "Run not found" });
     return;

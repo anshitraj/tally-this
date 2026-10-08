@@ -111,7 +111,11 @@ func ListReconciliationFolders(db *sql.DB) http.HandlerFunc {
 			errorJSON(w, http.StatusUnauthorized, "unauthenticated")
 			return
 		}
-		folders, err := loadReconciliationFolders(r, db, auth.CompanyID)
+		companyID, scoped := middleware.BooksCompany(db, w, r, auth)
+		if !scoped {
+			return
+		}
+		folders, err := loadReconciliationFolders(r, db, companyID)
 		if err != nil {
 			errorJSON(w, http.StatusInternalServerError, "could not load reconciliation folders")
 			return
@@ -128,7 +132,11 @@ func ListReconciliationMatches(db *sql.DB) http.HandlerFunc {
 			errorJSON(w, http.StatusUnauthorized, "unauthenticated")
 			return
 		}
-		items, err := loadReconciliationMatches(r, db, auth.CompanyID, r.URL.Query().Get("status"), r.URL.Query().Get("runId"))
+		companyID, scoped := middleware.BooksCompany(db, w, r, auth)
+		if !scoped {
+			return
+		}
+		items, err := loadReconciliationMatches(r, db, companyID, r.URL.Query().Get("status"), r.URL.Query().Get("runId"))
 		if err != nil {
 			errorJSON(w, http.StatusInternalServerError, "could not load reconciliation matches")
 			return
@@ -145,6 +153,10 @@ func ReconciliationPreflight(db *sql.DB) http.HandlerFunc {
 			errorJSON(w, http.StatusUnauthorized, "unauthenticated")
 			return
 		}
+		companyID, scoped := middleware.BooksCompany(db, w, r, auth)
+		if !scoped {
+			return
+		}
 		var body struct {
 			RecipeID string `json:"recipeId"`
 		}
@@ -153,14 +165,14 @@ func ReconciliationPreflight(db *sql.DB) http.HandlerFunc {
 			body.RecipeID = "FULL_MONTH_CLOSE"
 		}
 		counts := map[string]int{
-			"bankTransactions":          countRows(r, db, "bank_transactions", auth.CompanyID, ""),
-			"invoices":                  countRows(r, db, "invoices", auth.CompanyID, ""),
-			"acceptedInvoices":          countRows(r, db, "invoices", auth.CompanyID, "status = 'pending_reconciliation'"),
-			"ledgerEntries":             countRows(r, db, "ledger_entries", auth.CompanyID, ""),
-			"payrollEntries":            countRows(r, db, "payroll_entries", auth.CompanyID, ""),
-			"gatewaySettlements":        countRows(r, db, "gateway_settlements", auth.CompanyID, ""),
-			"gstRecords":                countRows(r, db, "gst_records", auth.CompanyID, ""),
-			"pendingInvoiceExtractions": countRows(r, db, "ai_extractions", auth.CompanyID, "status = 'extracted_pending_review'"),
+			"bankTransactions":          countRows(r, db, "bank_transactions", companyID, ""),
+			"invoices":                  countRows(r, db, "invoices", companyID, ""),
+			"acceptedInvoices":          countRows(r, db, "invoices", companyID, "status = 'pending_reconciliation'"),
+			"ledgerEntries":             countRows(r, db, "ledger_entries", companyID, ""),
+			"payrollEntries":            countRows(r, db, "payroll_entries", companyID, ""),
+			"gatewaySettlements":        countRows(r, db, "gateway_settlements", companyID, ""),
+			"gstRecords":                countRows(r, db, "gst_records", companyID, ""),
+			"pendingInvoiceExtractions": countRows(r, db, "ai_extractions", companyID, "status = 'extracted_pending_review'"),
 		}
 
 		blockers := []string{}
@@ -263,19 +275,23 @@ func RunReconciliation(db *sql.DB) http.HandlerFunc {
 			errorJSON(w, http.StatusUnauthorized, "unauthenticated")
 			return
 		}
+		companyID, scoped := middleware.BooksCompany(db, w, r, auth)
+		if !scoped {
+			return
+		}
 		var body struct {
 			RecipeID string `json:"recipeId"`
 			Month    string `json:"month"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		runType := recipeToRunType(body.RecipeID)
-		runID, err := createWorkflowRun(r.Context(), db, auth.CompanyID, runType, &auth.UserID, map[string]any{"recipeId": body.RecipeID, "month": body.Month})
+		runID, err := createWorkflowRun(r.Context(), db, companyID, runType, &auth.UserID, map[string]any{"recipeId": body.RecipeID, "month": body.Month})
 		if err != nil {
 			errorJSON(w, http.StatusInternalServerError, "could not create workflow run")
 			return
 		}
 		advanceWorkflowRun(r.Context(), db, runID, 20, "Loading financial records")
-		result, err := runAndPersistReconciliation(r, db, auth.CompanyID, runID)
+		result, err := runAndPersistReconciliation(r, db, companyID, runID)
 		if err != nil {
 			failed := "reconciliation failed"
 			finishWorkflowRun(r.Context(), db, runID, "failed", &failed)
@@ -288,10 +304,10 @@ func RunReconciliation(db *sql.DB) http.HandlerFunc {
 			message = fmt.Sprintf("Ledger reconciliation report saved. Found %d new rule-based matches.", result["matchesFound"])
 		}
 		saveRunArtifact(r.Context(), db, runID, "reconciliation_report", message, map[string]any{"result": result, "recipeId": body.RecipeID})
-		updateReconciliationRunTitle(r, db, auth.CompanyID, runID)
+		updateReconciliationRunTitle(r, db, companyID, runID)
 		finishWorkflowRun(r.Context(), db, runID, "completed", nil)
-		writeActionHistory(r.Context(), db, auth.CompanyID, &runID, &auth.UserID, "reconciliation.run", message, "success", map[string]any{"matchesFound": result["matchesFound"], "recipeId": body.RecipeID, "runId": runID})
-		writeAuditLog(r.Context(), db, auth.CompanyID, &auth.UserID, auth.Email, "reconciliation.run", "reconciliation", nil, map[string]any{"matchesFound": result["matchesFound"], "recipeId": body.RecipeID, "runId": runID}, r.RemoteAddr)
+		writeActionHistory(r.Context(), db, companyID, &runID, &auth.UserID, "reconciliation.run", message, "success", map[string]any{"matchesFound": result["matchesFound"], "recipeId": body.RecipeID, "runId": runID})
+		writeAuditLog(r.Context(), db, companyID, &auth.UserID, auth.Email, "reconciliation.run", "reconciliation", nil, map[string]any{"matchesFound": result["matchesFound"], "recipeId": body.RecipeID, "runId": runID}, r.RemoteAddr)
 
 		resp := map[string]any{}
 		for k, v := range result {
@@ -311,6 +327,10 @@ func UpdateReconciliationMatch(db *sql.DB, status string) http.HandlerFunc {
 			errorJSON(w, http.StatusUnauthorized, "unauthenticated")
 			return
 		}
+		companyID, scoped := middleware.BooksCompany(db, w, r, auth)
+		if !scoped {
+			return
+		}
 		id, err := strconv.Atoi(r.PathValue("id"))
 		if err != nil {
 			errorJSON(w, http.StatusBadRequest, "Invalid id")
@@ -322,7 +342,7 @@ func UpdateReconciliationMatch(db *sql.DB, status string) http.HandlerFunc {
 			`UPDATE reconciliation_matches SET status = $3
 			 WHERE id = $1 AND company_id = $2
 			 RETURNING id, bank_transaction_id`,
-			id, auth.CompanyID, status).Scan(&matchID, &bankID)
+			id, companyID, status).Scan(&matchID, &bankID)
 		if err != nil {
 			errorJSON(w, http.StatusNotFound, "Match not found")
 			return
@@ -330,15 +350,15 @@ func UpdateReconciliationMatch(db *sql.DB, status string) http.HandlerFunc {
 		if status == "approved" && bankID.Valid {
 			_, _ = db.ExecContext(r.Context(),
 				`UPDATE bank_transactions SET status = 'verified' WHERE id = $1 AND company_id = $2`,
-				bankID.Int64, auth.CompanyID)
+				bankID.Int64, companyID)
 		}
 		action := "reconciliation." + status
 		if status == "needs_info" {
 			action = "reconciliation.needs_info"
 		}
-		writeActionHistory(r.Context(), db, auth.CompanyID, nil, &auth.UserID, action, fmt.Sprintf("Match #%d marked %s.", matchID, strings.ReplaceAll(status, "_", " ")), "success", map[string]any{"matchId": matchID})
-		writeAuditLog(r.Context(), db, auth.CompanyID, &auth.UserID, auth.Email, action, "reconciliation", matchID, map[string]any{"matchId": matchID}, r.RemoteAddr)
-		item, _ := loadSingleMatch(r, db, auth.CompanyID, matchID)
+		writeActionHistory(r.Context(), db, companyID, nil, &auth.UserID, action, fmt.Sprintf("Match #%d marked %s.", matchID, strings.ReplaceAll(status, "_", " ")), "success", map[string]any{"matchId": matchID})
+		writeAuditLog(r.Context(), db, companyID, &auth.UserID, auth.Email, action, "reconciliation", matchID, map[string]any{"matchId": matchID}, r.RemoteAddr)
+		item, _ := loadSingleMatch(r, db, companyID, matchID)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(item)
 	}
@@ -349,6 +369,10 @@ func SendMatchToCA(db *sql.DB) http.HandlerFunc {
 		auth, ok := middleware.AuthenticateRequest(db, r)
 		if !ok {
 			errorJSON(w, http.StatusUnauthorized, "unauthenticated")
+			return
+		}
+		companyID, scoped := middleware.BooksCompany(db, w, r, auth)
+		if !scoped {
 			return
 		}
 		id, err := strconv.Atoi(r.PathValue("id"))
@@ -364,7 +388,7 @@ func SendMatchToCA(db *sql.DB) http.HandlerFunc {
 		var confidence int
 		err = db.QueryRowContext(r.Context(),
 			`SELECT reason, confidence_score FROM reconciliation_matches WHERE id = $1 AND company_id = $2`,
-			id, auth.CompanyID).Scan(&reason, &confidence)
+			id, companyID).Scan(&reason, &confidence)
 		if err != nil {
 			errorJSON(w, http.StatusNotFound, "Match not found")
 			return
@@ -379,14 +403,14 @@ func SendMatchToCA(db *sql.DB) http.HandlerFunc {
 			 (company_id, entity_type, entity_id, title, description, severity, status, founder_note, created_by)
 			 VALUES ($1, 'reconciliation_match', $2, $3, $4, $5, 'pending', $6, $7)
 			 RETURNING id`,
-			auth.CompanyID, id, fmt.Sprintf("Reconciliation match #%d needs CA review", id), reason, severity, nullString(body.Note), auth.UserID).Scan(&itemID)
+			companyID, id, fmt.Sprintf("Reconciliation match #%d needs CA review", id), reason, severity, nullString(body.Note), auth.UserID).Scan(&itemID)
 		if err != nil {
 			errorJSON(w, http.StatusInternalServerError, "could not create CA review item")
 			return
 		}
-		_, _ = db.ExecContext(r.Context(), `UPDATE reconciliation_matches SET status = 'needs_info' WHERE id = $1 AND company_id = $2`, id, auth.CompanyID)
-		writeActionHistory(r.Context(), db, auth.CompanyID, nil, &auth.UserID, "reconciliation.sent_to_ca", fmt.Sprintf("Sent match #%d to CA review.", id), "success", map[string]any{"matchId": id, "caReviewItemId": itemID})
-		writeAuditLog(r.Context(), db, auth.CompanyID, &auth.UserID, auth.Email, "reconciliation.sent_to_ca", "reconciliation", id, map[string]any{"matchId": id, "caReviewItemId": itemID}, r.RemoteAddr)
+		_, _ = db.ExecContext(r.Context(), `UPDATE reconciliation_matches SET status = 'needs_info' WHERE id = $1 AND company_id = $2`, id, companyID)
+		writeActionHistory(r.Context(), db, companyID, nil, &auth.UserID, "reconciliation.sent_to_ca", fmt.Sprintf("Sent match #%d to CA review.", id), "success", map[string]any{"matchId": id, "caReviewItemId": itemID})
+		writeAuditLog(r.Context(), db, companyID, &auth.UserID, auth.Email, "reconciliation.sent_to_ca", "reconciliation", id, map[string]any{"matchId": id, "caReviewItemId": itemID}, r.RemoteAddr)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "id": itemID, "matchId": id, "status": "pending"})
 	}

@@ -1,28 +1,19 @@
 import type { ReactNode, ComponentType } from "react";
 import { motion } from "framer-motion";
-import { CheckCircle, FileQuestion, type LucideIcon } from "lucide-react";
+import { FileQuestion, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import StatusBadge from "@/components/app/StatusBadge";
+import { BRAND } from "@/lib/brand";
 
-export function BrandMark({ compact = false }: { compact?: boolean }) {
+export function BrandMark({ compact = false, light = false }: { compact?: boolean; light?: boolean }) {
   return (
-    <div className="flex items-center gap-2.5">
-      {/* Wordmark symbol follows the refreshed green/teal/orange FinVerify palette. */}
-      <div className="fv-brand-icon flex h-8 w-8 items-center justify-center rounded-xl shadow-sm">
-        <CheckCircle className="h-4 w-4" />
-      </div>
-      {!compact && (
-        <div className="leading-none">
-          <div className="font-bold tracking-tight">
-            <span style={{ color: "var(--fv-brand-primary)" }}>Fin</span>
-            <span style={{ color: "var(--fv-brand-accent)" }}>Verify</span>
-            <span className="ml-1 rounded-full px-1.5 py-0.5 text-[10px] font-bold text-white align-middle" style={{ backgroundColor: "var(--fv-brand-secondary)" }}>
-              OS
-            </span>
-          </div>
-        </div>
-      )}
-    </div>
+    <span className={`fv-brand ${light ? "fv-brand-light" : ""}`} aria-label={BRAND.name}>
+      <svg className="fv-brand-symbol" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+        <path d="M4 7h19M12 7v18" stroke="currentColor" strokeWidth="3.5" strokeLinecap="square" />
+        <path d="m18 20 4 4 7-11" stroke="currentColor" strokeWidth="3.5" strokeLinecap="square" strokeLinejoin="miter" />
+      </svg>
+      {!compact && <span className="fv-brand-name">{BRAND.wordmark}<span className="fv-brand-period">.</span></span>}
+    </span>
   );
 }
 

@@ -1,3 +1,5 @@
+import { getActiveClient } from "@/lib/activeClient";
+
 export type UserRole = "founder" | "admin" | "finance" | "ca" | "ca_auditor" | "viewer";
 
 export interface AuthUser {
@@ -89,6 +91,10 @@ export function installAuthenticatedFetch(): void {
 
     const headers = new Headers(init?.headers);
     headers.set("Authorization", `Bearer ${token}`);
+    const client = getActiveClient();
+    if (client?.id && client.id > 0 && !headers.has("X-Client-Company-Id")) {
+      headers.set("X-Client-Company-Id", String(client.id));
+    }
     return nativeFetch(input, { ...init, headers });
   };
 }

@@ -20,7 +20,7 @@ import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
 
-const BRAND_COLOR = "FF5C2E"; // orange accent
+const BRAND_COLOR = "143E2C"; // TallyThis forest green
 const HEADER_FILL: ExcelJS.FillPattern = { type: "pattern", pattern: "solid", fgColor: { argb: BRAND_COLOR } };
 const ALT_FILL: ExcelJS.FillPattern = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFBF7F5" } };
 const HEADER_FONT: Partial<ExcelJS.Font> = { bold: true, color: { argb: "FFFFFFFF" }, size: 11 };
@@ -93,14 +93,14 @@ router.post("/reports/excel-export", requirePermission("reports.read"), async (r
 
     // ── Build workbook ───────────────────────────────────────────────────────
     const wb = new ExcelJS.Workbook();
-    wb.creator = "FinVerify OS";
-    wb.lastModifiedBy = "FinVerify OS";
+    wb.creator = "TallyThis";
+    wb.lastModifiedBy = "TallyThis";
     wb.created = new Date();
 
     // ─── Sheet 1: Summary ────────────────────────────────────────────────────
     const summary = wb.addWorksheet("Summary");
     summary.columns = [{ width: 35 }, { width: 35 }];
-    const titleRow = summary.addRow(["FinVerify OS — CA Pack", ""]);
+    const titleRow = summary.addRow(["TallyThis — CA Pack", ""]);
     titleRow.font = { bold: true, size: 14, color: { argb: BRAND_COLOR } };
     titleRow.height = 28;
     summary.mergeCells("A1:B1");
@@ -241,7 +241,7 @@ router.post("/reports/excel-export", requirePermission("reports.read"), async (r
     });
 
     // ── Stream response ───────────────────────────────────────────────────────
-    const filename = `FinVerify_CA_Pack_${company.replace(/\s+/g, "_")}_${period}.xlsx`;
+    const filename = `TallyThis_CA_Pack_${company.replace(/\s+/g, "_")}_${period}.xlsx`;
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     await wb.xlsx.write(res);

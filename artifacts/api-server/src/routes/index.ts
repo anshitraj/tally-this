@@ -22,6 +22,11 @@ import gstr2bRouter from "./gstr2b";
 import periodLockRouter from "./periodLock";
 import excelExportRouter from "./excelExport";
 import vendorAgingRouter from "./vendorAging";
+import taxAuditRouter from "./taxAudit";
+import practiceRouter from "./practice";
+import tdsReconRouter from "./tdsRecon";
+import jobsRouter from "./jobs";
+import accountRouter from "./account";
 
 const router: IRouter = Router();
 
@@ -29,6 +34,8 @@ router.use(healthRouter);
 router.use(overviewRouter);
 router.use(demoRouter);
 router.use(uploadsRouter);
+router.use(jobsRouter);
+router.use(accountRouter);
 router.use(transactionsRouter);
 router.use(invoicesRouter);
 router.use(ledgerRouter);
@@ -48,5 +55,10 @@ router.use(gstr2bRouter);
 router.use(periodLockRouter);
 router.use(excelExportRouter);
 router.use(vendorAgingRouter);
+// tdsRecon must precede taxAudit: GET /tax-audit/:checkId would otherwise
+// greedily match /tax-audit/tds-recon.
+router.use(tdsReconRouter);
+router.use(taxAuditRouter);
+router.use(practiceRouter);
 
 export default router;

@@ -185,7 +185,8 @@ function dateValue(row: Row, aliases: string[]): string | null {
 }
 
 function sourceTable(sourceType: string) {
-  return SOURCE_TO_TABLE[sourceType.toLowerCase()] ?? null;
+  const key = sourceType.toLowerCase().trim().replace(/[\s-]+/g, "_");
+  return SOURCE_TO_TABLE[key] ?? null;
 }
 
 function insertNote(table: string | null, inserted: number, skipped: number) {

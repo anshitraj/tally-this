@@ -539,7 +539,7 @@ export async function buildCurrentWorkflow(companyId: number) {
     status: legacyStatus,
     subtitle: recommendedRecipe
       ? recipeSpecificSubtitle(recommendedRecipe.id, parsedSet, importedSet)
-      : "Upload any files you have. FinVerify will show matching options based on uploaded sources.",
+      : "Upload any files you have. TallyThis will show matching options based on uploaded sources.",
     secondaryActions: secondaryActionsForRecommendation(recommendedRecipe?.id),
   };
 }
@@ -558,7 +558,7 @@ function recipeSpecificSubtitle(recipeId: WorkflowRecipeId, parsedSet: Set<Norma
   if (recipeId === "GST_TDS_REVIEW") return "GST/TDS review is available. Generate potential risk items for CA review.";
   if (recipeId === "EXPENSE_REVIEW") return "Expense review is available. Import expenses and request missing receipts when needed.";
   if (parsedSet.size > 0) return "You do not need every file. Run the available workflow for the sources uploaded.";
-  return "Upload any files you have. FinVerify will show matching options based on uploaded sources.";
+  return "Upload any files you have. TallyThis will show matching options based on uploaded sources.";
 }
 
 function secondaryActionsForRecommendation(recipeId?: WorkflowRecipeId | null) {

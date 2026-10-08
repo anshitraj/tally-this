@@ -61,14 +61,17 @@ export default function VendorAgingPage() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [sort, setSort] = useState<"total" | "over90">("total");
 
-  const { data, isLoading } = useQuery<AgingResponse>({
+  const { data, isLoading, isError } = useQuery<AgingResponse>({
     queryKey: ["vendorAging"],
-    queryFn: () => fetch(`${BASE}/api/vendor-aging`).then(r => r.json()),
+    queryFn: async () => {
+      const response = await fetch(`${BASE}/api/vendor-aging`);
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body?.error || "Vendor aging failed");
+      return body as AgingResponse;
+    },
   });
 
-  const sorted = data
-    ? [...data.vendors].sort((a, b) => (sort === "over90" ? b.over90 - a.over90 : b.total - a.total))
-    : [];
+  const sorted = [...(data?.vendors ?? [])].sort((a, b) => (sort === "over90" ? b.over90 - a.over90 : b.total - a.total));
 
   const criticalVendors = sorted.filter(v => v.over90 > 0);
 
@@ -131,6 +134,12 @@ export default function VendorAgingPage() {
       {/* Vendor table */}
       {isLoading ? (
         <div className="py-16 text-center text-sm text-muted-foreground">Loading vendor aging…</div>
+      ) : isError ? (
+        <div className="rounded-xl border border-destructive/20 bg-destructive/5 py-16 text-center">
+          <Building2 className="mx-auto mb-3 h-10 w-10 text-destructive/40" />
+          <div className="font-semibold text-foreground">Vendor aging could not be loaded</div>
+          <div className="mt-1 text-sm text-muted-foreground">Refresh after invoices are available for this workspace.</div>
+        </div>
       ) : sorted.length === 0 ? (
         <div className="rounded-xl border border-border py-16 text-center">
           <Building2 className="mx-auto mb-3 h-10 w-10 text-muted-foreground/30" />
