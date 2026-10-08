@@ -13,6 +13,9 @@ export const companiesTable = pgTable("companies", {
   financialYearStart: text("financial_year_start").notNull().default("April"),
   currency: text("currency").notNull().default("INR"),
   dataRetentionDays: integer("data_retention_days").notNull().default(365),
+  /** Subscription plan: free, starter, growth, ca_firm, enterprise. See scripts/migrate-plans.sql. */
+  plan: text("plan").notNull().default("free"),
+  planUntil: timestamp("plan_until"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

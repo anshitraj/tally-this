@@ -1,6 +1,8 @@
 import * as XLSX from "xlsx";
 import { PDFParse } from "pdf-parse";
 import { extractHybrid, type ExtractionMethod } from "./pdfTableExtractor";
+import { scanCsvTable } from "./bankStatement";
+import { recognizeStatement } from "./statementOcr";
 
 export interface ParsedFileResult {
   parser: "csv" | "excel" | "pdf" | "image" | "unsupported";
@@ -16,6 +18,8 @@ export interface ParsedFileResult {
   notes: string[];
   extractionMethod?: ExtractionMethod;
   extractionConfidence?: number;
+  extractedText?: string;
+  ocrStatus?: "unavailable" | "pending_review";
 }
 
 // ─── PDF table extraction ────────────────────────────────────────────────────
@@ -241,7 +245,11 @@ async function tryPythonPdfTable(file: Express.Multer.File, sourceType: string):
   }
 }
 
-export async function parseUploadedFile(file: Express.Multer.File, sourceType: string = "unknown"): Promise<ParsedFileResult> {
+export async function parseUploadedFile(
+  file: Express.Multer.File,
+  sourceType: string = "unknown",
+  options: { password?: string } = {},
+): Promise<ParsedFileResult> {
   const extension = file.originalname.split(".").pop()?.toLowerCase();
 
   if (extension === "csv" || file.mimetype === "text/csv") {
@@ -249,8 +257,23 @@ export async function parseUploadedFile(file: Express.Multer.File, sourceType: s
     const pythonResult = await tryPythonWorker(file, sourceType, "csv");
     if (pythonResult) return pythonResult;
 
-    // TS fallback
+    // TS fallback — skip bank preamble lines until a financial header is found.
     const text = file.buffer.toString("utf8");
+    const scanned = scanCsvTable(text);
+    if (scanned) {
+      const rows = scanned.rows.map(({ _rowNumber, ...rest }) => rest);
+      return {
+        parser: "csv",
+        rowCount: rows.length,
+        detectedColumns: scanned.columns.slice(0, 30),
+        parsedRows: rows,
+        status: rows.length > 0 ? "parsed" : "metadata_only",
+        textPreview: text.split(/\r?\n/).slice(0, 6).join("\n").slice(0, 1000),
+        notes: rows.length > 0
+          ? [`CSV parsed server-side (Python worker unavailable). Header row ${scanned.headerIndex + 1}. ${rows.length} data rows.`]
+          : ["CSV header was found, but no data rows were detected."],
+      };
+    }
     const lines = text.split(/\r?\n/).filter((line: string) => line.trim().length > 0);
     const detectedColumns = lines.length > 0 ? parseCsvLine(lines[0]).filter(Boolean).slice(0, 30) : [];
     const rows = lines.slice(1).map((line: string) => {
@@ -262,9 +285,9 @@ export async function parseUploadedFile(file: Express.Multer.File, sourceType: s
       rowCount: Math.max(lines.length - 1, 0),
       detectedColumns,
       parsedRows: rows,
-      status: "parsed",
+      status: rows.length > 0 ? "parsed" : "metadata_only",
       textPreview: lines.slice(0, 4).join("\n").slice(0, 1000),
-      notes: ["CSV parsed server-side (Python worker unavailable)."],
+      notes: ["CSV parsed server-side (Python worker unavailable). No financial header detected; first row used as columns."],
     };
   }
 
@@ -329,16 +352,36 @@ export async function parseUploadedFile(file: Express.Multer.File, sourceType: s
   }
 
   if (extension === "pdf" || file.mimetype === "application/pdf") {
-    const pythonPdfResult = await tryPythonPdfTable(file, sourceType);
+    const pythonPdfResult = options.password ? null : await tryPythonPdfTable(file, sourceType);
     if (pythonPdfResult) return pythonPdfResult;
 
-    const parser = new PDFParse({ data: file.buffer });
+    const parser = new PDFParse({ data: file.buffer, password: options.password || undefined });
     const parsed = await parser.getText();
     await parser.destroy();
-    const lines = parsed.text.split(/\r?\n/).map((line: string) => line.trim()).filter(Boolean);
+    let pdfText = parsed.text ?? "";
+    let ocrStatus: ParsedFileResult["ocrStatus"];
+    if (pdfText.trim().length < 40) {
+      const ocr = await recognizeStatement({ buffer: file.buffer, fileName: file.originalname, kind: "pdf" });
+      if (!ocr.available) {
+        return {
+          parser: "pdf",
+          rowCount: 0,
+          detectedColumns: [],
+          status: "metadata_only",
+          pageCount: parsed.total,
+          textLength: pdfText.trim().length,
+          textPreview: pdfText.replace(/\s+/g, " ").trim().slice(0, 1000),
+          ocrStatus: "unavailable",
+          notes: [ocr.note],
+        };
+      }
+      pdfText = ocr.text;
+      ocrStatus = "pending_review";
+    }
+    const lines = pdfText.split(/\r?\n/).map((line: string) => line.trim()).filter(Boolean);
 
     // Hybrid pipeline: bank/gateway/GST-specific patterns → generic rules → AI fallback.
-    const hybrid = await extractHybrid(parsed.text, sourceType, extractTableRowsFromPdf);
+    const hybrid = await extractHybrid(pdfText, sourceType, extractTableRowsFromPdf);
     const parsedRows = hybrid.rows;
     const detectedColumns = hybrid.columns.length > 0 ? hybrid.columns : lines
       .find((line: string) => /invoice|date|amount|gst|vendor|narration/i.test(line))
@@ -349,19 +392,54 @@ export async function parseUploadedFile(file: Express.Multer.File, sourceType: s
 
     return {
       parser: "pdf",
-      rowCount: parsedRows.length > 0 ? parsedRows.length : lines.length,
+      rowCount: ocrStatus === "pending_review" ? parsedRows.length : (parsedRows.length > 0 ? parsedRows.length : lines.length),
       detectedColumns,
       parsedRows: parsedRows.length > 0 ? parsedRows : undefined,
       pageCount: parsed.total,
-      textLength: parsed.text.length,
+      textLength: pdfText.length,
       tablesDetected: parsedRows.length > 0 ? 1 : 0,
-      status: "parsed",
-      textPreview: parsed.text.replace(/\s+/g, " ").trim().slice(0, 1000),
+      status: ocrStatus === "pending_review" ? "metadata_only" : "parsed",
+      textPreview: pdfText.replace(/\s+/g, " ").trim().slice(0, 1000),
+      extractedText: ocrStatus === "pending_review" ? pdfText : undefined,
+      ocrStatus,
       extractionMethod: hybrid.method,
       extractionConfidence: hybrid.confidence,
-      notes: parsedRows.length > 0
+      notes: ocrStatus === "pending_review"
+        ? [`OCR extracted — pending review. These rows are not verified books.`, ...hybrid.notes]
+        : parsedRows.length > 0
         ? [`PDF extraction (${hybrid.method}, ${Math.round(hybrid.confidence * 100)}% confidence): ${parsedRows.length} rows. AI/auto rows are pending CA review before final use.`, ...hybrid.notes]
         : ["PDF text extracted but no structured rows could be derived. Upload CSV/Excel or wait for AI fallback (requires GEMINI_API_KEY).", ...hybrid.notes],
+    };
+  }
+
+  const imageExtensions = new Set(["png", "jpg", "jpeg", "webp", "tif", "tiff", "bmp"]);
+  if (imageExtensions.has(extension ?? "") || (file.mimetype ?? "").startsWith("image/")) {
+    const ocr = await recognizeStatement({ buffer: file.buffer, fileName: file.originalname, kind: "image" });
+    if (!ocr.available) {
+      return {
+        parser: "image",
+        rowCount: 0,
+        detectedColumns: [],
+        status: "metadata_only",
+        textLength: 0,
+        ocrStatus: "unavailable",
+        notes: [ocr.note],
+      };
+    }
+    const hybrid = await extractHybrid(ocr.text, sourceType, extractTableRowsFromPdf);
+    return {
+      parser: "image",
+      rowCount: hybrid.rows.length,
+      detectedColumns: hybrid.columns.slice(0, 30),
+      parsedRows: hybrid.rows.length > 0 ? hybrid.rows : undefined,
+      status: "metadata_only",
+      textLength: ocr.text.length,
+      textPreview: ocr.text.replace(/\s+/g, " ").trim().slice(0, 1000),
+      extractedText: ocr.text,
+      ocrStatus: "pending_review",
+      extractionMethod: hybrid.method,
+      extractionConfidence: hybrid.confidence,
+      notes: ["OCR extracted — pending review. These rows are not verified books.", ...hybrid.notes],
     };
   }
 

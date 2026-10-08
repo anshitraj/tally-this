@@ -10,11 +10,13 @@
 import { Router, type IRouter } from "express";
 import multer from "multer";
 import ExcelJS from "exceljs";
-import { db, tallyLedgersTable, tallyVouchersTable, tallyVoucherLinesTable, tallyBillsTable } from "@workspace/db";
-import { sql, eq } from "drizzle-orm";
-import { getCompanyId, requirePermission, auditAction } from "../middleware/authz";
+import { db, ledgerEntriesTable, tallyLedgersTable, tallyVouchersTable, tallyVoucherLinesTable, tallyBillsTable } from "@workspace/db";
+import { sql, eq, and, inArray } from "drizzle-orm";
+import { requirePermission, auditAction } from "../middleware/authz";
+import { resolveBooksCompanyId } from "../services/companyScope";
 import { buildChecks, FY_END } from "../services/taxAuditEngine";
 import { loadData } from "../services/taxAuditData";
+import { runAndPersistReconciliation } from "../services/reconciliationRunner";
 
 const router: IRouter = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
@@ -25,6 +27,7 @@ interface NormalizedVoucher { date: string; type: string; number: string; party:
 interface NormalizedLine { voucher_number: string; ledger: string; group: string; debit: number; credit: number }
 interface NormalizedBill { party: string; group: string; ref: string; date: string; amount: number; type: string }
 interface TallyParseResult { ok: boolean; warnings?: string[]; errors?: string[]; ledgers: NormalizedLedger[]; vouchers: NormalizedVoucher[]; voucher_lines: NormalizedLine[]; bills?: NormalizedBill[]; counts?: Record<string, number> }
+type TallyLedgerEntrySource = "tally_xml_import" | "tally_connector";
 
 function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
@@ -67,25 +70,39 @@ async function writeTallyData(companyId: number, parsed: TallyParseResult): Prom
   return parsed.counts ?? { ledgers: parsed.ledgers.length, vouchers: parsed.vouchers.length, voucher_lines: parsed.voucher_lines.length };
 }
 
-/**
- * Resolve the target company for a request. Defaults to the authenticated
- * company. A CA may scope to a client via ?client=<id> (or body.client) — but
- * ONLY if an active ca_client_links row ties this CA user to that client.
- * Returns null after sending a 403 when the link is absent (cross-tenant guard).
- */
-async function resolveCompanyId(req: import("express").Request, res: import("express").Response): Promise<number | null> {
-  const own = getCompanyId(req);
-  const raw = req.query.client ?? (req.body as Record<string, unknown> | undefined)?.client;
-  if (raw == null || raw === "") return own;
-  const clientId = Number(raw);
-  if (!Number.isInteger(clientId) || clientId <= 0) { res.status(400).json({ ok: false, error: "invalid client id" }); return null; }
-  if (clientId === own) return own;
-  try {
-    const link = await db.execute(sql`SELECT 1 FROM ca_client_links WHERE ca_user_id = ${req.auth!.userId} AND client_company_id = ${clientId} AND status = 'active' LIMIT 1`);
-    if (!link.rows || link.rows.length === 0) { res.status(403).json({ ok: false, error: "Not authorised for this client" }); return null; }
-  } catch { res.status(403).json({ ok: false, error: "Not authorised for this client" }); return null; }
-  return clientId;
+async function writeLedgerEntriesFromTally(companyId: number, parsed: TallyParseResult, sourceTool: TallyLedgerEntrySource): Promise<number> {
+  await db.delete(ledgerEntriesTable).where(and(
+    eq(ledgerEntriesTable.companyId, companyId),
+    inArray(ledgerEntriesTable.sourceTool, ["tally_xml_import", "tally_connector"]),
+  ));
+
+  const voucherByNumber = new Map(parsed.vouchers.map(v => [v.number, v]));
+  const rows = parsed.voucher_lines.flatMap(line => {
+    const amount = Math.abs(line.debit || line.credit || 0);
+    if (amount === 0) return [];
+    const voucher = voucherByNumber.get(line.voucher_number);
+    if (!voucher?.date || !line.ledger) return [];
+    return [{
+      companyId,
+      date: voucher.date,
+      ledgerName: line.ledger,
+      voucherNumber: line.voucher_number,
+      amount: amount.toFixed(2),
+      debitCredit: line.debit > 0 ? "debit" : "credit",
+      sourceTool,
+      status: "unmatched",
+      sourceUploadId: null,
+    }];
+  });
+
+  for (const batch of chunk(rows, 500)) {
+    await db.insert(ledgerEntriesTable).values(batch);
+  }
+
+  return rows.length;
 }
+
+const resolveCompanyId = resolveBooksCompanyId;
 
 router.get("/tax-audit", requirePermission("reports.read"), async (req, res): Promise<void> => {
   try {
@@ -150,8 +167,10 @@ router.post("/tax-audit/import", requirePermission("uploads.create"), upload.sin
   }
 
   const counts = await writeTallyData(companyId, parsed);
-  await auditAction(req, "tax_audit.import", "tally_import", null, { fileName: file.originalname, ...counts });
-  res.json({ ok: true, source: "tally", counts, warnings: parsed.warnings });
+  const ledgerEntries = await writeLedgerEntriesFromTally(companyId, parsed, "tally_xml_import");
+  const reconciliation = await runAndPersistReconciliation(companyId);
+  await auditAction(req, "tax_audit.import", "tally_import", null, { fileName: file.originalname, ...counts, ledgerEntries, matchesFound: reconciliation.matchesFound });
+  res.json({ ok: true, source: "tally", counts: { ...counts, ledgerEntries }, reconciliation, warnings: parsed.warnings });
 });
 
 /**
@@ -191,15 +210,17 @@ router.post("/tax-audit/connector/sync", requirePermission("uploads.create"), as
   }
 
   const counts = await writeTallyData(companyId, parsed);
-  await auditAction(req, "tax_audit.connector_sync", "tally_import", null, { host: payload.host, company, ...counts });
-  res.json({ ok: true, source: "tally", counts });
+  const ledgerEntries = await writeLedgerEntriesFromTally(companyId, parsed, "tally_connector");
+  const reconciliation = await runAndPersistReconciliation(companyId);
+  await auditAction(req, "tax_audit.connector_sync", "tally_import", null, { host: payload.host, company, ...counts, ledgerEntries, matchesFound: reconciliation.matchesFound });
+  res.json({ ok: true, source: "tally", counts: { ...counts, ledgerEntries }, reconciliation });
 });
 
 /**
  * Evidence pack — a CA-ready .xlsx with a cover sheet plus one worksheet per
  * audit check (the working papers an auditor attaches to the file).
  */
-const XL_BRAND = "FF5C2E";
+const XL_BRAND = "143E2C";
 const XL_HEADER_FILL: ExcelJS.FillPattern = { type: "pattern", pattern: "solid", fgColor: { argb: XL_BRAND } };
 const XL_HEADER_FONT: Partial<ExcelJS.Font> = { bold: true, color: { argb: "FFFFFFFF" }, size: 11 };
 const SEV_COLOR: Record<string, string> = { high: "FFDC2626", medium: "FFF97F06", low: "FF2563EB", info: "FF6B7280" };
@@ -220,13 +241,13 @@ router.post("/tax-audit/evidence-pack", requirePermission("reports.read"), async
     const company = (companyRes.rows[0] as { name: string } | undefined)?.name ?? "Company";
 
     const wb = new ExcelJS.Workbook();
-    wb.creator = "FinVerify OS";
+    wb.creator = "TallyThis";
     wb.created = new Date();
 
     // Cover sheet
     const cover = wb.addWorksheet("Summary");
     cover.columns = [{ width: 6 }, { width: 40 }, { width: 16 }, { width: 12 }, { width: 14 }];
-    const title = cover.addRow(["", "FinVerify OS — Tax Audit Working Papers"]);
+    const title = cover.addRow(["", "TallyThis — Tax Audit Working Papers"]);
     title.font = { bold: true, size: 14, color: { argb: XL_BRAND } };
     title.height = 26;
     cover.addRow([]);
@@ -267,7 +288,7 @@ router.post("/tax-audit/evidence-pack", requirePermission("reports.read"), async
 
     await auditAction(req, "tax_audit.evidence_pack", "tally_import", null, { checks: checks.length, source });
 
-    const filename = `FinVerify_Tax_Audit_${company.replace(/\s+/g, "_")}_${FY_END}.xlsx`;
+    const filename = `TallyThis_Tax_Audit_${company.replace(/\s+/g, "_")}_${FY_END}.xlsx`;
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     await wb.xlsx.write(res);
@@ -284,6 +305,11 @@ router.delete("/tax-audit/import", requirePermission("uploads.create"), async (r
   await db.delete(tallyVoucherLinesTable).where(eq(tallyVoucherLinesTable.companyId, companyId));
   await db.delete(tallyVouchersTable).where(eq(tallyVouchersTable.companyId, companyId));
   await db.delete(tallyLedgersTable).where(eq(tallyLedgersTable.companyId, companyId));
+  await db.delete(tallyBillsTable).where(eq(tallyBillsTable.companyId, companyId));
+  await db.delete(ledgerEntriesTable).where(and(
+    eq(ledgerEntriesTable.companyId, companyId),
+    inArray(ledgerEntriesTable.sourceTool, ["tally_xml_import", "tally_connector"]),
+  ));
   await auditAction(req, "tax_audit.import_clear", "tally_import", null, {});
   res.json({ ok: true, source: "demo" });
 });

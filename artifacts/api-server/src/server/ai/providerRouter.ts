@@ -1,11 +1,12 @@
 import { buildFinanceTaskPrompt } from "./prompts/financeSystemPrompt";
+import { callClaudeProvider, claudeConfig, claudeConfigured } from "./providers/claudeProvider";
 import { callGeminiProvider, geminiConfig } from "./providers/geminiProvider";
 import { callNvidiaProvider, nvidiaConfig } from "./providers/nvidiaProvider";
 import { callOpenRouterProvider, openrouterAllowed, openrouterConfig } from "./providers/openrouterProvider";
 import { ruleBasedFallback } from "./ruleBasedFallback";
 import { buildRepairPrompt, safeParseAIJson } from "./safeJson";
 import { logAIUsage } from "./usageLogger";
-import { estimateTokens, getAIProviderSettings, type AIJsonTask, type AIProviderConfig, type AIProviderName, type AIResult } from "./types";
+import { estimateTokens, geminiModels, getAIProviderSettings, type AIJsonTask, type AIProviderConfig, type AIProviderName, type AIResult } from "./types";
 
 type ProviderAttempt = {
   name: Exclude<AIProviderName, "rule_based">;
@@ -17,10 +18,12 @@ function attemptsForTask<T>(task: AIJsonTask<T>): ProviderAttempt[] {
   const settings = getAIProviderSettings();
   const attempts: ProviderAttempt[] = [];
   for (const provider of settings.providerOrder) {
-    if (provider === "gemini") {
-      attempts.push({ name: "gemini", config: geminiConfig(settings.geminiModel), call: callGeminiProvider });
-      if (settings.geminiFallbackModel) {
-        attempts.push({ name: "gemini", config: geminiConfig(settings.geminiFallbackModel), call: callGeminiProvider });
+    if (provider === "claude" && claudeConfigured()) {
+      attempts.push({ name: "claude", config: claudeConfig(settings.claudeModel), call: callClaudeProvider });
+    }
+    if (provider === "gemini" && geminiConfigured()) {
+      for (const model of geminiModels(settings)) {
+        attempts.push({ name: "gemini", config: geminiConfig(model), call: callGeminiProvider });
       }
     }
     if (provider === "nvidia") {
@@ -31,6 +34,10 @@ function attemptsForTask<T>(task: AIJsonTask<T>): ProviderAttempt[] {
     attempts.push({ name: "openrouter", config: openrouterConfig(), call: callOpenRouterProvider });
   }
   return settings.enableFallbacks ? attempts : attempts.slice(0, 1);
+}
+
+function geminiConfigured(): boolean {
+  return Boolean(process.env.GEMINI_API_KEY || process.env.GENAI_API_KEY);
 }
 
 function errorCode(error: unknown): string {
@@ -157,12 +164,13 @@ export async function runAIJsonTask<T>(task: AIJsonTask<T>): Promise<AIResult<T>
 export function getAIStatus() {
   const settings = getAIProviderSettings();
   return {
-    gemini: process.env.GEMINI_API_KEY || process.env.GENAI_API_KEY ? "configured" : "missing",
+    claude: claudeConfigured() ? "configured" : "missing",
+    gemini: geminiConfigured() ? "configured" : "missing",
     nvidia: (process.env.NVIDIA_API_KEY || process.env.Nvidia_API_Key) && process.env.NVIDIA_MODEL ? "configured" : "missing",
     openrouter: process.env.OPENROUTER_ENABLED === "true"
       ? (process.env.OPENROUTER_API_KEY || process.env.Openrouter_API_Key) && process.env.OPENROUTER_MODEL ? "configured" : "missing"
       : "disabled",
-    currentPrimaryModel: settings.geminiModel,
+    currentPrimaryModel: settings.providerOrder.find(provider => (provider === "gemini" && geminiConfigured()) || (provider === "claude" && claudeConfigured())) === "claude" ? settings.claudeModel : settings.geminiModel,
     providerOrder: settings.providerOrder,
     ruleBasedFallbackActive: settings.enableFallbacks,
     openrouterEnabled: settings.openrouterEnabled,

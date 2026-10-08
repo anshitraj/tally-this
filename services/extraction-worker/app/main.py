@@ -1,4 +1,4 @@
-"""FinVerify OS — Python Extraction Worker (FastAPI)."""
+"""TallyThis — Python Extraction Worker (FastAPI)."""
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
@@ -11,8 +11,8 @@ from .routes.tally import router as tally_router
 from .routes.connector import router as connector_router
 
 app = FastAPI(
-    title="FinVerify Extraction Worker",
-    description="CSV/Excel/PDF parsing, normalization, and AI extraction for FinVerify OS.",
+    title="TallyThis Extraction Worker",
+    description="CSV/Excel/PDF parsing, normalization, and AI extraction for TallyThis.",
     version="0.1.0",
 )
 
@@ -73,6 +73,7 @@ async def health():
             "extract/invoice",
             "extract/gst-tds",
             "extract/payroll",
+            "extract/marketplace",
             "extract/expense",
         ],
     }

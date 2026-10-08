@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import multer from "multer";
 import { aiExtractionsTable, auditLogsTable, bankTransactionsTable, companiesTable, db, documentsTable, gatewaySettlementsTable, gstRecordsTable, invoicesTable, ledgerEntriesTable, payrollEntriesTable, reconciliationMatchesTable, uploadBatchesTable } from "@workspace/db";
-import { and, desc, eq, ne } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, or } from "drizzle-orm";
 import { GetUploadsResponse, CreateUploadBody } from "@workspace/api-zod";
 import { parseUploadedFile, type ParsedFileResult } from "../services/fileParser";
 import { getCompanyId, requirePermission } from "../middleware/authz";
@@ -12,7 +12,10 @@ import { invoiceExtractionSchema, invoiceExtractionSchemaDescription } from "../
 import { ingestParsedUpload, type UploadImportSummary } from "../services/uploadIngestion";
 import { runAndPersistReconciliation } from "../services/reconciliationRunner";
 
+import { attachBooksCompany } from "../services/companyScope";
+
 const router: IRouter = Router();
+router.use(attachBooksCompany);
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -309,6 +312,7 @@ router.post("/uploads", requirePermission("uploads.create"), upload.single("file
     detectedColumns: {
       parser: parsedFile.parser,
       columns: parsedFile.detectedColumns,
+      parsedRows: parsedFile.parsedRows ?? [],
       sheetNames: parsedFile.sheetNames ?? [],
       pageCount: parsedFile.pageCount ?? null,
       textPreview: parsedFile.textPreview ?? null,
@@ -332,6 +336,7 @@ router.post("/uploads", requirePermission("uploads.create"), upload.single("file
       parser: parsedFile.parser,
       rowCount: parsedFile.rowCount,
       detectedColumns: parsedFile.detectedColumns,
+      parsedRows: parsedFile.parsedRows ?? [],
       notes: parsedFile.notes,
       storageProvider: document.storageProvider,
       storageKey: document.storageKey,
@@ -353,6 +358,7 @@ router.post("/uploads", requirePermission("uploads.create"), upload.single("file
       sourceType: uploadRecord.sourceType,
       fileName: uploadRecord.fileName,
       parsedFile,
+      uploadId: uploadRecord.id,
     });
     if (imported.inserted > 0) {
       reconciliation = await runAndPersistReconciliation(companyId);
@@ -464,6 +470,7 @@ router.delete("/uploads/:id", requirePermission("uploads.delete"), async (req, r
     return;
   }
 
+  try {
   const [batch] = await db.select().from(uploadBatchesTable)
     .where(and(eq(uploadBatchesTable.id, id), eq(uploadBatchesTable.companyId, companyId)))
     .limit(1);
@@ -493,7 +500,7 @@ router.delete("/uploads/:id", requirePermission("uploads.delete"), async (req, r
 
   if (totalImported > 0 && !force) {
     res.status(409).json({
-      error: `This upload has ${totalImported} imported rows. Use force=true to cascade-delete them.`,
+      error: `This upload has ${totalImported} imported rows. Confirm cascade deletion to remove it.`,
       requiresForce: true,
       importedRows: totalImported,
     });
@@ -504,15 +511,20 @@ router.delete("/uploads/:id", requirePermission("uploads.delete"), async (req, r
     // Cascade delete imported rows
     const txnIds = txnCount.map(t => t.id);
     const invIds = invCount.map(i => i.id);
+    const ledgerIds = ledgerCount.map(l => l.id);
+    const matchConditions = [
+      txnIds.length ? inArray(reconciliationMatchesTable.bankTransactionId, txnIds) : undefined,
+      invIds.length ? inArray(reconciliationMatchesTable.invoiceId, invIds) : undefined,
+      ledgerIds.length ? inArray(reconciliationMatchesTable.ledgerEntryId, ledgerIds) : undefined,
+    ].filter(Boolean);
 
     // Remove reconciliation matches tied to these rows first
-    for (const txnId of txnIds) {
+    if (matchConditions.length > 0) {
       await db.delete(reconciliationMatchesTable)
-        .where(and(eq(reconciliationMatchesTable.companyId, companyId), eq(reconciliationMatchesTable.bankTransactionId, txnId)));
-    }
-    for (const invId of invIds) {
-      await db.delete(reconciliationMatchesTable)
-        .where(and(eq(reconciliationMatchesTable.companyId, companyId), eq(reconciliationMatchesTable.invoiceId, invId)));
+        .where(and(
+          eq(reconciliationMatchesTable.companyId, companyId),
+          matchConditions.length === 1 ? matchConditions[0] : or(...matchConditions),
+        ));
     }
 
     // Delete the imported rows
@@ -540,6 +552,18 @@ router.delete("/uploads/:id", requirePermission("uploads.delete"), async (req, r
   });
 
   res.json({ ok: true, id, cascadeDeleted: totalImported });
+  } catch (err) {
+    logger.error({
+      err: err instanceof Error ? { message: err.message, stack: err.stack } : err,
+      uploadId: id,
+      companyId,
+      force,
+    }, "Upload removal failed");
+    res.status(500).json({
+      error: "Could not remove upload",
+      detail: "The upload could not be removed. Check the API logs for the exact database error.",
+    });
+  }
 });
 
 // ── GET /uploads/:id/details — full details for the details modal ─────────────

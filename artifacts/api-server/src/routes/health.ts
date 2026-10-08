@@ -16,6 +16,7 @@ async function healthPayload() {
     db,
     r2,
     ai: {
+      claude: ai.claude,
       gemini: ai.gemini,
       nvidia: ai.nvidia,
       openrouter: ai.openrouter,

@@ -7,9 +7,12 @@
     "dev": "pnpm run build && pnpm run start",
     "build": "node ./build.mjs",
     "start": "node --enable-source-maps ./dist/index.mjs",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "esbuild src/services/jobAutomation.test.ts src/services/pdfStatement.test.ts --bundle --platform=node --format=esm --packages=external --outdir=dist/tests --out-extension:.js=.mjs --log-level=warning && node --test dist/tests/jobAutomation.test.mjs dist/tests/pdfStatement.test.mjs",
+    "read-statement": "esbuild scripts/read-statement.ts --bundle --platform=node --format=esm --external:pdf-parse --external:pdfkit --external:@anthropic-ai/sdk --external:zod --external:drizzle-orm --external:dotenv --external:pino --outfile=dist/tools/read-statement.mjs --log-level=warning && node dist/tools/read-statement.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
     "@aws-sdk/client-s3": "^3.1052.0",
     "@aws-sdk/s3-request-presigner": "^3.1053.0",
     "@napi-rs/canvas": "^1.0.0",

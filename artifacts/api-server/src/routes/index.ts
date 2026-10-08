@@ -25,6 +25,8 @@ import vendorAgingRouter from "./vendorAging";
 import taxAuditRouter from "./taxAudit";
 import practiceRouter from "./practice";
 import tdsReconRouter from "./tdsRecon";
+import jobsRouter from "./jobs";
+import accountRouter from "./account";
 
 const router: IRouter = Router();
 
@@ -32,6 +34,8 @@ router.use(healthRouter);
 router.use(overviewRouter);
 router.use(demoRouter);
 router.use(uploadsRouter);
+router.use(jobsRouter);
+router.use(accountRouter);
 router.use(transactionsRouter);
 router.use(invoicesRouter);
 router.use(ledgerRouter);

@@ -58,6 +58,7 @@ export async function seedDemoData() {
     gstin: "29AAHCN0094Q1ZF",
     pan: "AAHCN0094Q",
     financialYearStart: "April",
+    plan: "growth", // the sample workspace shows paid features such as privacy mode
     currency: "INR",
     dataRetentionDays: 365,
   }).returning();
@@ -328,7 +329,7 @@ export async function seedDemoData() {
   ]).returning();
 
   // Reconciliation Matches (25 entries)
-  await db.insert(reconciliationMatchesTable).values([
+  const matches = await db.insert(reconciliationMatchesTable).values([
     { bankTransactionId: txns[0].id, invoiceId: invoices[0].id, matchType: "exact", confidenceScore: 92, reason: "Amount match + UTR in narration + date within 1 day", status: "approved" },
     { bankTransactionId: txns[1].id, invoiceId: invoices[1].id, matchType: "exact", confidenceScore: 88, reason: "Amount match + vendor name match + date within 1 day", status: "approved" },
     { bankTransactionId: txns[2].id, invoiceId: invoices[2].id, matchType: "exact", confidenceScore: 95, reason: "Amount match + invoice number in narration + date same", status: "approved" },
@@ -354,10 +355,10 @@ export async function seedDemoData() {
     { bankTransactionId: txns[56].id, invoiceId: null, matchType: "duplicate", confidenceScore: 72, reason: "Duplicate of RTGS2026052601 - same amount and narration", status: "pending" },
     { bankTransactionId: txns[43].id, invoiceId: null, matchType: "tds_risk", confidenceScore: 42, reason: "Vendor advance ₹75k without TDS deduction noted - possible 194C", status: "pending" },
     { bankTransactionId: txns[36].id, invoiceId: null, matchType: "tds_risk", confidenceScore: 28, reason: "Freelancer payment ₹45k without TDS or invoice", status: "pending" },
-  ]);
+  ]).returning({ id: reconciliationMatchesTable.id });
 
   // Risk Flags (15 entries)
-  await db.insert(riskFlagsTable).values([
+  const risks = await db.insert(riskFlagsTable).values([
     { entityType: "invoice", entityId: invoices[2].id, category: "Missing GSTIN", severity: "high", reason: "AWS invoice INV-AWS-2026-045 has no valid GSTIN in the uploaded evidence.", suggestedAction: "Potential risk — needs CA review. Obtain vendor tax details or document treatment with the CA.", status: "open" },
     { entityType: "transaction", entityId: txns[9].id, category: "Invoice Missing", severity: "high", reason: "Debit of INR 32,000 with narration 'Unknown Vendor/Payment no reference' has no linked invoice.", suggestedAction: "Potential risk — needs CA review. Locate the invoice or vendor details before including this in close reports.", status: "open" },
     { entityType: "transaction", entityId: txns[26].id, category: "Possible TDS Deduction", severity: "high", reason: "Vendor advance INR 75,000 to Ola Electric has no TDS deduction note in the uploaded evidence.", suggestedAction: "Potential risk — needs CA review. Verify TDS treatment and supporting documents with the CA.", status: "open" },
@@ -373,10 +374,10 @@ export async function seedDemoData() {
     { entityType: "payroll", category: "Payroll Mismatch", severity: "low", reason: "Payroll entry for Pooja Iyer (May 2026) shows no bank payment date or reference.", suggestedAction: "Potential risk — needs CA review. Verify salary payment status with HR and update bank reference.", status: "open" },
     { entityType: "ledger", entityId: ledger[8].id, category: "Suspense Ledger Usage", severity: "low", reason: "ATM withdrawal INR 20,000 is posted to Suspense Account.", suggestedAction: "Potential risk — needs CA review. Remap to the correct ledger after review.", status: "open" },
     { entityType: "invoice", category: "Missing GSTIN", severity: "low", reason: "Multiple international vendor invoices lack Indian GSTIN in the uploaded evidence.", suggestedAction: "Potential risk — needs CA review. Review treatment for foreign SaaS vendor invoices consistently.", status: "open" },
-  ]);
+  ]).returning({ id: riskFlagsTable.id });
 
   // CA Review Items
-  await db.insert(caReviewItemsTable).values([
+  const reviews = await db.insert(caReviewItemsTable).values([
     { entityType: "transaction", entityId: txns[26].id, title: "Potential TDS review on vendor advance - Ola Electric INR 75,000", description: "Payment to Ola Electric has no TDS note in the uploaded evidence. Potential risk — needs CA review.", severity: "high", status: "pending", founderNote: "This was an advance for hardware procurement. Need CA guidance." },
     { entityType: "transaction", entityId: txns[36].id, title: "Freelancer payment INR 45,000 without invoice evidence", description: "Payment on 19 May to freelancer has no invoice or TDS evidence attached. Potential risk — needs CA review.", severity: "high", status: "pending", founderNote: "Freelance UI designer for Q1 project. Will get invoice." },
     { entityType: "transaction", entityId: txns[51].id, title: "Duplicate payment to Meesho Supplier - INR 3,20,000", description: "Same amount paid twice on 26th and 29th May. Bank narration nearly identical. Potential risk — needs CA review.", severity: "high", status: "pending", founderNote: "Checking with vendor if both payments are valid." },
@@ -387,7 +388,7 @@ export async function seedDemoData() {
     { entityType: "gateway_settlement", entityId: settlements[8].id, title: "Stripe fee discrepancy - STR-2026-0529", description: "Gateway fees do not match expected rate in uploaded exports. Potential risk — needs CA review.", severity: "medium", status: "pending" },
     { entityType: "payroll", title: "Pooja Iyer salary not disbursed - May 2026", description: "Payroll register shows Pooja Iyer INR 80,600 but no corresponding bank debit found. Potential risk — needs CA review.", severity: "low", status: "pending", founderNote: "Will process by 2nd June." },
     { entityType: "ledger", title: "Suspense account usage for ATM withdrawal", description: "INR 20,000 ATM withdrawal mapped to Suspense account. Potential risk — needs CA review.", severity: "low", status: "pending" },
-  ]);
+  ]).returning({ id: caReviewItemsTable.id });
   const gstRecords = await db.insert(gstRecordsTable).values([
     {
       companyId: company.id,
@@ -479,14 +480,17 @@ export async function seedDemoData() {
     },
   ]);
 
-  await db.update(bankTransactionsTable).set({ companyId: company.id });
-  await db.update(invoicesTable).set({ companyId: company.id });
-  await db.update(ledgerEntriesTable).set({ companyId: company.id });
-  await db.update(payrollEntriesTable).set({ companyId: company.id });
-  await db.update(gatewaySettlementsTable).set({ companyId: company.id });
-  await db.update(reconciliationMatchesTable).set({ companyId: company.id });
-  await db.update(riskFlagsTable).set({ companyId: company.id });
-  await db.update(caReviewItemsTable).set({ companyId: company.id });
+  // Scope the company backfill to rows this seed just inserted. An unscoped
+  // UPDATE here would move every tenant's records into the demo company.
+  const ids = <T extends { id: number }>(rows: T[]) => rows.map(row => row.id);
+  await db.update(bankTransactionsTable).set({ companyId: company.id }).where(inArray(bankTransactionsTable.id, ids(txns)));
+  await db.update(invoicesTable).set({ companyId: company.id }).where(inArray(invoicesTable.id, ids(invoices)));
+  await db.update(ledgerEntriesTable).set({ companyId: company.id }).where(inArray(ledgerEntriesTable.id, ids(ledger)));
+  await db.update(payrollEntriesTable).set({ companyId: company.id }).where(inArray(payrollEntriesTable.id, ids(payroll)));
+  await db.update(gatewaySettlementsTable).set({ companyId: company.id }).where(inArray(gatewaySettlementsTable.id, ids(settlements)));
+  await db.update(reconciliationMatchesTable).set({ companyId: company.id }).where(inArray(reconciliationMatchesTable.id, ids(matches)));
+  await db.update(riskFlagsTable).set({ companyId: company.id }).where(inArray(riskFlagsTable.id, ids(risks)));
+  await db.update(caReviewItemsTable).set({ companyId: company.id }).where(inArray(caReviewItemsTable.id, ids(reviews)));
 
   return {
     companies: 1,

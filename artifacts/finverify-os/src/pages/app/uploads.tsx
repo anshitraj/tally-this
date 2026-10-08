@@ -301,7 +301,7 @@ export default function UploadsPage() {
   const [aiStageIndex, setAiStageIndex] = useState(0);
   const [pendingAction, setPendingAction] = useState<ExtractionAction>(null);
   const [showAllHistory, setShowAllHistory] = useState(false);
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(() => new URLSearchParams(window.location.search).get("view") === "advanced");
   const fileRef = useRef<HTMLInputElement>(null);
   const objectUrlRef = useRef<string | null>(null);
   const pendingSourceTypeRef = useRef(sourceType);
@@ -566,7 +566,7 @@ export default function UploadsPage() {
 
   return (
     <PageTransition className="mx-auto max-w-6xl">
-      <PageHeader title="Upload Center" subtitle="Upload any finance file — FinVerify detects the source type automatically" />
+      <PageHeader title="Upload Center" subtitle="Upload any finance file — TallyThis detects the source type automatically" />
 
       {isError && (
         <div className="fv-card-flat mb-6 flex flex-wrap items-center justify-between gap-3 p-4">
@@ -676,7 +676,7 @@ export default function UploadsPage() {
             <div>
               <div className="text-base font-semibold text-foreground">Drop any finance file here</div>
               <div className="mt-1.5 text-sm text-muted-foreground">
-                FinVerify will automatically detect the source type — Bank Statement, Invoice, Tally Export, GST, Payroll, and more.
+                TallyThis will automatically detect the source type — Bank Statement, Invoice, Tally Export, GST, Payroll, and more.
               </div>
               <div className="mt-1 text-xs text-muted-foreground">CSV · Excel · PDF · Image (JPG, PNG)</div>
             </div>

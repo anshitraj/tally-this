@@ -1,0 +1,5 @@
+Order ID,Invoice Number,Invoice Date,Buyer GSTIN,Buyer State,Place of Supply,Taxable Value,CGST,SGST,IGST,Cess,Gross Amount,Refund Amount,Marketplace Fees,TCS Amount,HSN,GST Rate,Transaction Type
+AMZ-1001,INV-A-1,01/05/2026,29ABCDE1234F1Z5,Karnataka,Karnataka,10000,900,900,0,0,11800,0,200,100,6109,18,sale
+AMZ-1002,INV-A-2,03/05/2026,,Maharashtra,Maharashtra,2000,0,0,360,0,2360,0,50,20,6204,18,sale
+AMZ-1003,INV-A-3,08/05/2026,27AABCU9603R1ZM,Maharashtra,Karnataka,5000,0,0,900,0,5900,0,80,40,6109,18,sale
+AMZ-1004,INV-A-1,01/05/2026,29ABCDE1234F1Z5,Karnataka,Karnataka,10000,900,900,0,0,11800,500,0,0,6109,18,refund

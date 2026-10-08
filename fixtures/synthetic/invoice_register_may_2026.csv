@@ -1,0 +1,4 @@
+Invoice Number,Invoice Date,Vendor,Vendor GSTIN,Customer,Total,Tax
+INV-100,01/05/2026,ACME Corp,29ABCDE1234F1Z5,NovaStack Labs,5000,900
+BILL-77,07/05/2026,Office Supplies Ltd,29AABCO1234F1Z1,NovaStack Labs,2300,414
+INV-404,11/05/2026,Unpaid Vendor,,NovaStack Labs,999,180

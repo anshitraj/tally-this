@@ -64,6 +64,10 @@ func handleImportParsedUploads(w http.ResponseWriter, r *http.Request, db *sql.D
 		errorJSON(w, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
+	companyID, scoped := middleware.BooksCompany(db, w, r, auth)
+	if !scoped {
+		return
+	}
 
 	var body importRequest
 	_ = json.NewDecoder(r.Body).Decode(&body)
@@ -78,14 +82,14 @@ func handleImportParsedUploads(w http.ResponseWriter, r *http.Request, db *sql.D
 		return
 	}
 
-	runID, err := createWorkflowRun(r.Context(), db, auth.CompanyID, "import_records", &auth.UserID, map[string]any{"sourceTypes": body.SourceTypes, "month": body.Month})
+	runID, err := createWorkflowRun(r.Context(), db, companyID, "import_records", &auth.UserID, map[string]any{"sourceTypes": body.SourceTypes, "month": body.Month})
 	if err != nil {
 		errorJSON(w, http.StatusInternalServerError, "could not create workflow run")
 		return
 	}
 	advanceWorkflowRun(r.Context(), db, runID, 15, "Finding parsed uploads")
 
-	candidates, err := listImportCandidates(r, db, auth.CompanyID)
+	candidates, err := listImportCandidates(r, db, companyID)
 	if err != nil {
 		failed := "could not list parsed uploads"
 		finishWorkflowRun(r.Context(), db, runID, "failed", &failed)
@@ -129,7 +133,7 @@ func handleImportParsedUploads(w http.ResponseWriter, r *http.Request, db *sql.D
 		}
 
 		advanceWorkflowRun(r.Context(), db, runID, 20+int(float64(i+1)/math.Max(float64(total), 1)*60), "Importing "+batch.FileName)
-		summary, err := ingestRows(r, db, auth.CompanyID, batch.SourceType, batch.FileName, batch.ID, metadata.ParsedRows)
+		summary, err := ingestRows(r, db, companyID, batch.SourceType, batch.FileName, batch.ID, metadata.ParsedRows)
 		if err != nil {
 			errors = append(errors, fmt.Sprintf("%s: %s", batch.FileName, err.Error()))
 			continue
@@ -140,7 +144,7 @@ func handleImportParsedUploads(w http.ResponseWriter, r *http.Request, db *sql.D
 				`UPDATE upload_batches
 				 SET status = 'batch_confirmed', record_count = $3, run_id = $4
 				 WHERE id = $1 AND company_id = $2`,
-				batch.ID, auth.CompanyID, summary.Inserted, runID)
+				batch.ID, companyID, summary.Inserted, runID)
 			addRunSource(r.Context(), db, runID, batch.ID, batch.SourceType, batch.FileName, summary.Inserted, "imported")
 		} else {
 			skippedNoImportedRows++
@@ -163,8 +167,8 @@ func handleImportParsedUploads(w http.ResponseWriter, r *http.Request, db *sql.D
 	}
 	saveRunArtifact(r.Context(), db, runID, "import_summary", "Import summary", payload)
 	finishWorkflowRun(r.Context(), db, runID, "completed", nil)
-	writeActionHistory(r.Context(), db, auth.CompanyID, &runID, &auth.UserID, "upload.batch_import_completed", fmt.Sprintf("Imported %d rule-based records.", totalImported), "success", payload)
-	writeAuditLog(r.Context(), db, auth.CompanyID, &auth.UserID, auth.Email, "upload.batch_import_completed", "document", nil, map[string]any{"runId": runID, "imported": imported}, r.RemoteAddr)
+	writeActionHistory(r.Context(), db, companyID, &runID, &auth.UserID, "upload.batch_import_completed", fmt.Sprintf("Imported %d rule-based records.", totalImported), "success", payload)
+	writeAuditLog(r.Context(), db, companyID, &auth.UserID, auth.Email, "upload.batch_import_completed", "document", nil, map[string]any{"runId": runID, "imported": imported}, r.RemoteAddr)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{

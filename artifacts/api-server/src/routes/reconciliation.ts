@@ -21,7 +21,10 @@ import {
 import { auditAction, getCompanyId, requirePermission } from "../middleware/authz";
 import { runAndPersistReconciliation } from "../services/reconciliationRunner";
 
+import { attachBooksCompany } from "../services/companyScope";
+
 const router: IRouter = Router();
+router.use(attachBooksCompany);
 
 const mapMatch = (
   m: typeof reconciliationMatchesTable.$inferSelect,
@@ -82,7 +85,12 @@ router.get("/reconciliation", requirePermission("reconciliation.read"), async (r
   if (status) filtered = filtered.filter(m => m.status === status);
   if (runId) {
     // Filter matches whose bankTransaction OR invoice OR ledger belongs to this run's uploads
-    const runUploadsRes = await db.execute(sql`SELECT upload_id FROM run_sources WHERE run_id = ${runId}`);
+    const runUploadsRes = await db.execute(sql`
+      SELECT rs.upload_id
+      FROM run_sources rs
+      JOIN workflow_runs wr ON wr.id = rs.run_id
+      WHERE rs.run_id = ${runId} AND wr.company_id = ${companyId}
+    `);
     const runUploadIds = new Set<number>(
       (runUploadsRes.rows as { upload_id: number | null }[])
         .map(r => r.upload_id).filter((v): v is number => typeof v === "number"),
@@ -140,6 +148,7 @@ async function runReconciliation(req: Request, res: Response): Promise<void> {
     artifactType: "reconciliation_report",
     title: message,
     jsonData: { ...result, recipeId },
+    companyId,
   });
   await finishRun(runId, "completed");
   await auditAction(req, "reconciliation.run", "reconciliation", null, { matchesFound: result.matchesFound, recipeId, runId });

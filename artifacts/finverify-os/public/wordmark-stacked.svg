@@ -1,13 +1,5 @@
-<svg width="260" height="180" viewBox="0 0 260 180" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
-  <title id="title">FinVerify OS stacked wordmark</title>
-  <desc id="desc">Stacked FinVerify OS wordmark using deep green, gold-orange, and teal.</desc>
-  <rect width="260" height="180" rx="24" fill="#FAFAF9"/>
-  <g transform="translate(106 26)">
-    <rect width="48" height="48" rx="14" fill="#065F46"/>
-    <path d="M24 13.5a10.5 10.5 0 1 0 10.5 10.5h-4.25a6.25 6.25 0 1 1-1.83-4.42l-5.07 5.07-2.25-2.25-3 3 5.25 5.25 9.6-9.6A10.49 10.49 0 0 0 24 13.5Z" fill="#FFFFFF"/>
-  </g>
-  <text x="130" y="118" fill="#065F46" font-family="Manrope, Arial, sans-serif" font-size="38" font-weight="800" text-anchor="middle" letter-spacing="-1.2">Fin</text>
-  <text x="130" y="151" fill="#F97F06" font-family="Manrope, Arial, sans-serif" font-size="38" font-weight="700" text-anchor="middle" letter-spacing="-1.2">Verify</text>
-  <rect x="178" y="123" width="44" height="28" rx="14" fill="#0D9488"/>
-  <text x="200" y="142" fill="#FFFFFF" font-family="Manrope, Arial, sans-serif" font-size="13" font-weight="800" text-anchor="middle" letter-spacing="0.2">OS</text>
-</svg>
+<svg width="260" height="180" viewBox="0 0 260 180" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+<title id="title">TallyThis stacked wordmark</title><desc id="desc">A T and a check mark, with the tallythis wordmark in forest green.</desc>
+<rect width="260" height="180" rx="18" fill="#f8faf7"/>
+<g transform="translate(105 27)" color="#143e2c"><svg width="46" height="46" viewBox="0 0 32 32" fill="none"><path d="M4 7h19M12 7v18" stroke="currentColor" stroke-width="3.5"/><path d="m18 20 4 4 7-11" stroke="currentColor" stroke-width="3.5"/></svg></g>
+<text x="130" y="137" fill="#143e2c" font-family="DM Sans, Arial, sans-serif" font-size="36" font-weight="600" text-anchor="middle" letter-spacing="-1.5">tallythis<tspan fill="#286348">.</tspan></text></svg>

@@ -31,6 +31,13 @@ import VendorAgingPage from "@/pages/app/vendor-aging";
 import IntegrationsPage from "@/pages/app/integrations";
 import AdminPage from "@/pages/app/admin";
 import SettingsPage from "@/pages/app/settings";
+import ClientsPage from "@/pages/app/clients";
+import ActivityPage from "@/pages/app/activity";
+import HistoryPage, { HistoryDetailPage } from "@/pages/app/history";
+import BankToTallyPage from "@/pages/app/jobs/bank-to-tally";
+import BankTallyPage from "@/pages/app/jobs/bank-tally";
+import EcommerceGstPage from "@/pages/app/jobs/ecommerce-gst";
+import InvoiceBankPage from "@/pages/app/jobs/invoice-bank";
 import DocsPage from "@/pages/app/docs";
 
 const queryClient = new QueryClient({
@@ -76,6 +83,14 @@ const VendorAgingWithShell = withShell(VendorAgingPage);
 const IntegrationsWithShell = withShell(IntegrationsPage);
 const AdminWithShell = withShell(AdminPage);
 const SettingsWithShell = withShell(SettingsPage);
+const ClientsWithShell = withShell(ClientsPage);
+const ActivityWithShell = withShell(ActivityPage);
+const HistoryWithShell = withShell(HistoryPage);
+const HistoryDetailWithShell = withShell(HistoryDetailPage);
+const BankToTallyWithShell = withShell(BankToTallyPage);
+const BankTallyWithShell = withShell(BankTallyPage);
+const EcommerceGstWithShell = withShell(EcommerceGstPage);
+const InvoiceBankWithShell = withShell(InvoiceBankPage);
 const DocsWithShell = withShell(DocsPage);
 
 function AppRouter() {
@@ -86,6 +101,8 @@ function AppRouter() {
       <Route path="/onboarding" component={OnboardingPage} />
       <Route path="/app" component={OverviewWithShell} />
       <Route path="/app/overview" component={OverviewWithShell} />
+      <Route path="/app/uploads/advanced"><Redirect to="/app/uploads?view=advanced" /></Route>
+      <Route path="/app/advanced-upload"><Redirect to="/app/uploads?view=advanced" /></Route>
       <Route path="/app/uploads" component={UploadsWithShell} />
       <Route path="/app/transactions" component={TransactionsWithShell} />
       <Route path="/app/invoices" component={InvoicesWithShell} />
@@ -108,6 +125,14 @@ function AppRouter() {
       <Route path="/app/reports" component={ReportsWithShell} />
       <Route path="/app/integrations" component={IntegrationsWithShell} />
       <Route path="/app/admin" component={AdminWithShell} />
+      <Route path="/app/clients" component={ClientsWithShell} />
+      <Route path="/app/activity" component={ActivityWithShell} />
+      <Route path="/app/history/:id" component={HistoryDetailWithShell} />
+      <Route path="/app/history" component={HistoryWithShell} />
+      <Route path="/app/jobs/bank-to-tally" component={BankToTallyWithShell} />
+      <Route path="/app/jobs/bank-tally" component={BankTallyWithShell} />
+      <Route path="/app/jobs/ecommerce-gst" component={EcommerceGstWithShell} />
+      <Route path="/app/jobs/invoice-bank" component={InvoiceBankWithShell} />
       <Route path="/app/settings" component={SettingsWithShell} />
       <Route path="/app/docs" component={DocsWithShell} />
       <Route path="/app/ledger"><Redirect to="/app/ledger-match" /></Route>

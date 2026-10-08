@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Puzzle, CheckCircle, Clock, UploadCloud } from "lucide-react";
+import { Puzzle, CheckCircle, Clock, Plug, UploadCloud } from "lucide-react";
 import PageHeader from "@/components/app/PageHeader";
 
 const INTEGRATIONS = [
@@ -29,7 +29,7 @@ const INTEGRATIONS = [
     handles: "Ledger entries, vouchers, trial balance exports",
     status: "Upload-based",
     complexity: "Medium",
-    notes: "No live Tally connector in this prototype.",
+    notes: "XML/CSV upload remains supported for teams that do not want a local connector.",
   },
   {
     name: "Zoho Export Upload",
@@ -40,10 +40,10 @@ const INTEGRATIONS = [
   },
   {
     name: "Direct Tally Connector",
-    handles: "Ledgers, vouchers, masters",
-    status: "Coming soon",
-    complexity: "High",
-    notes: "Will require customer-side setup and secure sync permissions.",
+    handles: "Local Tally Day Book, ledgers, vouchers, voucher lines",
+    status: "Available",
+    complexity: "Medium",
+    notes: "Available on Tax Audit. Requires Tally running as a local HTTP server, usually port 9000; no bank or GST approval required.",
   },
   {
     name: "Zoho Books API",
@@ -93,14 +93,14 @@ export default function IntegrationsPage() {
     <div className="p-6 max-w-6xl mx-auto">
       <PageHeader
         title="Integrations"
-        subtitle="Upload-based today, direct connectors on the roadmap"
+        subtitle="Upload-based core with a local Tally connector; GST and bank sync remain partnership-based"
       />
 
       <div className="bg-primary/5 border border-primary/20 rounded-xl p-4 mb-6 flex items-start gap-3">
         <UploadCloud className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
         <p className="text-sm text-muted-foreground">
-          FinVerify OS does not claim live Tally, GST, bank, or gateway connections in this prototype.
-          Available workflows are upload-based unless marked as coming soon.
+          TallyThis supports upload-based workflows and a local Tally connector for customer-run Tally gateways.
+          GST, bank, gateway, and Zoho API sync are not live unless separately marked available.
         </p>
       </div>
 
@@ -116,7 +116,7 @@ export default function IntegrationsPage() {
             <div className="flex items-start justify-between gap-3 mb-3">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
-                  {integration.status === "Coming soon" ? <Clock className="w-4 h-4" /> : integration.status === "Available" ? <CheckCircle className="w-4 h-4" /> : <Puzzle className="w-4 h-4" />}
+                  {integration.name === "Direct Tally Connector" ? <Plug className="w-4 h-4" /> : integration.status === "Coming soon" ? <Clock className="w-4 h-4" /> : integration.status === "Available" ? <CheckCircle className="w-4 h-4" /> : <Puzzle className="w-4 h-4" />}
                 </div>
                 <div>
                   <div className="text-sm font-semibold">{integration.name}</div>

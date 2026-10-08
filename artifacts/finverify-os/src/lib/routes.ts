@@ -20,6 +20,13 @@ export const APP_ROUTES = {
   settings: "/app/settings",
   admin: "/app/admin",
   docs: "/app/docs",
+  clients: "/app/clients",
+  activity: "/app/activity",
+  history: "/app/history",
+  bankToTally: "/app/jobs/bank-to-tally",
+  bankTally: "/app/jobs/bank-tally",
+  ecommerceGst: "/app/jobs/ecommerce-gst",
+  invoiceBank: "/app/jobs/invoice-bank",
 } as const;
 
 export type AppRoute = (typeof APP_ROUTES)[keyof typeof APP_ROUTES];

@@ -244,7 +244,7 @@ function defaultWorkflow(): WorkflowResponse {
     actionHistory: [],
     blockers: [],
     createdRecordCounts: {},
-    subtitle: "Upload any files you have. FinVerify will show matching options based on uploaded sources.",
+    subtitle: "Upload any files you have. TallyThis will show matching options based on uploaded sources.",
   };
 }
 
@@ -318,7 +318,7 @@ export default function SmartNextStepPanel() {
       }
       if (totalImported === 0) {
         const msg = (result.skippedAlreadyImported ?? 0) > 0
-          ? `${result.skippedAlreadyImported} selected upload${(result.skippedAlreadyImported ?? 0) === 1 ? " was" : "s were"} already imported, so FinVerify did not duplicate rows. Remove/re-upload or upload a new file set to create new imported records.`
+          ? `${result.skippedAlreadyImported} selected upload${(result.skippedAlreadyImported ?? 0) === 1 ? " was" : "s were"} already imported, so TallyThis did not duplicate rows. Remove/re-upload or upload a new file set to create new imported records.`
           : "No structured rows could be imported. PDF/image uploads need CSV or Excel conversion (bank/tally/GST) or AI extraction (invoices). Re-upload as CSV/Excel, or open Advanced Upload View to inspect the parsed text.";
         setSuccess({ message: msg });
         toast({ title: "Nothing to import", description: msg, variant: "destructive" });
@@ -518,7 +518,7 @@ export default function SmartNextStepPanel() {
               </div>
               <h2 className="text-lg font-bold text-foreground">{title}</h2>
               <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">
-                {workflow.subtitle ?? action.description ?? "FinVerify detects uploaded sources and shows only relevant actions."}
+                {workflow.subtitle ?? action.description ?? "TallyThis detects uploaded sources and shows only relevant actions."}
               </p>
             </div>
             <button type="button" onClick={openPrimaryAction} disabled={!action.enabled || aiMutation.isPending || importMutation.isPending} className="fv-button-primary self-start disabled:opacity-60">
@@ -616,7 +616,7 @@ export default function SmartNextStepPanel() {
           </div>
 
           <div className="rounded-xl border border-border bg-background p-4">
-            <div className="mb-3 text-sm font-semibold text-foreground">What FinVerify detected</div>
+            <div className="mb-3 text-sm font-semibold text-foreground">What TallyThis detected</div>
             {Object.values(workflow.createdRecordCounts).some(v => v > 0) ? (
               <div className="grid grid-cols-2 gap-2">
                 {(
@@ -785,8 +785,8 @@ export default function SmartNextStepPanel() {
                     <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
                       <div className="mb-2 text-sm font-semibold text-foreground">
                         {activeRecipe.id === "GST_TDS_REVIEW"
-                          ? "Generate GST/TDS Review Pack — FinVerify will use:"
-                          : "Are you sure? FinVerify will use:"}
+                          ? "Generate GST/TDS Review Pack — TallyThis will use:"
+                          : "Are you sure? TallyThis will use:"}
                       </div>
                       <ul className="space-y-1.5 text-xs text-foreground">
                         {workflow.sourceSummary
@@ -816,7 +816,7 @@ export default function SmartNextStepPanel() {
                                     )}
                                     {noImportable && (
                                       <div className="mt-1 text-[11px] text-warning">
-                                        0 records in {s.label.toLowerCase()} table. PDFs without structured tables are not importable. Re-upload as CSV/Excel.
+                                        0 records in {s.label.toLowerCase()} table. Import parsed rows first; older uploads may need remove/re-upload.
                                       </div>
                                     )}
                                   </div>
@@ -827,8 +827,8 @@ export default function SmartNextStepPanel() {
                       </ul>
                       <p className="mt-3 text-[11px] text-muted-foreground">
                         {activeRecipe.id === "GST_TDS_REVIEW"
-                          ? "GST/TDS results are labelled Potential risk - needs CA review. FinVerify does not certify GST/TDS compliance."
-                          : "FinVerify only suggests matches. CA reviews every suggested match (Correct / Wrong / Needs more info) before the final CA-ready report."}
+                          ? "GST/TDS results are labelled Potential risk - needs CA review. TallyThis does not certify GST/TDS compliance."
+                          : "TallyThis only suggests matches. CA reviews every suggested match (Correct / Wrong / Needs more info) before the final CA-ready report."}
                       </p>
                     </div>
                     <div className="rounded-xl border border-primary/30 bg-background p-4">

@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;650;700&family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap');
 @config "../tailwind.config.ts";
 @import "tailwindcss";
 @source "./**/*.{ts,tsx}";
@@ -234,4 +234,23 @@
   textarea:focus-visible {
     box-shadow: var(--fv-focus);
   }
+}
+
+@keyframes fv-marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+.fv-marquee {
+  display: flex;
+  width: max-content;
+  animation: fv-marquee 40s linear infinite;
+}
+
+.fv-marquee-reverse {
+  animation-direction: reverse;
+}
+
+.fv-marquee-mask {
+  mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
 }

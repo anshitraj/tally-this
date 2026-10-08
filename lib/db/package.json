@@ -9,7 +9,10 @@
   },
   "scripts": {
     "push": "drizzle-kit push --config ./drizzle.config.ts",
-    "push-force": "drizzle-kit push --force --config ./drizzle.config.ts"
+    "push-force": "drizzle-kit push --force --config ./drizzle.config.ts",
+    "copy-db": "node scripts/copy-database.mjs",
+    "apply-sql": "node scripts/apply-sql.mjs",
+    "set-plan": "node scripts/set-plan.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",

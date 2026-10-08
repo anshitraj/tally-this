@@ -1,5 +1,6 @@
 import PageHeader from "@/components/app/PageHeader";
 import { PageTransition } from "@/components/app/finverify-ui";
+import { BRAND } from "@/lib/brand";
 
 const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
   <section className="mb-8 rounded-2xl border border-border bg-card p-5">
@@ -12,12 +13,21 @@ export default function DocsPage() {
   return (
     <PageTransition className="mx-auto max-w-4xl">
       <PageHeader
-        title="FinVerify OS Documentation"
-        subtitle="Upload-based monthly close workflow for founders, finance teams, and CAs"
+        title="TallyThis documentation"
+        subtitle="Upload. Verify. Export. Accounting automation for CAs, accountants, and finance teams."
       />
 
+      <Section title="What you can do">
+        <p>Bank Statement → Tally reads a statement and builds receipt and payment vouchers. Bank ↔ Tally compares one bank file with one Tally export. E-commerce GST normalizes marketplace CSVs into a draft pack. Invoice ↔ Bank suggests payment matches for review.</p>
+        <p>The current product is upload-based. Direct Tally, GST portal, and bank connections are not live. A local Tally connector exists for customers who run Tally on their own machine.</p>
+      </Section>
+
+      <Section title="Runs">
+        <p>Every job creates a run. Reports and review decisions belong to that run. Client workspaces remember which business you selected. Financial queries stay inside the signed-in company.</p>
+      </Section>
+
       <div className="fv-status-review mb-8 rounded-2xl border p-4 text-sm leading-6">
-        FinVerify OS is an upload-based MVP. Direct bank, Tally, GST, payroll, and gateway integrations are future integrations unless a page explicitly proves otherwise. AI extracted data is pending review. Rules match. Humans approve. CA reviews.
+        TallyThis is upload-first. A local Tally connector is available on Tax Audit for customer-run Tally gateways; direct bank, GST, payroll, and gateway API integrations remain future work unless a page explicitly proves otherwise. AI extracted data is pending review. Rules match. Humans approve. CA reviews.
       </div>
 
       <Section title="Normal Upload vs Advanced Upload">
@@ -73,11 +83,11 @@ export default function DocsPage() {
           <li>Bank to Payroll: checks whether salary payments match payroll sheets.</li>
           <li>Bank to Gateway: checks whether settlement credits match payment gateway reports.</li>
         </ul>
-        <p className="mt-2">FinVerify never auto-decides truth. Every potential similarity becomes a <span className="font-semibold text-foreground">suggested match</span>. The CA reviews each one and marks <span className="font-semibold text-foreground">Correct</span>, <span className="font-semibold text-foreground">Wrong</span>, or <span className="font-semibold text-foreground">Needs more info</span>. After all matches are reviewed, click <span className="font-semibold text-foreground">Generate CA-ready Report</span> on the Reconciliation page to finalize.</p>
+        <p className="mt-2">TallyThis never auto-decides truth. Every potential similarity becomes a <span className="font-semibold text-foreground">suggested match</span>. The CA reviews each one and marks <span className="font-semibold text-foreground">Correct</span>, <span className="font-semibold text-foreground">Wrong</span>, or <span className="font-semibold text-foreground">Needs more info</span>. After all matches are reviewed, click <span className="font-semibold text-foreground">Generate CA-ready Report</span> on the Reconciliation page to finalize.</p>
       </Section>
 
       <Section title="GST/TDS Wording">
-        <p>GST/TDS uploads do not run reconciliation. They generate a <span className="font-semibold text-foreground">GST/TDS Review Pack</span> with the language <span className="italic">Potential risk — needs CA review.</span> FinVerify never claims legal, tax, or audit certainty.</p>
+        <p>GST/TDS uploads do not run reconciliation. They generate a <span className="font-semibold text-foreground">GST/TDS Review Pack</span> with the language <span className="italic">Potential risk — needs CA review.</span> TallyThis never claims legal, tax, or audit certainty.</p>
       </Section>
 
       <Section title="Reports and Exports">
@@ -109,11 +119,15 @@ export default function DocsPage() {
       <Section title="What Is Real Now">
         <ul className="list-disc space-y-1 pl-5">
           <li>Upload-based file capture and parsing for supported CSV, Excel, PDF, and image files.</li>
+          <li>Local Tally connector for pulling a Tally Day Book into tax-audit tables and reconciliation ledger entries when Tally is reachable from the API host.</li>
           <li>Selected-source import into bank transactions, invoices, ledger entries, GST/TDS records, payroll entries, and gateway settlements.</li>
           <li>Rule-based reconciliation and matching flows.</li>
           <li>Action history and immutable upload history.</li>
           <li>CA review, reports, and exports based on available uploaded records.</li>
         </ul>
+      </Section>
+      <Section title="Contact">
+        <p>Questions about your workspace or an export? Email <a className="font-semibold text-primary underline underline-offset-4" href={`mailto:${BRAND.contactEmail}`}>{BRAND.contactEmail}</a>.</p>
       </Section>
     </PageTransition>
   );

@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
 
 ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS created_by INTEGER;
 ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS metadata_json JSONB DEFAULT '{}'::jsonb;
+ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS client_id INTEGER;
 ALTER TABLE workflow_runs ALTER COLUMN status SET DEFAULT 'queued';
 
 UPDATE workflow_runs SET status = 'queued' WHERE status = 'pending';

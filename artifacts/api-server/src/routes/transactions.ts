@@ -11,7 +11,10 @@ import {
   UpdateTransactionStatusResponse,
 } from "@workspace/api-zod";
 
+import { attachBooksCompany } from "../services/companyScope";
+
 const router: IRouter = Router();
+router.use(attachBooksCompany);
 
 router.get("/transactions", requirePermission("transactions.read"), async (req, res): Promise<void> => {
   const qp = GetTransactionsQueryParams.safeParse(req.query);

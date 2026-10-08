@@ -58,8 +58,8 @@ export async function callOpenRouterProvider(prompt: string, config: AIProviderC
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
-        "HTTP-Referer": "https://finverify.local",
-        "X-Title": "FinVerify OS",
+        "HTTP-Referer": process.env.APP_URL || "http://localhost:21950",
+        "X-Title": "TallyThis",
       },
       body: JSON.stringify({
         model: config.model,

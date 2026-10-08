@@ -5,7 +5,10 @@ import { eq, desc } from "drizzle-orm";
 import { GetInvoicesResponse, CreateInvoiceBody } from "@workspace/api-zod";
 import { auditAction, getCompanyId, requirePermission } from "../middleware/authz";
 
+import { attachBooksCompany } from "../services/companyScope";
+
 const router: IRouter = Router();
+router.use(attachBooksCompany);
 
 const mapInvoice = (inv: typeof invoicesTable.$inferSelect) => ({
   id: inv.id,

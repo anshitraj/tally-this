@@ -68,3 +68,6 @@ services/api-go/*.exe~
 # Runtime logs
 logs/
 **/logs/*.log
+
+# Real bank statements used for local testing. Never commit.
+/testing-pdf/

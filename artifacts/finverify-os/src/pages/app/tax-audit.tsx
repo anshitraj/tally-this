@@ -83,6 +83,10 @@ export default function TaxAuditPage() {
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["tax-audit", client] });
     qc.invalidateQueries({ queryKey: ["tax-audit-detail"] });
+    qc.invalidateQueries({ queryKey: ["monthly-close-workflow"] });
+    qc.invalidateQueries({ queryKey: ["ledger"] });
+    qc.invalidateQueries({ queryKey: ["reconciliation"] });
+    qc.invalidateQueries({ queryKey: ["action-history"] });
   };
 
   const { data, isLoading } = useQuery<TaxAuditIndex>({
@@ -101,7 +105,7 @@ export default function TaxAuditPage() {
     },
     onSuccess: (body) => {
       const c = body.counts ?? {};
-      toast({ title: "Tally data imported", description: `${c.ledgers ?? 0} ledgers · ${c.vouchers ?? 0} vouchers. Scrutiny refreshed.` });
+      toast({ title: "Tally data imported", description: `${c.ledgers ?? 0} ledgers, ${c.vouchers ?? 0} vouchers, ${c.ledgerEntries ?? 0} reconciliation rows.` });
       refresh();
     },
     onError: (e: Error) => toast({ title: "Import failed", description: e.message, variant: "destructive" }),
@@ -124,7 +128,7 @@ export default function TaxAuditPage() {
       if (!r.ok) throw new Error(`Export failed (${r.status})`);
       const blob = await r.blob();
       const cd = r.headers.get("Content-Disposition") || "";
-      const name = /filename="?([^"]+)"?/.exec(cd)?.[1] || "FinVerify_Tax_Audit.xlsx";
+      const name = /filename="?([^"]+)"?/.exec(cd)?.[1] || "TallyThis_Tax_Audit.xlsx";
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url; a.download = name; a.click();
@@ -154,7 +158,7 @@ export default function TaxAuditPage() {
     },
     onSuccess: (body) => {
       const c = body.counts ?? {};
-      toast({ title: "Synced from Tally", description: `${c.ledgers ?? 0} ledgers · ${c.vouchers ?? 0} vouchers pulled.` });
+      toast({ title: "Synced from Tally", description: `${c.ledgers ?? 0} ledgers, ${c.vouchers ?? 0} vouchers, ${c.ledgerEntries ?? 0} reconciliation rows pulled.` });
       setConnectOpen(false);
       refresh();
     },

@@ -174,7 +174,10 @@ func ListWorkflowRuns(db *sql.DB) http.HandlerFunc {
 			http.Error(w, `{"error":"unauthenticated"}`, http.StatusUnauthorized)
 			return
 		}
-		companyID := auth.CompanyID
+		companyID, scoped := middleware.BooksCompany(db, w, r, auth)
+		if !scoped {
+			return
+		}
 
 		rows, err := db.QueryContext(r.Context(),
 			`SELECT id, company_id, month, year, run_type, title, status,
@@ -183,6 +186,7 @@ func ListWorkflowRuns(db *sql.DB) http.HandlerFunc {
 			        completed_at::text, failed_reason
 			 FROM workflow_runs
 			 WHERE company_id = $1
+			   AND (COALESCE(metadata_json->>'clientId','') = '' OR metadata_json->>'clientId' = $1::text)
 			 ORDER BY created_at DESC
 			 LIMIT 50`, companyID)
 		if err != nil {
@@ -234,7 +238,10 @@ func GetWorkflowRun(db *sql.DB) http.HandlerFunc {
 			http.Error(w, `{"error":"unauthenticated"}`, http.StatusUnauthorized)
 			return
 		}
-		companyID := auth.CompanyID
+		companyID, scoped := middleware.BooksCompany(db, w, r, auth)
+		if !scoped {
+			return
+		}
 
 		runID := r.PathValue("id")
 		if runID == "" {
@@ -250,7 +257,8 @@ func GetWorkflowRun(db *sql.DB) http.HandlerFunc {
 			        created_at::text, updated_at::text,
 			        completed_at::text, failed_reason
 			 FROM workflow_runs
-			 WHERE id = $1 AND company_id = $2`, runID, companyID).
+			 WHERE id = $1 AND company_id = $2
+			   AND (COALESCE(metadata_json->>'clientId','') = '' OR metadata_json->>'clientId' = $2::text)`, runID, companyID).
 			Scan(&run.ID, &run.CompanyID, &run.Month, &run.Year,
 				&run.RunType, &run.Title, &run.Status, &run.ProgressPercent,
 				&run.CurrentStep, &run.CreatedAt, &run.UpdatedAt,
@@ -357,7 +365,10 @@ func GetWorkflowRunProgress(db *sql.DB) http.HandlerFunc {
 			http.Error(w, `{"error":"unauthenticated"}`, http.StatusUnauthorized)
 			return
 		}
-		companyID := auth.CompanyID
+		companyID, scoped := middleware.BooksCompany(db, w, r, auth)
+		if !scoped {
+			return
+		}
 
 		// Extract :id from path /api/workflow/runs/{id}/progress
 		parts := strings.Split(r.URL.Path, "/")
@@ -379,7 +390,8 @@ func GetWorkflowRunProgress(db *sql.DB) http.HandlerFunc {
 		err := db.QueryRowContext(r.Context(),
 			`SELECT id, status, progress_percent, COALESCE(current_step,''),
 			        steps_json::text, completed_at::text, failed_reason
-			 FROM workflow_runs WHERE id = $1 AND company_id = $2`, runID, companyID).
+			 FROM workflow_runs WHERE id = $1 AND company_id = $2
+			   AND (COALESCE(metadata_json->>'clientId','') = '' OR metadata_json->>'clientId' = $2::text)`, runID, companyID).
 			Scan(&run.ID, &run.Status, &run.ProgressPercent, &run.CurrentStep,
 				&stepsJSON, &completedAt, &failedReason)
 
@@ -436,7 +448,10 @@ func ListActionHistory(db *sql.DB) http.HandlerFunc {
 			http.Error(w, `{"error":"unauthenticated"}`, http.StatusUnauthorized)
 			return
 		}
-		companyID := auth.CompanyID
+		companyID, scoped := middleware.BooksCompany(db, w, r, auth)
+		if !scoped {
+			return
+		}
 
 		limit := 30
 		if raw := r.URL.Query().Get("limit"); raw != "" {
