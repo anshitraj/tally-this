@@ -4,7 +4,7 @@ FinVerify is accounting automation for CAs: upload a file, review exceptions, ex
 
 The browser talks to `/api`. Vite proxies that to the Go gateway on port 8090. Go serves health, workflow run reads, and some reconciliation routes, then proxies everything else to the TypeScript API on port 8080. The TypeScript API remains the fallback and still owns auth, uploads, the four job routes, reports, and CA review.
 
-Python (`services/extraction-worker`) parses CSV, Excel, and PDF tables and normalizes bank and marketplace rows when it is running. If it is down, the TypeScript parsers are the fallback. AI keys stay on the server. Matching math does not depend on a model.
+Python (`backend/worker`) parses CSV, Excel, and PDF tables and normalizes bank and marketplace rows when it is running. If it is down, the TypeScript parsers are the fallback. AI keys stay on the server. Matching math does not depend on a model.
 
 ```mermaid
 flowchart LR

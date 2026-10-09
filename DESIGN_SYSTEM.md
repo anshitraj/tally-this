@@ -8,10 +8,10 @@ Wordmark treatment:
 - "Verify" uses gold-orange `#F97F06`.
 - "OS" sits in a teal `#0D9488` pill with white letters.
 - Use the same geometric sans-serif as the UI.
-- Horizontal and stacked assets live in `artifacts/finverify-os/public/wordmark-horizontal.svg`, `wordmark-horizontal.png`, `wordmark-stacked.svg`, and `wordmark-stacked.png`.
+- Horizontal and stacked assets live in `frontend/public/wordmark-horizontal.svg`, `wordmark-horizontal.png`, `wordmark-stacked.svg`, and `wordmark-stacked.png`.
 
 ## Palette
-Core CSS tokens live in `artifacts/finverify-os/src/styles/design-tokens.css`.
+Core CSS tokens live in `frontend/src/styles/design-tokens.css`.
 
 - Primary / deep green: `#065F46`
 - Secondary / teal: `#0D9488`
@@ -94,5 +94,5 @@ Use subtle motion only:
 - AI should be described as rule-first and optional.
 
 ## Legacy Notes
-- `artifacts/finverify-os/src/index.css` still contains a Tailwind inline safelist with some historical blue/amber/emerald utility names. Those are safelisted strings, not the active visual identity.
+- `frontend/src/index.css` still contains a Tailwind inline safelist with some historical blue/amber/emerald utility names. Those are safelisted strings, not the active visual identity.
 - New UI work should prefer semantic CSS variables from `design-tokens.css` over raw color utility classes.

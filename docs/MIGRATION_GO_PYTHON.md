@@ -281,18 +281,18 @@ All other routes proxied from Go → TypeScript until verified.
 ```bash
 # TypeScript fallback (current, working)
 cd E:\accountant\Asset-Manager
-PORT=8080 node artifacts/api-server/dist/index.mjs
+PORT=8080 node backend/api/dist/index.mjs
 
 # Frontend dev
 pnpm --filter @workspace/finverify-os run dev
 
 # Python worker (after pip install)
-cd services/extraction-worker
+cd backend/worker
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8091
 
 # Go API (after go install)
-cd services/api-go
+cd backend/gateway
 go run ./cmd/api
 
 # All at once (future docker-compose)

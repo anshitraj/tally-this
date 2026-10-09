@@ -114,8 +114,8 @@ test("ocr fails closed when the engine is missing", async () => {
 });
 
 test("Go does not own /api/jobs until response parity exists", () => {
-  const gateway = readFileSync(repoFile("services/api-go/cmd/api/main.go"), "utf8");
-  const jobs = readFileSync(repoFile("artifacts/api-server/src/routes/jobs.ts"), "utf8");
+  const gateway = readFileSync(repoFile("backend/gateway/cmd/api/main.go"), "utf8");
+  const jobs = readFileSync(repoFile("backend/api/src/routes/jobs.ts"), "utf8");
   assert.doesNotMatch(gateway, /\/api\/jobs\//);
   assert.match(gateway, /TypeScript fallback/);
   for (const route of [

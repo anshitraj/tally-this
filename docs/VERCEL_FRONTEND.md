@@ -4,7 +4,7 @@ Import `anshitraj/tally-this`. The frontend is a Vite SPA in a pnpm workspace.
 
 | Vercel setting | Value |
 | --- | --- |
-| Root Directory | `artifacts/finverify-os` |
+| Root Directory | `frontend` |
 | Include source files outside Root Directory | Enabled |
 | Framework Preset | Vite |
 | Install Command | `pnpm install --frozen-lockfile` |
@@ -13,7 +13,7 @@ Import `anshitraj/tally-this`. The frontend is a Vite SPA in a pnpm workspace.
 | Node.js | 22.x |
 | Production Branch | `main`, after merging the deployment changes |
 
-The frontend's `vercel.json` versions the framework, install/build commands, output
+The frontend's `vercel.mjs` versions the framework, install/build commands, output
 directory and current application routes. Root Directory and the outside-source
 option remain Vercel project settings. The root package pins pnpm 10.28.0.
 Windows native build packages are optional; Linux builders use the platform packages
@@ -24,7 +24,7 @@ from Vite/Tailwind's transitive dependencies.
 1. Check the latest production deployment's branch, commit and build log. A Ready
    deployment does not establish that the intended frontend output was published.
 2. Confirm Root Directory and Output Directory above. The generated entry point is
-   `artifacts/finverify-os/dist/public/index.html`, not `dist/index.html`.
+   `frontend/dist/public/index.html`, not `dist/index.html`.
 3. Check the deployment's output files for `index.html`, `favicon.svg`, `assets/`
    and `brands/`. A deployment serving only the source `public/` directory will not
    contain the application entry point.
@@ -42,23 +42,20 @@ session, so an output mismatch versus a hostname assignment cannot yet be confir
 
 ## Connect Railway before enabling real jobs
 
-The existing frontend calls relative `/api` URLs. Vite's localhost proxy only works
-in development. Once the real Railway HTTPS hostname is available, add this rewrite
-before the application rewrites, replacing the example hostname with the actual one:
+The frontend calls relative `/api` URLs. Set **`BACKEND_ORIGIN`** in Vercel to
+its actual public HTTPS Railway **gateway** origin, without `/api`, for example
+`https://your-actual-gateway.up.railway.app`. `frontend/vercel.mjs` reads this at
+deployment time and inserts the `/api/:path*` proxy before application routes.
+Redeploy after changing the variable. Do not invent a hostname or add backend
+credentials to frontend variables.
 
-```json
-{
-  "source": "/api/:path*",
-  "destination": "https://YOUR-RAILWAY-SERVICE.up.railway.app/api/:path*"
-}
-```
+Leaving `BACKEND_ORIGIN` blank publishes the landing page only; sign-in, uploads,
+live data and exports require the backend. API requests never fall through to HTML.
+Configure backend app/OAuth URLs against the final frontend domain.
 
-The committed configuration does not invent a backend hostname and does not rewrite
-API requests to HTML. Until the Railway proxy is connected, the landing page can be
-published, but sign-in, uploads, live client data and exports require the backend.
-Configure the backend's public app/OAuth URLs and provider callback registrations
-against the final frontend domain. Keep database, session, storage and AI secrets
-on the backend.
+The reorganized repository uses **`frontend`** as the Vercel Root Directory.
+Change the old `artifacts/finverify-os` setting when deploying this branch.
+Complete Railway and storage instructions are in [DEPLOYMENT.md](DEPLOYMENT.md).
 
 References: [Vercel Vite SPA routing](https://vercel.com/docs/frameworks/frontend/vite#using-vite-to-make-spas),
 [shared monorepo sources](https://vercel.com/docs/monorepos/monorepo-faq#can-i-share-source-files-between-projects-are-shared-packages-supported),

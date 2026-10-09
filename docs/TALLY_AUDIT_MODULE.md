@@ -2,12 +2,12 @@
 
 The differentiating module of FinVerify OS: **20 CA tax-audit / ledger-scrutiny checks on one screen**, computed from Tally-style data (ledger masters + vouchers + voucher lines + fixed-asset register).
 
-- **Frontend:** `artifacts/finverify-os/src/pages/app/tax-audit.tsx` → route `/app/tax-audit` (sidebar: **Tax Audit → Tax Audit & Scrutiny**)
-- **API:** `artifacts/api-server/src/routes/taxAudit.ts`
+- **Frontend:** `frontend/src/pages/app/tax-audit.tsx` → route `/app/tax-audit` (sidebar: **Tax Audit → Tax Audit & Scrutiny**)
+- **API:** `backend/api/src/routes/taxAudit.ts`
   - `GET /api/tax-audit` — index: every check with flagged count + severity
   - `GET /api/tax-audit/:checkId` — full detail rows + columns for one check
 - **Data model:** `tally_ledgers`, `tally_vouchers`, `tally_voucher_lines`, `tally_fixed_assets` (`lib/db/src/schema/finverify.ts`)
-- **Migration:** `artifacts/api-server/scripts/add-tally-audit-tables.mjs`
+- **Migration:** `backend/api/scripts/add-tally-audit-tables.mjs`
 
 ### Data-source behaviour
 The engine reads real imported data from the `tally_*` tables. **If those tables are empty or absent, it falls back to a built-in demo dataset** so the cockpit always renders meaningful numbers (the `source: "demo"` banner shows in the UI). This guarantees the screen works before any Tally import is wired.
@@ -73,6 +73,6 @@ These are constants at the top of the route — update per assessment year.
 
 ## How to run the migration
 ```bash
-node artifacts/api-server/scripts/add-tally-audit-tables.mjs
+node backend/api/scripts/add-tally-audit-tables.mjs
 ```
 Requires `DATABASE_URL` in root `.env`. After migration, the engine will use real `tally_*` data when present.

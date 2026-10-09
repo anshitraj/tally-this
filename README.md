@@ -1,5 +1,11 @@
 # TallyThis
 
+Deployment: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. Frontend source is in
+**`frontend/`** (Vercel Root Directory); Railway services are in **`backend/api/`**,
+**`backend/gateway/`** and **`backend/worker/`**. Shared Neon database schema and
+API types remain in `lib/`. Set `BACKEND_ORIGIN` in Vercel to connect the public
+Railway gateway. Existing Vercel projects must update their old Root Directory.
+
 Support: [contact@tallythis.xyz](mailto:contact@tallythis.xyz). Website domain is pending confirmation (`tally.xyz` versus `tallythis.xyz`); no production DNS or mail service has been provisioned by these code changes.
 
 Production launch requirements and the code audit are in [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md). Brand changes preserve the existing package names, database schemas and browser storage keys for compatibility.
@@ -27,7 +33,7 @@ The landing page and workspace share a forest green and white visual system, a c
 
 Landing and sign-in animations are **illustrative sample walkthroughs**, implemented as local UI timelines with typing, row checks, review choices and export states. They do not run parsers, upload sample files or create accounting records. They pause offscreen or in background tabs, have pause/replay controls, and show a static completed illustration when reduced motion is requested. Real file uploads continue into the existing accounting jobs, including files selected before sign-in.
 
-Bank logos identify uploaded statement sources, not bank connections or partnerships. Asset sources are recorded in [`public/brands/SOURCES.md`](artifacts/finverify-os/public/brands/SOURCES.md).
+Bank logos identify uploaded statement sources, not bank connections or partnerships. Asset sources are recorded in [`public/brands/SOURCES.md`](frontend/public/brands/SOURCES.md).
 
 UI regression checks (with browser-only API fixtures; the running frontend defaults to port 21950):
 
@@ -42,7 +48,7 @@ pnpm --filter @workspace/finverify-os exec playwright test e2e/refresh.spec.ts -
 - Backend: Node.js, Express, TypeScript, Drizzle ORM.
 - Database: PostgreSQL through `DATABASE_URL`.
 - Workspace: pnpm monorepo with generated API/Zod packages.
-- Matching: rules-first service in `artifacts/api-server/src/services/matchingEngine.ts`.
+- Matching: rules-first service in `backend/api/src/services/matchingEngine.ts`.
 - Platform data store: companies, users/roles, document metadata, GST/TDS records, audit logs, finance records, reconciliation matches, and risk flags.
 - New workspaces are database-backed and start empty until users upload or import records.
 
@@ -112,7 +118,7 @@ pnpm --filter @workspace/api-server test
 Sample PDFs (text and scanned) for manual testing:
 
 ```bash
-node artifacts/api-server/scripts/make-sample-statements.mjs ./tmp-samples
+node backend/api/scripts/make-sample-statements.mjs ./tmp-samples
 ```
 
 Build:
