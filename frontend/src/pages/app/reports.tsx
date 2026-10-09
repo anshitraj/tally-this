@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import {
   Download,
   FileText,
+  FileSpreadsheet,
   BarChart3,
   AlertTriangle,
   Users,
@@ -45,6 +46,27 @@ export default function ReportsPage() {
 
   const [exportingType, setExportingType] = React.useState<string | null>(null);
   const [exportingPack, setExportingPack] = React.useState(false);
+  const [exportingExcel, setExportingExcel] = React.useState(false);
+
+  const downloadExcelPack = async () => {
+    setExportingExcel(true);
+    try {
+      const response = await fetch(`${BASE}/api/reports/excel-export`, { method: "POST", headers: { Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" } });
+      if (!response.ok) throw new Error("Excel export failed");
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = /filename="?([^";]+)"?/i.exec(response.headers.get("Content-Disposition") ?? "")?.[1] ?? "TallyThis_CA_Pack.xlsx";
+      link.click();
+      URL.revokeObjectURL(url);
+      toast({ title: "Excel workbook downloaded", description: "Newest saved records across all dates. Potential risk — needs CA review." });
+    } catch {
+      toast({ title: "Excel download failed", description: "Please try again.", variant: "destructive" });
+    } finally {
+      setExportingExcel(false);
+    }
+  };
 
   const handleExport = async (type: string, store = false) => {
     setExportingType(type);
@@ -245,6 +267,10 @@ export default function ReportsPage() {
                 {exportingPack
                   ? "Preparing your pack…"
                   : "Download CA review pack"}
+              </button>
+              <button type="button" disabled={exportingExcel} onClick={downloadExcelPack} className="fv-button-secondary">
+                <FileSpreadsheet className="w-4 h-4" />
+                {exportingExcel ? "Preparing Excel…" : "Download Excel workbook"}
               </button>
             </div>
           </div>

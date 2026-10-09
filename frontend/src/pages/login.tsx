@@ -87,6 +87,8 @@ export default function LoginPage() {
         : { email, password };
       const data = await authFetch(endpoint, body);
 
+      // A different account may have been in this browser; each sign-in starts with its own clients.
+      localStorage.removeItem("finverify_active_client");
       login({
         token: data.token,
         expiresAt: data.expiresAt,
@@ -112,6 +114,8 @@ export default function LoginPage() {
     try {
       const data = await authFetch("/api/auth/demo", { intent: "load_demo_workspace" }, DEMO_TIMEOUT_MS);
 
+      // A different account may have been in this browser; each sign-in starts with its own clients.
+      localStorage.removeItem("finverify_active_client");
       login({
         token: data.token,
         expiresAt: data.expiresAt,

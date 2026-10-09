@@ -59,6 +59,8 @@ export function login(userOrSession: AuthUser | AuthSession): void {
 export async function logout(): Promise<void> {
   const token = getAuthToken();
   localStorage.removeItem(AUTH_KEY);
+  // The chosen client belongs to the account that just left; the next sign-in picks its own.
+  localStorage.removeItem("finverify_active_client");
   if (!token) return;
   try {
     await fetch("/api/auth/logout", {

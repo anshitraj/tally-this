@@ -1,6 +1,6 @@
 # TallyThis production launch checklist
 
-Reviewed 8 October 2026. This is a launch plan, not a production certification.
+Reviewed 9 October 2026. This is a launch plan, not a production certification.
 
 The interface, upload workflows and exports work locally. Production launch still needs security remediation, a tested deployment, and operational setup. A successful workspace build does not prove live DNS, email delivery, backups, tenant isolation or capacity.
 
@@ -102,7 +102,8 @@ Only public settings belong in frontend build variables. Use separate production
 - Have an accountant review GST draft mappings, cancellations, refunds, fees, tax amounts and exception behavior. Keep outputs described as drafts for review rather than filing guarantees.
 - Verify source links and review decisions persist for saved jobs and remain tied to the correct client. Exceptions must be actionable without revealing parser/provider complexity by default.
 - Test the core jobs without AI credentials. Unsupported scans must ask for a readable export or report that reading failed rather than silently return an empty successful result.
-- The present AI consent describes Google Gemini, while the document reader supports multiple providers. Align the wording with the actual selected provider, fallback behavior, contract, retention and location before enabling private document reading.
+- Privacy-mode document reading now permits only Gemini, matching the displayed consent. Verify the paid provider contract, retention and location before setting `PRIVACY_AI_ALLOWED=true`.
+- Maintain the [bank evidence matrix](BANK_SUPPORT.md). A recognized bank name or logo does not establish that its statement layout parses or imports correctly.
 - Define the difference between hiding old history, deleting raw files, deleting extracted financial records, deleting an account and expiring backups. A retention date stored in a database is not a scheduled deletion service.
 - Publish subprocessors, support/grievance contact, breach response process and customer responsibilities. Have counsel assess applicable Indian privacy requirements and effective dates using the [official MeitY DPDP publications](https://www.meity.gov.in/documents/act-and-policies/digital-personal-data-protection-rules-2025-gDOxUjMtQWa?pageTitle=Digit).
 - Review TallyThis naming/trademark implications before investing further in public launch. Use truthful independence statements and avoid presenting bank logos as endorsements. This checklist does not establish trademark clearance.
@@ -135,4 +136,4 @@ Use a staging environment first. Launch only after the applicable P0 items have 
 - [ ] Privacy/terms/retention/provider disclosures and support process approved.
 - [ ] Rollback and incident ownership documented; paid entitlements match actual billing behavior.
 
-Local verification for the rebrand: workspace build/typechecks passed, 31 API workflow/parser tests passed, and 10 browser tests passed, including 360px, 390px and 768px layouts. Desktop/mobile visual inspection found no horizontal overflow or browser exceptions. Live hosting, DNS, mailbox delivery, restoration, load testing and a full adversarial tenant test suite remain unverified.
+Local verification on 9 October: workspace build/typechecks passed, 41 API workflow/parser tests passed, and 15 browser tests passed, including 360px, 390px and 768px layouts. A 390px bank result screenshot was inspected and the browser tests found no horizontal overflow. The frontend build still warns about an 875 kB JavaScript chunk. Live hosting, DNS, mailbox delivery, restoration, load testing, real bank statement fixtures, Tally import and a full adversarial tenant test suite remain unverified.

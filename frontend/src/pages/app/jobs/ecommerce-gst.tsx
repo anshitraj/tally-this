@@ -9,10 +9,12 @@ import {
   ResultCard,
   Working,
   downloadText,
+  downloadBlob,
   fmtDate,
   inr,
   postFiles,
   postJson,
+  postDownload,
   takePendingFiles,
 } from "@/components/jobs/jobUi";
 import { getActiveClient } from "@/lib/activeClient";
@@ -41,7 +43,9 @@ interface Sale {
 interface Pack {
   ok: boolean;
   message: string;
-  runId?: string;
+  runId?: string | null;
+  /** True when privacy mode was on: nothing about this run was saved. */
+  privacy?: boolean;
   platform: string;
   files?: string[];
   sales: Sale[];
@@ -77,6 +81,7 @@ export default function EcommerceGstPage() {
   const [reviewOpen, setReviewOpen] = useState(false);
   const [tab, setTab] = useState<(typeof TABS)[number]>("B2B");
   const [downloaded, setDownloaded] = useState(false);
+  const [exportingExcel, setExportingExcel] = useState(false);
 
   const run = async (picked: File[], chosen: Platform = platform) => {
     setFiles(picked);
@@ -157,7 +162,20 @@ export default function EcommerceGstPage() {
       setError(response.data.errors?.slice(0, 3).join(" ") || response.data.message || "Tally XML not created.");
       return;
     }
-    downloadText(response.data.fileName || "marketplace-tally.xml", response.data.xml, "application/xml");
+    downloadText("marketplace-receipts-draft.xml", response.data.xml, "application/xml");
+  };
+
+  const exportExcel = async () => {
+    if (!pack) return;
+    setExportingExcel(true);
+    const response = await postDownload("/api/jobs/ecommerce/excel", {
+      clientName: getActiveClient()?.name || "Client",
+      sales: pack.sales,
+    });
+    setExportingExcel(false);
+    if (!response.ok || !response.blob) { setError(response.message || "The Excel summary could not be created."); return; }
+    setError("");
+    downloadBlob("TallyThis_Ecommerce_Summary.xlsx", response.blob);
   };
 
   const reset = () => {
@@ -171,7 +189,7 @@ export default function EcommerceGstPage() {
   const rows: Sale[] = pack ? (tab === "B2B" ? pack.tabs.b2b : tab === "B2C" ? pack.tabs.b2c : tab === "TCS" ? pack.tabs.tcs : tab === "Table 14" ? pack.tabs.table14 : []) : [];
 
   return (
-    <JobShell title="E-commerce GST" outcome="Upload marketplace reports and prepare GST-ready data.">
+    <JobShell title="E-commerce GST" outcome="Upload marketplace reports and prepare a GST review draft.">
       {(stage === "idle" || stage === "error") && (
         <div className="space-y-4">
           {stage === "error" && <Notice tone="error">{error}</Notice>}
@@ -195,14 +213,15 @@ export default function EcommerceGstPage() {
             eyebrow={`${titleCase(pack.platform)} · ${files.length} ${files.length === 1 ? "report" : "reports"}`}
             actions={
               <>
-                <button type="button" className="fv-button-primary h-11 px-6" onClick={generate}>{downloaded ? "Download again" : "Generate GST Reports"}</button>
-                {summary.errors > 0 && <button type="button" className="fv-button-secondary h-11" onClick={() => setReviewOpen(true)}>Review {summary.errors} {summary.errors === 1 ? "item" : "items"}</button>}
-                <button type="button" className="text-sm font-medium text-muted-foreground hover:text-foreground sm:ml-auto" onClick={reset}>Upload other reports</button>
+                {summary.errors > 0
+                  ? <button type="button" className="fv-button-primary h-11 px-6" onClick={() => setReviewOpen(true)}>Review {summary.errors} {summary.errors === 1 ? "item" : "items"}</button>
+                  : <button type="button" className="fv-button-primary h-11 px-6" onClick={generate}>{downloaded ? "Download draft again" : "Download GST draft"}</button>}
+                <button type="button" className="fv-button-secondary h-11" onClick={exportExcel} disabled={exportingExcel}>{exportingExcel ? "Creating Excel…" : "Download Excel"}</button>
               </>
             }
           >
             <div className="grid grid-cols-2 gap-6">
-              <BigStat value={summary.documents} label="invoices ready" tone="good" />
+              <BigStat value={summary.documents} label="invoices read" tone="good" />
               <BigStat value={summary.errors} label={summary.errors === 1 ? "needs review" : "need review"} tone={summary.errors > 0 ? "attention" : "good"} />
             </div>
             <div className="mt-5 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
@@ -213,6 +232,7 @@ export default function EcommerceGstPage() {
             </div>
           </ResultCard>
 
+          {pack.privacy && !downloaded && <Notice tone="success">Privacy mode: nothing here is saved. Download your reports before you leave this page.</Notice>}
           {error && <Notice tone="error" onClose={() => setError("")}>{error}</Notice>}
           {downloaded && (
             <Notice tone="success">GSTR-1 draft (JSON) and sales summary (CSV) downloaded. Potential risk — needs CA review before filing.</Notice>
@@ -236,10 +256,12 @@ export default function EcommerceGstPage() {
                   </details>
                 ))}
               </div>
+              <button type="button" className="fv-button-secondary mt-4" onClick={generate}>{downloaded ? "Download working draft again" : "Download working draft with issues"}</button>
             </ResultCard>
           )}
 
           <MoreOptions label="Show details">
+            <button type="button" className="text-sm font-medium text-[var(--fv-accent-dark)] hover:underline" onClick={reset}>Upload other reports</button>
             <div className="flex flex-wrap gap-2">
               {TABS.map(item => (
                 <button key={item} type="button" onClick={() => setTab(item)} className={cn("rounded-full px-3 py-1 text-xs font-semibold", tab === item ? "bg-foreground text-background" : "bg-card text-foreground border border-border")}>{item}</button>
@@ -276,7 +298,10 @@ export default function EcommerceGstPage() {
               <div className="mb-2 text-sm font-semibold">Marketplace</div>
               <Choice size="sm" value={platform} options={PLATFORMS} onChange={value => { setPlatform(value); void run(files, value); }} />
             </div>
-            <button type="button" className="fv-button-secondary" onClick={tallyXml}>Download Tally sales vouchers (XML)</button>
+            <div>
+              <button type="button" className="fv-button-secondary" onClick={tallyXml}>Download basic receipt draft (XML)</button>
+              <p className="mt-2 text-xs text-muted-foreground">This creates simple receipt entries. It does not split GST ledgers or reconcile marketplace settlements. Potential risk — needs CA review.</p>
+            </div>
           </MoreOptions>
         </div>
       )}

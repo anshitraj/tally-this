@@ -23,7 +23,13 @@ One drop zone. `POST /api/jobs/detect` classifies each file (bank statement, Tal
 
 ## History
 
-`/app/history` lists every run for the active client, newest first, with the person who ran it. Items open to the saved result: transactions and the running-balance proof with the Tally file for Bank → Tally; matched and attention items with the report for the two comparisons; totals and GST drafts for E-commerce GST. Older month-end and import runs appear under Older work. The four jobs do not store the uploaded file itself.
+`/app/history` lists the last three months of runs (`HISTORY_MONTHS`) for the active client, newest first, with the person who ran it. Older runs are kept in the database and are not shown: the page tells the person how many are waiting and to email us, and a direct link to one returns "older than 3 months, email us". Items open to the saved result: transactions and the running-balance proof with the Tally file for Bank → Tally; matched and attention items with the report for the two comparisons; totals and GST drafts for E-commerce GST. Month-end and import runs appear under Other. The four jobs do not store the uploaded file itself.
+
+## Privacy mode
+
+A switch at the top of each job, for paid plans. On: nothing from the upload is saved (no run, result, history entry, audit or AI-usage row, remembered ledger choice, or file) and the result lives only on the page until the person downloads it. Off for free accounts: a short line says it is part of the paid plans and how to ask for it. A person whose plan lapsed while the switch was on is stopped with a clear message rather than saved quietly.
+
+A scan or photo cannot be read without AI. Privacy mode asks first ("This scan needs AI to be read"), one file at a time, then sends it to Gemini only, when the operator has confirmed a paid Google key with `PRIVACY_AI_ALLOWED=true`. If AI is not available the person is told to use the bank's Excel/CSV or a net-banking PDF. It is not zero data retention: Google may log requests for a limited time to prevent abuse.
 
 ## Runs
 

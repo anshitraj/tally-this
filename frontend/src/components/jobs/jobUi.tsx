@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, CheckCircle2, ChevronDown, FileText, Loader2, Lock, ShieldCheck, UploadCloud, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, FileText, Loader2, Lock, ShieldCheck, Sparkles, UploadCloud, X } from "lucide-react";
 import { getActiveClient, setActiveClient, type ActiveClient } from "@/lib/activeClient";
+import { isPrivacyOn, upgradeMailto, usePrivacy } from "@/lib/privacy";
 import { cn } from "@/lib/utils";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -48,14 +49,17 @@ export function useClients() {
   return { clients, active, source, choose };
 }
 
-export function downloadText(filename: string, content: string, type = "text/plain") {
-  const blob = new Blob([content], { type });
+export function downloadBlob(filename: string, blob: Blob) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
   link.download = filename;
   link.click();
   URL.revokeObjectURL(url);
+}
+
+export function downloadText(filename: string, content: string, type = "text/plain") {
+  downloadBlob(filename, new Blob([content], { type }));
 }
 
 export function toCsv(headers: string[], rows: Array<Array<unknown>>) {
@@ -77,6 +81,7 @@ export async function postFiles<T>(path: string, fields: Record<string, File | F
   const client = getActiveClient();
   if (client?.id) body.append("clientId", String(client.id));
   if (client?.name) body.append("clientName", client.name);
+  if (isPrivacyOn()) body.append("privacy", "1");
   for (const [key, value] of Object.entries(fields)) {
     if (value == null) continue;
     if (Array.isArray(value)) value.forEach(file => body.append(key, file));
@@ -96,12 +101,29 @@ export async function postJson<T>(path: string, payload: unknown): Promise<{ ok:
     const response = await fetch(`${BASE}${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(isPrivacyOn() && payload && typeof payload === "object" && !Array.isArray(payload) ? { ...payload, privacy: true } : payload),
     });
     const data = await response.json().catch(() => ({ ok: false }));
     return { ok: response.ok && data.ok !== false, data };
   } catch {
     return { ok: false, data: { ok: false, message: "Could not reach TallyThis." } as T & { ok?: boolean; message?: string } };
+  }
+}
+
+export async function postDownload(path: string, payload: unknown): Promise<{ ok: boolean; blob?: Blob; message?: string }> {
+  try {
+    const response = await fetch(`${BASE}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(isPrivacyOn() && payload && typeof payload === "object" && !Array.isArray(payload) ? { ...payload, privacy: true } : payload),
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      return { ok: false, message: data.message || "The download could not be created." };
+    }
+    return { ok: true, blob: await response.blob() };
+  } catch {
+    return { ok: false, message: "Could not reach TallyThis. Check your connection and try again." };
   }
 }
 
@@ -117,12 +139,101 @@ export function JobShell({ title, outcome, children }: { title: string; outcome:
         <p className="mt-1.5 text-sm text-muted-foreground sm:text-base">{outcome}</p>
         <div className="fv-job-flow" aria-label="Upload, review, export"><span><i>01</i> Upload</span><span><i>02</i> Review</span><span><i>03</i> Export</span></div>
       </div>
+      <PrivacySwitch />
       {children}
     </div>
   );
 }
 
 /** Shows which client the work is for. One tap to switch. */
+/**
+ * Privacy mode: nothing from the upload is saved and no history is kept. Only on paid plans, so
+ * a free account sees one quiet line that explains it and how to get it.
+ */
+export function PrivacySwitch() {
+  const privacy = usePrivacy();
+  if (!privacy.loaded) return null;
+
+  if (!privacy.available && !privacy.on) {
+    return (
+      <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-dashed border-border px-4 py-2.5 text-sm text-muted-foreground">
+        <span className="inline-flex items-center gap-2 font-medium text-foreground"><Lock className="h-4 w-4" />Privacy mode</span>
+        <span>Nothing saved, nothing in History. Part of our paid plans.</span>
+        <a className="font-semibold text-[var(--fv-accent-dark)] hover:underline" href={upgradeMailto("Privacy mode")}>Email us to switch it on</a>
+      </div>
+    );
+  }
+
+  if (!privacy.available && privacy.on) {
+    return (
+      <div className="mb-4">
+        <Notice tone="warn">
+          <div className="font-semibold">Privacy mode is on, but your plan does not include it.</div>
+          <div className="mt-1">Uploads are stopped so nothing is saved by mistake. <button type="button" className="font-semibold underline" onClick={() => privacy.set(false)}>Turn it off</button> to continue normally, or <a className="font-semibold underline" href={upgradeMailto("Privacy mode")}>email us</a> to renew.</div>
+        </Notice>
+      </div>
+    );
+  }
+
+  return (
+    <div className={cn("mb-4 rounded-xl border px-4 py-2.5 text-sm", privacy.on ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-border bg-card")}>
+      <div className="flex items-center justify-between gap-3">
+        <span className="inline-flex items-center gap-2 font-medium"><ShieldCheck className="h-4 w-4" />Privacy mode</span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={privacy.on}
+          aria-label="Privacy mode"
+          onClick={() => privacy.set(!privacy.on)}
+          className={cn("relative h-6 w-11 shrink-0 rounded-full transition after:absolute after:-inset-2.5 after:content-['']", privacy.on ? "bg-emerald-600" : "bg-muted-foreground/30")}
+        >
+          <span className={cn("absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition", privacy.on && "translate-x-5")} />
+        </button>
+      </div>
+      <p className={cn("mt-1 text-xs", privacy.on ? "text-emerald-800" : "text-muted-foreground")}>
+        {privacy.on
+          ? "On. This file and its result are not saved and will not appear in History. They are gone when you leave this page, so download what you need."
+          : "Off. Switch on for files that must not be stored: nothing is saved and nothing appears in History."}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Privacy mode reads a scan with AI only after this question is answered yes, one file at a time.
+ */
+export function AiConsentPrompt({
+  fileName,
+  message,
+  busy = false,
+  onAllow,
+  onCancel,
+}: {
+  fileName: string;
+  message: string;
+  busy?: boolean;
+  onAllow: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <section className="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
+      <div className="flex items-start gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-50 text-sky-800"><Sparkles className="h-5 w-5" /></div>
+        <div className="min-w-0 flex-1">
+          <div className="font-semibold">This scan needs AI to be read</div>
+          <p className="mt-1 truncate text-sm text-muted-foreground">{fileName}</p>
+          <p className="mt-2 text-sm text-muted-foreground">{message}</p>
+          <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+            <button type="button" className="fv-button-primary h-11" onClick={onAllow} disabled={busy}>{busy ? "Reading…" : "Read this file with AI"}</button>
+            <button type="button" className="fv-button-secondary h-11" onClick={onCancel} disabled={busy}>Use a different file</button>
+          </div>
+          <p className="mt-3 text-xs text-muted-foreground">Or download the statement as Excel/CSV from your bank. Those files never need AI.</p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function ClientChip() {
   const { clients, active, choose } = useClients();
   if (!active && clients.length === 0) return null;
@@ -474,13 +585,13 @@ export function StatementProof({ check }: { check: StatementCheck | null | undef
       <div className="mt-4 flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-900">
         <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
         <div>
-          <div className="font-semibold">Every row matches the bank's running balance</div>
+          <div className="font-semibold">Running-balance checks passed</div>
           <div className="text-xs text-emerald-800">
-            {check.checked} of {check.rows} rows proved
+            {check.passed} of {check.rows} transaction amounts match the running balance
             {check.openingBalance != null && <> · opening {inr(check.openingBalance)}</>}
             {check.closingBalance != null && <> · closing {inr(check.closingBalance)}</>}
             {check.closingMatches && <> · closing matches the statement</>}
-            {check.serialComplete && <> · no rows missing</>}
+            {check.serialComplete && <> · statement row sequence checked</>}
           </div>
         </div>
       </div>
@@ -495,7 +606,7 @@ export function StatementProof({ check }: { check: StatementCheck | null | undef
           {check.failed > 0 ? `${check.failed} ${check.failed === 1 ? "row does" : "rows do"} not match the running balance` : "Some rows could not be checked against the balance"}
         </div>
         <div className="text-xs text-amber-800">
-          {check.passed} of {check.rows} rows proved{check.closingMatches === false ? " · closing balance differs from the statement" : ""}. Review the flagged rows before export.
+          {check.passed} of {check.rows} transaction amounts match the running balance{check.closingMatches === false ? " · closing balance differs from the statement" : ""}. Compare unverified rows with the statement before export.
         </div>
       </div>
     </div>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2 } from "lucide-react";
 import {
+  AiConsentPrompt,
   BigStat,
   Choice,
   DropZone,
@@ -41,14 +42,17 @@ interface CompareItem {
 }
 
 interface CompareResponse {
-  runId: string;
+  runId: string | null;
+  /** True when privacy mode was on: nothing about this run was saved. */
+  privacy?: boolean;
+  needsAiConsent?: boolean;
   bank?: { bankName: string | null; periodLabel: string | null; count: number; source?: string; check?: StatementCheck | null };
   comparison: { items: CompareItem[]; counts: Record<string, number> };
   needsPassword?: boolean;
   wrongPassword?: boolean;
 }
 
-type Stage = "idle" | "working" | "done" | "error";
+type Stage = "idle" | "working" | "consent" | "done" | "error";
 type Decision = "approved" | "rejected" | "needs_info";
 
 const STEPS = ["Reading the bank statement", "Reading Tally entries", "Matching amounts and dates", "Listing differences"];
@@ -81,13 +85,19 @@ export default function BankTallyPage() {
   const [locked, setLocked] = useState(false);
   const [bankPassword, setBankPassword] = useState("");
   const [passwordError, setPasswordError] = useState("");
+  const [consentMessage, setConsentMessage] = useState("");
 
-  const compare = async (bank: File, tally: File, password = bankPassword) => {
+  const compare = async (bank: File, tally: File, password = bankPassword, allowAi = false) => {
     setStage("working");
     setError("");
     setPasswordError("");
-    const response = await postFiles<CompareResponse>("/api/jobs/bank-tally/compare", { bank, tally, bankFileName: bank.name, password: password || undefined });
+    const response = await postFiles<CompareResponse>("/api/jobs/bank-tally/compare", { bank, tally, bankFileName: bank.name, password: password || undefined, allowAi: allowAi ? "1" : undefined });
     if (!response.ok) {
+      if (response.data.needsAiConsent) {
+        setConsentMessage(response.data.message ?? "");
+        setStage("consent");
+        return;
+      }
       if (response.data.needsPassword) {
         setLocked(true);
         setBankPassword("");
@@ -142,7 +152,9 @@ export default function BankTallyPage() {
   const decide = async (key: string, status: Decision) => {
     setDecided(current => ({ ...current, [key]: status }));
     setItems(current => current.map(item => item.key === key ? { ...item, status } : item));
-    const response = await postJson<{ items: CompareItem[] }>(`/api/jobs/runs/${data?.runId}/decision`, { key, status });
+    // A private run has nothing on the server to update; the choice stays on this page.
+    if (!data?.runId) return;
+    const response = await postJson<{ items: CompareItem[] }>(`/api/jobs/runs/${data.runId}/decision`, { key, status });
     if (response.ok && response.data.items) setItems(response.data.items);
   };
 
@@ -211,6 +223,10 @@ export default function BankTallyPage() {
 
       {stage === "working" && <Working steps={STEPS} />}
 
+      {stage === "consent" && bankFile && tallyFile && (
+        <AiConsentPrompt fileName={bankFile.name} message={consentMessage} onAllow={() => compare(bankFile, tallyFile, bankPassword, true)} onCancel={reset} />
+      )}
+
       {stage === "done" && data && (
         <div className="space-y-4">
           <ResultCard
@@ -237,6 +253,7 @@ export default function BankTallyPage() {
             )}
           </ResultCard>
 
+          {data.privacy && <Notice tone="success">Privacy mode: nothing here is saved. Download the report before you leave this page.</Notice>}
           {error && <Notice tone="error" onClose={() => setError("")}>{error}</Notice>}
 
           {reviewOpen && (
@@ -283,10 +300,12 @@ export default function BankTallyPage() {
 
           <MoreOptions>
             <div className="text-sm text-muted-foreground">{data.bank?.count ?? 0} bank rows and {data.comparison.counts.tally ?? 0} Tally rows were compared.</div>
-            <div className="flex flex-wrap gap-2">
-              <button type="button" className="fv-button-secondary" onClick={() => downloadJson(false)}>Draft report (JSON)</button>
-              <button type="button" className="fv-button-secondary" onClick={() => downloadJson(true)}>Final report (JSON)</button>
-            </div>
+            {data.runId && (
+              <div className="flex flex-wrap gap-2">
+                <button type="button" className="fv-button-secondary" onClick={() => downloadJson(false)}>Draft report (JSON)</button>
+                <button type="button" className="fv-button-secondary" onClick={() => downloadJson(true)}>Final report (JSON)</button>
+              </div>
+            )}
           </MoreOptions>
         </div>
       )}

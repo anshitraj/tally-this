@@ -14,7 +14,7 @@ TallyThis is accounting automation for CAs, accountants, and finance teams.
 
 > Upload. Verify. Export.
 
-Upload a bank statement, Tally export, marketplace report, invoice register, or invoice PDFs. TallyThis works out what the file is (bank, marketplace, file type), normalizes it, shows only what needs a person, and exports Tally XML, CSV, or a draft GST JSON. Choices are pick-from-a-list, not typing. It does not file returns and it does not replace a CA.
+Upload a bank statement, Tally export, marketplace report, invoice register, or invoice PDFs. TallyThis works out what the file is (bank, marketplace, file type), normalizes it, shows only what needs a person, and exports Tally XML, CSV, Excel working copies, or a draft GST JSON. Most choices are pick-from-a-list; an unlisted statement bank can be entered manually. It does not file returns and it does not replace a CA.
 
 ## What you use first
 
@@ -26,6 +26,8 @@ Upload a bank statement, Tally export, marketplace report, invoice register, or 
 - Advanced keeps the older upload center, tax audit, payroll, gateway, and CA review screens
 
 Workflow details: [`docs/PRODUCT_WORKFLOWS.md`](docs/PRODUCT_WORKFLOWS.md). Service split: [`docs/MIGRATION_GO_PYTHON.md`](docs/MIGRATION_GO_PYTHON.md).
+
+Public Repotic workflow comparison and remaining gaps: [`docs/REPOTIC_COMPARISON.md`](docs/REPOTIC_COMPARISON.md).
 
 ## Interface and product walkthroughs
 
@@ -78,11 +80,14 @@ The canonical high-level architecture is documented in [`ARCHITECTURE.md`](./ARC
 - Optional server-side AI provider layer with Gemini primary, Claude (Anthropic) as last-resort fallback, NVIDIA optional, OpenRouter disabled by default, strict JSON validation, usage logging, and rule-based fallback.
 - Bank statement PDFs are read by column position (`services/pdfStatement.ts`): each amount is taken from the Withdrawal, Deposit or Balance column it sits under, and every row is proved against the bank's printed running balance (previous balance + deposit − withdrawal = balance), plus the printed opening/closing balance and row numbers when present. The bank is identified from the IFSC printed in the header (`services/bankDirectory.ts`). Password-protected PDFs are detected in the browser and the password is asked for before upload; it is used only to open the file.
 - Scanned statements, photos, and statements the table reader cannot fully prove are read a second time by Gemini, then Claude only if every Gemini model fails (locked PDFs are sent as page images). Each AI answer is scored by the same running-balance proof; a fully proved answer is used, otherwise the next model is tried. Invoice PDFs are read the same way and stay "AI extracted — pending review".
-- History (`/app/history`): every job the workspace has run, newest first, with who ran it. Search by file name, filter by job, open an item to see the saved result and download the Tally file, CSV, report or GST draft again. Backed by `GET /api/jobs/history` and `/api/jobs/history/:id`, scoped to the active client. Original uploaded files are not kept by the four jobs; only what was read from them is.
+- History (`/app/history`): the last `HISTORY_MONTHS` months (default 3) of jobs the workspace has run, newest first, with who ran it. Search by file name, filter by job, open an item to see the saved result and download the Tally file, CSV, report or GST draft again. Backed by `GET /api/jobs/history` and `/api/jobs/history/:id`, scoped to the active client. Older items are never deleted: they stay in the database, the page says how many are waiting and asks the person to email `SUPPORT_EMAIL`, and opening one directly returns 403 `outside_window` with the same message. Original uploaded files are not kept by the four jobs; only what was read from them is.
+- Privacy mode (paid plans only): a switch on every job. With it on, the upload is processed and returned and nothing is saved: no run, result, history entry, audit or AI-usage row, remembered ledger choice or stored file; the page tells the person to download before leaving. Entitlement is the signed-in account's own plan (`companies.plan`, `plan_until`), checked on every request; a request without a paid plan gets 403 `privacy_not_available` and is never quietly saved. Files that can be read without AI (Excel, CSV, text PDFs the balance proof accepts) never reach an AI service. A scan or photo needs AI, so the person is asked first, once per file, and it goes to Gemini only (never Claude) and only when `PRIVACY_AI_ALLOWED=true` confirms the key is a paid, billed Google key. Google's paid terms say it does not train on this data but may log requests briefly to prevent abuse; this is not zero data retention, and the screen says so. There is no billing integration: set a plan with `pnpm --filter @workspace/db run set-plan -- <companyId> <free|starter|growth|ca_firm|enterprise> [YYYY-MM-DD]`.
 - Database move: `pnpm --filter @workspace/db run copy-db` copies `DATABASE_URL_OLD` into an empty `DATABASE_URL_NEW` (schema, data, sequences, indexes), reading the old one only, then compares row counts and an MD5 of every table. The active database is now Neon Singapore (`aws-ap-southeast-1`); Neon has no Mumbai region.
 - Dev tool: `FV_PDF_PASSWORD=... pnpm --filter @workspace/api-server run read-statement -- <file.pdf> [--ai]` prints every row and the proof.
 - Drop-anything home page: `POST /api/jobs/detect` classifies uploaded files (bank statement, Tally export, marketplace report, invoice list or document) and opens the right job.
 - Bank → Tally XML includes create-only ledger masters (parties under Sundry Debtors/Creditors, expenses under their groups) so imports do not stop on a missing ledger. Existing ledgers are not altered.
+- Bank → Tally shows the detected bank and a local official logo when available, lets the user correct the bank, and exports reviewed transactions as CSV or a formatted Excel working copy. E-commerce GST also exports a formatted Excel working summary. These workbooks are generated on the server and are not GST portal or Tally import files.
+- Reports offers a saved-records Excel CA workbook as well as the PDF review pack. The Excel workbook includes reconciliation, unmatched transactions, invoices, review flags, ledger totals, and journal entries where those optional tables exist; each sheet has a row limit noted in the workbook summary.
 - Platform/security posture APIs for company profile, users, documents, GST records, audit logs, and security status.
 - Local Tally connector for customer-run Tally gateways. It pulls Tally Day Book XML through the Python worker, refreshes tax-audit Tally tables, creates ledger entries for reconciliation, and reruns rule-based matching.
 
@@ -168,6 +173,8 @@ pnpm --filter @workspace/db run push
 - `NVIDIA_API_KEY`, `NVIDIA_BASE_URL`, `NVIDIA_MODEL`: NVIDIA is the secondary provider using OpenAI-compatible chat completions.
 - `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `OPENROUTER_ENABLED=false`, `OPENROUTER_PRODUCTION_ONLY=true`: OpenRouter is an emergency fallback only and is disabled by default.
 - `AI_PROVIDER_ORDER=gemini,claude`, `AI_ENABLE_FALLBACKS=true`, `AI_ENABLE_STRUCTURED_OUTPUT=true`, `AI_ENABLE_LOGGING=true`, `AI_STORE_RAW_PROMPTS=false`, `AI_TIMEOUT_MS=30000`, `AI_MAX_RETRIES=1`: provider routing and safety controls.
+- `HISTORY_MONTHS` (default `3`): how many months of History people see. Nothing older is deleted. `SUPPORT_EMAIL`: the address shown for older history and for upgrades.
+- `PRIVACY_MODE_PLANS` (default `starter,growth,ca_firm,enterprise`): plans that include Privacy mode. `PRIVACY_AI_ALLOWED` (default `false`): set `true` only when `GEMINI_API_KEY` belongs to a paid, billed Google project; until then Privacy mode never sends a scan to AI.
 - `STORAGE_FORCE_PATH_STYLE`: set `true` for compatible providers that require path-style addressing.
 - `ALLOW_DEMO_SEED`: set `true` to allow `/api/demo/seed`. Leave unset for real-data workspaces.
 

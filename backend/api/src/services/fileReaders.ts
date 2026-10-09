@@ -43,6 +43,7 @@ export interface StatementRead {
 
 const LOCKED = "This PDF is password-protected. Enter the PDF password to continue.";
 const WRONG = "That password did not open the PDF. Check it and try again.";
+const AI_DOWN = "The AI reader is not available right now, so this scan could not be read. Try again in a little while, or use the bank's Excel/CSV download or a PDF from net banking.";
 
 /** Fewer failed rows wins; then more proved rows. */
 function better(a: { check: StatementCheck }, b: { check: StatementCheck }) {
@@ -61,7 +62,7 @@ export async function readBankStatementFile(
     const text = sheetToCsvText(file);
     const summary = parseBankStatement(text, fileName);
     if (summary.transactions.length === 0) {
-      return { ok: false, summary, source: "none", message: extractionFailureMessage({ textLength: 100, rowCount: 0, parser: "csv" }) ?? summary.message };
+      return { ok: false, summary, source: "none", message: summary.message };
     }
     const ordered = chronological(summary.transactions);
     // The opening balance of a sheet is derived from its first row, so it cannot prove anything.
@@ -89,10 +90,11 @@ export async function readBankStatementFile(
   //    a second, independent read by AI. Locked PDFs are sent as page images.
   //    In privacy mode a file the table reader already read never goes to AI, and a scan only
   //    goes with the person's agreement.
-  const decision = aiDecision({ privacy, allowAi: ctx.allowAi === true, aiConfigured: aiDocumentReadingAvailable(), readWithoutAi: layout != null });
+  const decision = aiDecision({ privacy, allowAi: ctx.allowAi === true, aiConfigured: aiDocumentReadingAvailable(privacy), readWithoutAi: layout != null });
   if (decision === "ask_consent") return { ok: false, summary: null, source: "none", needsAiConsent: true, message: AI_CONSENT_MESSAGE };
   if (decision === "ai_blocked") return { ok: false, summary: null, source: "none", message: AI_BLOCKED_MESSAGE };
-  if (decision === "use_ai" && aiDocumentReadingAvailable()) {
+  let aiFailed = false;
+  if (decision === "use_ai" && aiDocumentReadingAvailable(privacy)) {
     let files: Array<{ data: Buffer; mimeType: string }> = [];
     if (isPdf && ctx.password) files = (await renderPdfPages(file.buffer, ctx.password).catch(() => [])).map(data => ({ data, mimeType: "image/png" }));
     else files = [{ data: file.buffer, mimeType: mimeFor(fileName, file.mimetype) }];
@@ -105,12 +107,14 @@ export async function readBankStatementFile(
           if (!ai.read.check.verified) summary.warnings = [...summary.warnings, "AI extracted — pending review."];
           return { ok: true, summary, source: "ai", aiProvider: ai.read.provider, check: ai.read.check, message: summary.message };
         }
+      } else {
+        aiFailed = true;
       }
     }
   }
   if (layout) return { ok: true, summary: layout.summary, source: "pdf_layout", check: layout.check, message: layout.summary.message };
   // Privacy mode keeps to the in-memory readers: no temp files, no local OCR, no helper services.
-  if (privacy) return { ok: false, summary: null, source: "none", message: "No transactions could be read from this file. Try the bank's Excel or CSV download." };
+  if (privacy) return { ok: false, summary: null, source: "none", message: aiFailed ? AI_DOWN : "No transactions could be read from this file. Try the bank's Excel or CSV download." };
 
   // 3. Last resort: the older text-table and OCR pipeline.
   let ruleSummary: BankStatementSummary | null = null;
@@ -142,7 +146,9 @@ export async function readBankStatementFile(
     ok: false,
     summary: null,
     source: "none",
-    message: aiDocumentReadingAvailable()
+    message: aiFailed
+      ? AI_DOWN
+      : aiDocumentReadingAvailable()
       ? `${base} Try the bank's Excel or CSV download.`
       : `${base} Add a Claude or Gemini API key to read scanned statements, or upload the bank's Excel/CSV download.`,
   };
@@ -165,14 +171,14 @@ export async function readInvoiceFiles(
       rows.push(...parsed);
       continue;
     }
-    const decision = aiDecision({ privacy, allowAi: ctx.allowAi === true, aiConfigured: aiDocumentReadingAvailable(), readWithoutAi: false });
+    const decision = aiDecision({ privacy, allowAi: ctx.allowAi === true, aiConfigured: aiDocumentReadingAvailable(privacy), readWithoutAi: false });
     if (decision === "ask_consent") return { rows: [], aiRead: 0, failed: [], needsAiConsent: true };
     if (decision === "ai_blocked") {
       aiBlocked = true;
       failed.push(file.originalname);
       continue;
     }
-    if (!aiDocumentReadingAvailable()) {
+    if (!aiDocumentReadingAvailable(privacy)) {
       failed.push(file.originalname);
       continue;
     }

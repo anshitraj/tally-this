@@ -81,6 +81,16 @@ test("a row that breaks the running balance is caught", async () => {
   assert.ok(read.summary!.transactions[1].confidence < 0.9);
 });
 
+test("a bank mentioned in a payment is not mistaken for the statement bank", async () => {
+  const lines = kotakLines().filter(line => line.y !== 40 && line.y !== 75);
+  lines[0] = { y: 40, cells: [{ text: "Account Statement", x: 40 }] };
+  const payment = lines.find(line => line.y === 170);
+  if (payment) payment.cells[2] = { text: "UPI to HDFC Bank customer", x: 125 };
+  const read = await readStatementPdf(await makePdf(lines), { fileName: "statement.pdf" });
+  assert.equal(read.status, "ok");
+  assert.equal(read.summary?.bankName, null);
+});
+
 test("newest-first statements with both columns printed and character-wrapped narration", async () => {
   const lines: Line[] = [
     { y: 40, cells: [{ text: "Account Statement", x: 40 }] },

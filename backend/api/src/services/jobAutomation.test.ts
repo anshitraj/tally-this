@@ -9,6 +9,11 @@ import { buildGstDraftJson, mergeEcommercePacks, normalizeMarketplaceCsv } from 
 import { detectFileKind, detectMarketplace } from "./fileDetect";
 import { compareInvoicesWithBank, parseInvoiceCsv } from "./invoiceVerify";
 import { recognizeStatement } from "./statementOcr";
+import { detectBankFromStatement } from "./bankDirectory";
+import { buildBankToTallyWorkbook } from "./bankToTallyWorkbook";
+import { buildEcommerceWorkbook } from "./ecommerceWorkbook";
+import ExcelJS from "exceljs";
+import { aiDecision, historyCutoff, historyMonths, outsideWindowMessage, planIsActive, privacyAvailable, truthy } from "./privacyPolicy";
 
 function repoFile(name: string) {
   let dir = process.cwd();
@@ -35,6 +40,76 @@ test("bank statement keeps debit and credit values", () => {
   assert.match(summary.message, /Parsed successfully/);
 });
 
+test("bank detection prefers the account IFSC and understands short bank names", () => {
+  assert.equal(detectBankFromStatement("ICICI Bank\nBranch IFSC Code: ICIC0000123\nTransfer to HDFC Bank")?.name, "ICICI Bank");
+  assert.equal(detectBankFromStatement("Bank Name: KOTAK\nAccount Statement")?.name, "Kotak Mahindra Bank");
+  assert.equal(detectBankFromStatement("", "ICICI_Statement_May.pdf")?.name, "ICICI Bank");
+  assert.equal(detectBankFromStatement("IFSC: SMCB0001015\nAccount statement")?.name, "Shivalik Small Finance Bank");
+  assert.equal(detectBankFromStatement("Unity Small Finance Bank\nAccount statement")?.name, "Unity Small Finance Bank");
+  assert.equal(detectBankFromStatement("Account Statement", "statement.pdf"), null);
+});
+
+test("a dated bank row with an unreadable amount stops an incomplete export", () => {
+  const summary = parseBankStatement([
+    "Bank Name: HDFC Bank",
+    "Date,Narration,Debit,Credit,Balance",
+    "01/05/2026,UPI/ACME,500.00,,1000.00",
+    "02/05/2026,NEFT/PAYROLL,unreadable,,1500.00",
+  ].join("\n"), "statement.csv");
+  assert.equal(summary.status, "failed");
+  assert.equal(summary.transactions.length, 0);
+  assert.match(summary.message, /1 dated row has no readable/);
+});
+
+test("an impossible transaction date stops the statement export", () => {
+  const summary = parseBankStatement([
+    "Date,Narration,Debit,Credit,Balance",
+    "01/05/2026,UPI/ACME,500.00,,1000.00",
+    "31/02/2026,NEFT/PAYROLL,,100.00,1100.00",
+  ].join("\n"), "statement.csv");
+  assert.equal(summary.status, "failed");
+  assert.equal(summary.transactions.length, 0);
+  assert.match(summary.message, /invalid date/);
+});
+
+test("Excel working copy keeps reviewed ledger choices and separates left-out rows", async () => {
+  const source = parseBankStatement(bankCsv, "statement.csv").transactions.slice(0, 2);
+  const workbook = buildBankToTallyWorkbook({
+    clientName: "Example Client",
+    bankName: "HDFC Bank",
+    accountNumberMasked: "1234",
+    periodLabel: "May 2026",
+    rows: source.map((txn, index) => ({
+      rowNumber: txn.rowNumber,
+      date: txn.date,
+      narration: txn.narration,
+      reference: txn.reference,
+      debit: txn.debit,
+      credit: txn.credit,
+      balance: txn.balance,
+      counterparty: txn.counterparty,
+      ledgerChoice: index === 0 ? "Office Expenses" : "Suspense",
+      needsReview: index === 0,
+      reviewed: index === 0,
+      edited: false,
+      excluded: index === 1,
+    })),
+  });
+  const loaded = new ExcelJS.Workbook();
+  await loaded.xlsx.load(await workbook.xlsx.writeBuffer());
+  assert.equal(loaded.getWorksheet("Summary")?.getCell("B4").value, "HDFC Bank");
+  assert.equal(loaded.getWorksheet("Summary")?.getCell("B7").value, 1);
+  assert.equal(loaded.getWorksheet("Transactions")?.getCell("G2").value, "Office Expenses");
+  assert.equal(loaded.getWorksheet("Transactions")?.getCell("H2").value, "Checked");
+  assert.equal(loaded.getWorksheet("Transactions")?.getCell("D2").value, source[0].debit);
+  assert.equal(loaded.getWorksheet("Left out")?.getCell("G2").value, "Suspense");
+  const partyCopy = buildBankToTallyWorkbook({
+    clientName: "Example Client", bankName: "HDFC Bank", accountNumberMasked: null, periodLabel: null,
+    rows: [{ rowNumber: 1, date: "2026-05-01", narration: "UPI/ACME SUPPLIES", reference: null, debit: 500, credit: null, balance: null, counterparty: "ACME SUPPLIES", ledgerChoice: "Sundry Creditors", needsReview: false, reviewed: false, edited: false, excluded: false }],
+  });
+  assert.equal(partyCopy.getWorksheet("Transactions")?.getCell("G2").value, "Acme Supplies");
+});
+
 test("tally xml balances and rejects empty input", () => {
   const summary = parseBankStatement(bankCsv, "statement.csv");
   const built = buildTallyVoucherXml({
@@ -49,6 +124,9 @@ test("tally xml balances and rejects empty input", () => {
   const empty = buildTallyVoucherXml({ companyName: "NovaStack Labs Pvt Ltd", bankLedger: "HDFC Bank", transactions: [] });
   assert.equal(empty.ok, false);
   assert.equal(empty.xml, undefined);
+  const invalidDate = buildTallyVoucherXml({ companyName: "NovaStack Labs Pvt Ltd", bankLedger: "HDFC Bank", transactions: [{ ...summary.transactions[0], date: "2026-02-31" }] });
+  assert.equal(invalidDate.ok, false);
+  assert.match(invalidDate.errors.join(" "), /date/);
 });
 
 test("bank and tally comparison stays on the uploaded rows", () => {
@@ -81,6 +159,17 @@ test("amazon sales become a draft gst json", () => {
   const gst = buildGstDraftJson(pack);
   assert.equal(gst.ok, true);
   if (gst.ok) assert.equal(gst.json.schema, "finverify.gstr1.draft.v1");
+});
+
+test("marketplace Excel summary keeps numeric sales and uploaded TCS by state", async () => {
+  const pack = normalizeMarketplaceCsv(amazonCsv, "amazon", "amazon_sales_may_2026.csv");
+  const workbook = buildEcommerceWorkbook({ clientName: "Example Client", sales: pack.sales });
+  const loaded = new ExcelJS.Workbook();
+  await loaded.xlsx.load(await workbook.xlsx.writeBuffer());
+  assert.equal(loaded.getWorksheet("Summary")?.getCell("B4").value, pack.sales.length);
+  assert.equal(loaded.getWorksheet("Summary")?.getCell("B11").value, Math.round(pack.sales.reduce((total, sale) => total + sale.tcsAmount, 0) * 100) / 100);
+  assert.equal(loaded.getWorksheet("Sales")?.getCell("I2").value, pack.sales[0].taxableValue);
+  assert.ok((loaded.getWorksheet("TCS by state")?.rowCount ?? 0) > 1);
 });
 
 test("invoice register suggests a payment match", () => {
@@ -340,4 +429,41 @@ test("names the bank cut short are treated as one party", () => {
   const rows = ["Brijesh Brij", "Brijesh Brije", "Vodafone Ide", "VODAFONE IDEA LIMITE", "Google", "Google India Se"].map(row);
   unifyParties(rows);
   assert.deepEqual(rows.map(item => item.counterparty), ["Brijesh Brije", "Brijesh Brije", "VODAFONE IDEA LIMITE", "VODAFONE IDEA LIMITE", "Google", "Google India Se"]);
+});
+
+test("privacy mode needs a paid, active plan", () => {
+  const now = new Date("2026-10-09T00:00:00Z");
+  assert.equal(privacyAvailable({ plan: "free", until: null }, {}, now), false);
+  assert.equal(privacyAvailable({ plan: "growth", until: null }, {}, now), true);
+  assert.equal(privacyAvailable({ plan: "Growth", until: new Date("2027-01-01") }, {}, now), true);
+  assert.equal(privacyAvailable({ plan: "growth", until: new Date("2026-10-01") }, {}, now), false, "a lapsed plan no longer counts");
+  assert.equal(planIsActive({ plan: "enterprise", until: null }, now), true);
+  assert.equal(privacyAvailable({ plan: "starter", until: null }, { PRIVACY_MODE_PLANS: "growth,ca_firm" }, now), false, "the operator can limit it to higher plans");
+  assert.equal(privacyAvailable({ plan: "unknown_plan", until: null }, {}, now), false);
+});
+
+test("privacy flags are read from forms and JSON alike", () => {
+  for (const yes of ["1", "true", "TRUE", true, 1]) assert.equal(truthy(yes), true, String(yes));
+  for (const no of ["0", "false", "", undefined, null, false, "no"]) assert.equal(truthy(no), false, String(no));
+});
+
+test("in privacy mode a file read without AI never goes to AI, and a scan only with consent", () => {
+  const base = { aiConfigured: true, confirmed: true };
+  assert.equal(aiDecision({ ...base, privacy: false, allowAi: false, readWithoutAi: false }), "use_ai", "normal mode is unchanged");
+  assert.equal(aiDecision({ ...base, privacy: true, allowAi: true, readWithoutAi: true }), "no_ai_needed", "even with consent a readable file stays off AI");
+  assert.equal(aiDecision({ ...base, privacy: true, allowAi: false, readWithoutAi: false }), "ask_consent");
+  assert.equal(aiDecision({ ...base, privacy: true, allowAi: true, readWithoutAi: false }), "use_ai");
+  assert.equal(aiDecision({ ...base, privacy: true, allowAi: true, readWithoutAi: false, confirmed: false }), "ai_blocked", "AI keys not confirmed as paid-tier");
+  assert.equal(aiDecision({ aiConfigured: false, confirmed: true, privacy: true, allowAi: true, readWithoutAi: false }), "ai_blocked");
+});
+
+test("history shows the last three months by default and the message says how to get older items", () => {
+  assert.equal(historyMonths({}), 3);
+  assert.equal(historyMonths({ HISTORY_MONTHS: "6" }), 6);
+  assert.equal(historyMonths({ HISTORY_MONTHS: "0" }), 3);
+  assert.equal(historyMonths({ HISTORY_MONTHS: "abc" }), 3);
+  const cutoff = historyCutoff(3, new Date("2026-10-09T10:00:00Z"));
+  assert.equal(cutoff.toISOString().slice(0, 10), "2026-07-09");
+  assert.match(outsideWindowMessage(3, "help@example.com"), /older than 3 months.*email us at help@example\.com/);
+  assert.match(outsideWindowMessage(3, ""), /contact us/);
 });

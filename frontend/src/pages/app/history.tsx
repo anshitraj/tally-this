@@ -16,6 +16,7 @@ import {
   useClients,
   type StatementCheck,
 } from "@/components/jobs/jobUi";
+import { upgradeMailto, usePrivacy } from "@/lib/privacy";
 import { cn } from "@/lib/utils";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -61,7 +62,7 @@ const FILTERS = [
   { value: "bank_tally_reconciliation", label: "Bank ↔ Tally" },
   { value: "ecommerce_gst", label: "E-commerce GST" },
   { value: "bank_invoice_reconciliation", label: "Invoice ↔ Bank" },
-  { value: "other", label: "Older work" },
+  { value: "other", label: "Other" },
 ] as const;
 
 function kindOf(type: string) {
@@ -138,6 +139,9 @@ export default function HistoryPage() {
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // Only the first page of a load knows how many older items are waiting.
+  const [older, setOlder] = useState({ count: 0, months: 3, email: "" });
+  const privacy = usePrivacy();
   const request = useRef(0);
 
   useEffect(() => {
@@ -159,6 +163,7 @@ export default function HistoryPage() {
       if (!response.ok || !data?.ok) throw new Error(data?.message || "History could not be loaded. Please try again in a moment.");
       setRows(current => (offset === 0 ? data.runs : [...current, ...data.runs]));
       setHasMore(Boolean(data.hasMore));
+      if (offset === 0) setOlder({ count: Number(data.olderCount) || 0, months: Number(data.windowMonths) || 3, email: String(data.supportEmail || "") });
     } catch (err) {
       if (id === request.current) setError(err instanceof Error ? err.message : "History could not be loaded. Please try again in a moment.");
     } finally {
@@ -181,7 +186,7 @@ export default function HistoryPage() {
     <div className="fv-standard-page">
       <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">History</h1>
       <p className="mt-1.5 text-sm text-muted-foreground sm:text-base">
-        Everything you have run{active ? <> for <span className="font-medium text-foreground">{active.name}</span></> : ""}. Open any item to see the result and download it again.
+        Your last {older.months} months of work{active ? <> for <span className="font-medium text-foreground">{active.name}</span></> : ""}. Open any item to see the result and download it again.
       </p>
 
       <div className="relative mt-5">
@@ -230,6 +235,15 @@ export default function HistoryPage() {
         {!loading && hasMore && (
           <button type="button" className="fv-button-secondary w-full" onClick={() => void load(rows.length)}>Show more</button>
         )}
+        {!loading && !error && older.count > 0 && !hasMore && (
+          <p className="rounded-xl border border-dashed border-border px-4 py-3 text-center text-sm text-muted-foreground">
+            Showing the last {older.months} months. {older.count} older {older.count === 1 ? "item is" : "items are"} kept safely.{" "}
+            <a className="font-semibold text-[var(--fv-accent-dark)] hover:underline" href={upgradeMailto("Older history")}>Email {older.email || privacy.supportEmail}</a> and we will send {older.count === 1 ? "it" : "them"} to you.
+          </p>
+        )}
+        {!loading && !error && (
+          <p className="text-center text-xs text-muted-foreground">Work done in Privacy mode is never saved, so it does not appear here.</p>
+        )}
       </div>
     </div>
   );
@@ -263,18 +277,22 @@ export function HistoryDetailPage() {
   const id = params?.id ?? "";
   const [detail, setDetail] = useState<Detail | null>(null);
   const [error, setError] = useState("");
+  const [tooOld, setTooOld] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError("");
+    setTooOld(false);
     fetch(`${BASE}/api/jobs/history/${encodeURIComponent(id)}`)
       .then(response => response.json().catch(() => ({})).then(data => ({ ok: response.ok && data.ok, data })))
       .then(({ ok, data }) => {
         if (cancelled) return;
-        if (!ok) setError(data.message || "This item could not be opened.");
-        else setDetail(data);
+        if (!ok) {
+          setError(data.message || "This item could not be opened.");
+          setTooOld(data.code === "outside_window");
+        } else setDetail(data);
       })
       .catch(() => { if (!cancelled) setError("Could not reach TallyThis."); })
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -289,7 +307,12 @@ export function HistoryDetailPage() {
         <ArrowLeft className="h-4 w-4" />History
       </button>
       {loading && <p className="text-sm text-muted-foreground">Loading…</p>}
-      {error && <Notice tone="error">{error}</Notice>}
+      {error && (
+        <Notice tone={tooOld ? "info" : "error"}>
+          {error}
+          {tooOld && <div className="mt-3"><a className="fv-button-secondary inline-flex h-9" href={upgradeMailto("Older history item")}>Email us about this item</a></div>}
+        </Notice>
+      )}
       {detail && (
         <>
           <div className="mb-5">

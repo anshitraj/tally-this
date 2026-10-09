@@ -508,7 +508,9 @@ function interpret(rows: Row[], allText: string, fileName: string): Omit<PdfStat
   const check = checkRunningBalance(transactions, opening, { printedClosing, serialComplete });
   const { failed, closingMatches } = check;
 
-  const detection = detectBankFromStatement(headerText, fileName) ?? detectBankFromStatement(allText, fileName);
+  // Transaction narrations often contain another bank's name or IFSC. Only the
+  // account header and the uploaded file name can identify the statement bank.
+  const detection = detectBankFromStatement(headerText, fileName);
   const accountNumberMasked = accountNumber(headerText);
   transactions.forEach(txn => {
     txn.bankName = detection?.name ?? null;

@@ -22,6 +22,9 @@ import { privacyGate, type PrivacyGate } from "../services/privacy";
 import { AI_BLOCKED_MESSAGE, AI_CONSENT_MESSAGE, historyCutoff, historyMonths, outsideWindowMessage } from "../services/privacyPolicy";
 import { aiLedgerPicks, groupLedgers } from "../services/ledgerSuggest";
 import { supportEmail } from "../lib/brand";
+import { BANK_NAMES } from "../services/bankDirectory";
+import { bankWorkbookSchema, buildBankToTallyWorkbook } from "../services/bankToTallyWorkbook";
+import { ecommerceWorkbookSchema, buildEcommerceWorkbook } from "../services/ecommerceWorkbook";
 
 const router: IRouter = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 20 } });
@@ -196,6 +199,7 @@ router.post("/jobs/bank-statement/normalize", requirePermission("uploads.create"
     source: bank.source,
     check: bank.check ?? null,
     reviewCount: reviewCount(summary.transactions),
+    bankOptions: BANK_NAMES,
     ledgerGroups,
     ledgerOptions: LEDGER_OPTIONS,
     progress: { runId, status: "completed", progressPercent: 100, currentStep: "Ready", steps: ["Upload", "Read", "Check", "Ready"] },
@@ -236,6 +240,28 @@ router.post("/jobs/bank-to-tally/xml", requirePermission("uploads.create"), asyn
   }
   if (!gate.privacy) await auditAction(req, "job.tally_xml_generated", "workflow_run", null, { runId, voucherCount: result.voucherCount, companyId });
   res.json({ ok: true, xml: result.xml, fileName: result.fileName, voucherCount: result.voucherCount, message: `Tally file is ready. ${result.voucherCount} vouchers checked and balanced.` });
+});
+
+router.post("/jobs/bank-to-tally/excel", requirePermission("uploads.create"), async (req, res): Promise<void> => {
+  const companyId = await resolveBooksCompanyId(req, res);
+  if (companyId == null) return;
+  const gate = await privacyGate(req, res);
+  if (!gate) return;
+  const parsed = bankWorkbookSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(422).json({ ok: false, message: "The Excel file could not be created. Review the transactions and try again." });
+    return;
+  }
+  try {
+    const workbook = buildBankToTallyWorkbook(parsed.data);
+    const bytes = await workbook.xlsx.writeBuffer();
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", 'attachment; filename="TallyThis_Bank_Transactions.xlsx"');
+    res.send(Buffer.from(bytes));
+    if (!gate.privacy) void auditAction(req, "job.bank_excel_generated", "workflow_run", null, { companyId, rows: parsed.data.rows.length });
+  } catch {
+    res.status(500).json({ ok: false, message: "The Excel file could not be created. Try again." });
+  }
 });
 
 // AI ledger picks for parties the rules could not place. Called by the page after results show.
@@ -600,6 +626,28 @@ router.post("/jobs/ecommerce/gst-json", requirePermission("reports.export"), asy
 router.post("/jobs/ecommerce/csv", requirePermission("reports.export"), async (req, res): Promise<void> => {
   const sales = Array.isArray(req.body?.sales) ? req.body.sales : [];
   res.json({ ok: true, csv: salesToCsv(sales), message: "Accounting summary CSV is ready." });
+});
+
+router.post("/jobs/ecommerce/excel", requirePermission("reports.export"), async (req, res): Promise<void> => {
+  const companyId = await resolveBooksCompanyId(req, res);
+  if (companyId == null) return;
+  const gate = await privacyGate(req, res);
+  if (!gate) return;
+  const parsed = ecommerceWorkbookSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(422).json({ ok: false, message: "The Excel summary could not be created. Check the marketplace data and try again." });
+    return;
+  }
+  try {
+    const workbook = buildEcommerceWorkbook(parsed.data);
+    const bytes = await workbook.xlsx.writeBuffer();
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", 'attachment; filename="TallyThis_Ecommerce_Summary.xlsx"');
+    res.send(Buffer.from(bytes));
+    if (!gate.privacy) void auditAction(req, "job.ecommerce_excel_generated", "workflow_run", null, { companyId, rows: parsed.data.sales.length });
+  } catch {
+    res.status(500).json({ ok: false, message: "The Excel summary could not be created. Try again." });
+  }
 });
 
 // ── Invoice ↔ Bank ─────────────────────────────────────────────────────────

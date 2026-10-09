@@ -44,48 +44,56 @@ function currencyFormat(cell: ExcelJS.Cell) {
   cell.numFmt = "₹#,##0.00";
 }
 
+function numeric(value: unknown) {
+  if (value == null || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 router.post("/reports/excel-export", requirePermission("reports.read"), async (req, res): Promise<void> => {
   const companyId = getCompanyId(req);
-  const period = typeof req.body?.period === "string" ? req.body.period : new Date().toISOString().slice(0, 7);
+  const exportedOn = new Date().toISOString().slice(0, 10);
 
   try {
     // ── Fetch data ───────────────────────────────────────────────────────────
     const [reconRes, txnRes, invRes, riskRes, tbRes, jeRes, companyRes] = await Promise.all([
       db.execute(sql`
-        SELECT r.id, r.match_type, r.confidence_score, r.status, r.matched_at,
-               t.description AS txn_desc, t.amount AS txn_amount, t.date AS txn_date,
+        SELECT r.id, r.match_type, r.confidence_score, r.status, r.created_at AS matched_at,
+               t.narration AS txn_desc, t.amount AS txn_amount, t.date AS txn_date,
                t.reference AS txn_ref,
-               i.invoice_number, i.amount AS inv_amount, i.vendor
+               i.invoice_number, i.amount AS inv_amount, i.vendor_name AS vendor
         FROM reconciliation_matches r
-        LEFT JOIN bank_transactions t ON t.id = r.transaction_id
+        LEFT JOIN bank_transactions t ON t.id = r.bank_transaction_id
         LEFT JOIN invoices i ON i.id = r.invoice_id
         WHERE r.company_id = ${companyId}
-        ORDER BY r.matched_at DESC LIMIT 2000`),
+        ORDER BY r.created_at DESC LIMIT 2000`),
       db.execute(sql`
-        SELECT id, date, description, amount, type, reference, status
+        SELECT id, date, narration AS description, amount, type, reference, status
         FROM bank_transactions WHERE company_id = ${companyId}
-          AND id NOT IN (SELECT transaction_id FROM reconciliation_matches WHERE company_id = ${companyId})
+          AND NOT EXISTS (SELECT 1 FROM reconciliation_matches r WHERE r.company_id = ${companyId} AND r.bank_transaction_id = bank_transactions.id)
         ORDER BY date DESC LIMIT 1000`),
       db.execute(sql`
-        SELECT id, invoice_number, vendor, amount, gst_amount, status, invoice_date, due_date, type
+        SELECT id, invoice_number, vendor_name AS vendor, amount, gst_amount, status, date AS invoice_date, NULL::text AS due_date, type
         FROM invoices WHERE company_id = ${companyId}
-        ORDER BY invoice_date DESC LIMIT 2000`),
+        ORDER BY date DESC LIMIT 2000`),
       db.execute(sql`
         SELECT id, title, entity_type, severity, status, description
         FROM ca_review_items WHERE company_id = ${companyId}
         ORDER BY severity DESC, created_at DESC LIMIT 500`),
       db.execute(sql`
-        SELECT account_code, account_name, account_type, debit_total, credit_total,
-               debit_total - credit_total AS balance
-        FROM trial_balance_view WHERE company_id = ${companyId}
-        ORDER BY account_code LIMIT 500`),
+        SELECT NULL::text AS account_code, ledger_name AS account_name, NULL::text AS account_type,
+               SUM(CASE WHEN LOWER(debit_credit) = 'debit' THEN amount ELSE 0 END) AS debit_total,
+               SUM(CASE WHEN LOWER(debit_credit) = 'credit' THEN amount ELSE 0 END) AS credit_total,
+               SUM(CASE WHEN LOWER(debit_credit) = 'debit' THEN amount ELSE -amount END) AS balance
+        FROM ledger_entries WHERE company_id = ${companyId}
+        GROUP BY ledger_name ORDER BY ledger_name LIMIT 500`),
       db.execute(sql`
-        SELECT je.id, je.entry_date, je.description, je.reference, je.status,
+        SELECT je.id, je.entry_date, je.narration AS description, je.voucher_no AS reference, je.status,
                jl.account_name, jl.debit, jl.credit
         FROM journal_entries je
-        JOIN journal_lines jl ON jl.journal_entry_id = je.id
+        JOIN journal_entry_lines jl ON jl.journal_id = je.id
         WHERE je.company_id = ${companyId}
-        ORDER BY je.entry_date DESC, je.id LIMIT 2000`),
+        ORDER BY je.entry_date DESC, je.id LIMIT 2000`).catch(() => ({ rows: [], unavailable: true })),
       db.execute(sql`SELECT name FROM companies WHERE id = ${companyId} LIMIT 1`),
     ]);
 
@@ -99,7 +107,7 @@ router.post("/reports/excel-export", requirePermission("reports.read"), async (r
 
     // ─── Sheet 1: Summary ────────────────────────────────────────────────────
     const summary = wb.addWorksheet("Summary");
-    summary.columns = [{ width: 35 }, { width: 35 }];
+    summary.columns = [{ width: 35 }, { width: 62 }];
     const titleRow = summary.addRow(["TallyThis — CA Pack", ""]);
     titleRow.font = { bold: true, size: 14, color: { argb: BRAND_COLOR } };
     titleRow.height = 28;
@@ -107,13 +115,13 @@ router.post("/reports/excel-export", requirePermission("reports.read"), async (r
     summary.addRow([]);
     const infoRows = [
       ["Company", company],
-      ["Period", period],
+      ["Coverage", "Newest saved records, all dates; row limits apply"],
       ["Generated on", new Date().toLocaleString("en-IN")],
       ["Reconciliation matches", reconRes.rows.length],
       ["Unmatched transactions", txnRes.rows.length],
       ["Invoices", invRes.rows.length],
       ["Risk flags", riskRes.rows.length],
-      ["Journal entries", new Set((jeRes.rows as { id: number }[]).map(r => r.id)).size],
+      ["Journal entries", "unavailable" in jeRes ? "Unavailable in this workspace" : new Set((jeRes.rows as { id: number }[]).map(r => r.id)).size],
     ];
     infoRows.forEach(([label, value], i) => {
       const r = summary.addRow([label, value]);
@@ -138,9 +146,9 @@ router.post("/reports/excel-export", requirePermission("reports.read"), async (r
     styleHeaderRow(reconWs.getRow(1), 10);
     (reconRes.rows as Record<string, unknown>[]).forEach((r, i) => {
       const row = reconWs.addRow([
-        r.match_type, r.confidence_score, r.status,
-        r.txn_date, r.txn_desc, r.txn_amount, r.txn_ref,
-        r.invoice_number, r.inv_amount, r.vendor,
+        r.match_type, numeric(r.confidence_score), r.status,
+        r.txn_date, r.txn_desc, numeric(r.txn_amount), r.txn_ref,
+        r.invoice_number, numeric(r.inv_amount), r.vendor,
       ]);
       alternateRow(row, i);
       currencyFormat(row.getCell(6));
@@ -159,7 +167,7 @@ router.post("/reports/excel-export", requirePermission("reports.read"), async (r
     ];
     styleHeaderRow(unmatchedWs.getRow(1), 6);
     (txnRes.rows as Record<string, unknown>[]).forEach((r, i) => {
-      const row = unmatchedWs.addRow([r.date, r.description, r.amount, r.type, r.reference, r.status]);
+      const row = unmatchedWs.addRow([r.date, r.description, numeric(r.amount), r.type, r.reference, r.status]);
       alternateRow(row, i);
       currencyFormat(row.getCell(3));
     });
@@ -178,7 +186,7 @@ router.post("/reports/excel-export", requirePermission("reports.read"), async (r
     ];
     styleHeaderRow(invWs.getRow(1), 8);
     (invRes.rows as Record<string, unknown>[]).forEach((r, i) => {
-      const row = invWs.addRow([r.invoice_number, r.vendor, r.amount, r.gst_amount, r.type, r.invoice_date, r.due_date, r.status]);
+      const row = invWs.addRow([r.invoice_number, r.vendor, numeric(r.amount), numeric(r.gst_amount), r.type, r.invoice_date, r.due_date, r.status]);
       alternateRow(row, i);
       currencyFormat(row.getCell(3));
       currencyFormat(row.getCell(4));
@@ -202,7 +210,7 @@ router.post("/reports/excel-export", requirePermission("reports.read"), async (r
     });
 
     // ─── Sheet 6: Trial Balance ───────────────────────────────────────────────
-    const tbWs = wb.addWorksheet("Trial Balance");
+    const tbWs = wb.addWorksheet("Ledger Totals");
     tbWs.columns = [
       { header: "Account Code", width: 16 },
       { header: "Account Name", width: 32 },
@@ -213,7 +221,7 @@ router.post("/reports/excel-export", requirePermission("reports.read"), async (r
     ];
     styleHeaderRow(tbWs.getRow(1), 6);
     (tbRes.rows as Record<string, unknown>[]).forEach((r, i) => {
-      const row = tbWs.addRow([r.account_code, r.account_name, r.account_type, r.debit_total, r.credit_total, r.balance]);
+      const row = tbWs.addRow([r.account_code, r.account_name, r.account_type, numeric(r.debit_total), numeric(r.credit_total), numeric(r.balance)]);
       alternateRow(row, i);
       currencyFormat(row.getCell(4));
       currencyFormat(row.getCell(5));
@@ -233,15 +241,16 @@ router.post("/reports/excel-export", requirePermission("reports.read"), async (r
       { header: "Credit (₹)", width: 16 },
     ];
     styleHeaderRow(jeWs.getRow(1), 8);
+    if ("unavailable" in jeRes) jeWs.addRow(["Journal entries are unavailable in this workspace."]);
     (jeRes.rows as Record<string, unknown>[]).forEach((r, i) => {
-      const row = jeWs.addRow([r.id, r.entry_date, r.description, r.reference, r.status, r.account_name, r.debit, r.credit]);
+      const row = jeWs.addRow([r.id, r.entry_date, r.description, r.reference, r.status, r.account_name, numeric(r.debit), numeric(r.credit)]);
       alternateRow(row, i);
       currencyFormat(row.getCell(7));
       currencyFormat(row.getCell(8));
     });
 
     // ── Stream response ───────────────────────────────────────────────────────
-    const filename = `TallyThis_CA_Pack_${company.replace(/\s+/g, "_")}_${period}.xlsx`;
+    const filename = `TallyThis_CA_Pack_${company.replace(/[^a-z0-9_-]+/gi, "_")}_${exportedOn}.xlsx`;
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     await wb.xlsx.write(res);
@@ -249,7 +258,7 @@ router.post("/reports/excel-export", requirePermission("reports.read"), async (r
   } catch (err) {
     logger.error({ err }, "Excel export failed");
     if (!res.headersSent) {
-      res.status(500).json({ error: "Excel export failed", detail: err instanceof Error ? err.message : "" });
+      res.status(500).json({ error: "Excel export failed" });
     }
   }
 });

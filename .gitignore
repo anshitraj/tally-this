@@ -40,6 +40,7 @@ node_modules
 /.sass-cache
 /connect.lock
 /coverage
+/frontend/test-results/
 /libpeerconnection.log
 npm-debug.log
 yarn-error.log
