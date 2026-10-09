@@ -33,6 +33,10 @@ node_modules
 /.env.local
 /.env.production
 !/.env.example
+**/.env
+**/.env.*
+!**/.env.example
+**/uploads/
 /.sass-cache
 /connect.lock
 /coverage
@@ -63,6 +67,8 @@ __pycache__/
 # Go build output
 services/api-go/*.exe
 services/api-go/*.exe~
+backend/gateway/*.exe
+backend/gateway/*.exe~
 *.test
 
 # Runtime logs

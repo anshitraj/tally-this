@@ -3,13 +3,15 @@
 //        pm2 save && pm2 startup   (auto-start on reboot)
 //        pm2 monit                 (live dashboard)
 
+const path = require("node:path");
+
 module.exports = {
   apps: [
     {
       name: "finverify-api",
       script: "node",
       args: "--enable-source-maps dist/index.mjs",
-      cwd: "./artifacts/api-server",
+      cwd: "./backend/api",
       instances: 1,
       autorestart: true,
       watch: false,
@@ -27,9 +29,9 @@ module.exports = {
     },
     {
       name: "finverify-python",
-      script: "C:\\Users\\hiii\\AppData\\Local\\Microsoft\\WindowsApps\\python.exe",
+      script: process.env.PYTHON_BIN || "python",
       args: "-m uvicorn app.main:app --host 0.0.0.0 --port 8091",
-      cwd: "./services/python-extractor",
+      cwd: "./backend/worker",
       instances: 1,
       interpreter: "none",
       autorestart: true,
@@ -43,8 +45,8 @@ module.exports = {
     },
     {
       name: "finverify-go",
-      script: "E:\\accountant\\Asset-Manager\\services\\api-go\\api-go.exe",
-      cwd: "./services/api-go",
+      script: path.join(__dirname, "backend/gateway", process.platform === "win32" ? "api-go.exe" : "api-go"),
+      cwd: "./backend/gateway",
       instances: 1,
       interpreter: "none",
       autorestart: true,
@@ -60,7 +62,7 @@ module.exports = {
       name: "finverify-frontend",
       script: "pnpm",
       args: "--filter @workspace/finverify-os run dev",
-      cwd: "E:\\accountant\\Asset-Manager",
+      cwd: __dirname,
       instances: 1,
       interpreter: "none",
       autorestart: true,
@@ -70,6 +72,7 @@ module.exports = {
       max_restarts: 10,
       env: {
         NODE_ENV: "development",
+        PORT: "21950",
       },
       error_file: "./logs/frontend-error.log",
       out_file: "./logs/frontend-out.log",

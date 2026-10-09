@@ -36,11 +36,11 @@ Write-Host "  Python worker   -> http://localhost:$($env:PYTHON_WORKER_PORT)" -F
 Write-Host ""
 
 # ── 1. Python extraction worker ─────────────────────────────────────────────
-$PyDir = Join-Path $Root "services\extraction-worker"
+$PyDir = Join-Path $Root "backend\worker"
 Write-Host "[1/4] Python worker on :$($env:PYTHON_WORKER_PORT)..." -ForegroundColor Yellow
 Start-Process powershell -ArgumentList "-NoProfile","-Command",
-    "cd '$PyDir'; `$env:GEMINI_API_KEY='$($env:GEMINI_API_KEY)'; `$env:PYTHON_WORKER_PORT='$($env:PYTHON_WORKER_PORT)'; python -m uvicorn app.main:app --host 0.0.0.0 --port $($env:PYTHON_WORKER_PORT) 2>&1" `
-    -WindowStyle Normal
+    "cd '$PyDir'; python -m uvicorn app.main:app --host 0.0.0.0 --port $($env:PYTHON_WORKER_PORT) 2>&1" `
+    -WindowStyle Hidden
 
 Start-Sleep -Seconds 3
 
@@ -59,18 +59,18 @@ while (`$true) {
     Write-Host "[ts-watchdog] Starting TypeScript API..."
     `$env:PORT = `$Port
     `$env:PYTHON_WORKER_URL = `$PythonWorkerUrl
-    `$p = Start-Process -FilePath 'node' -ArgumentList '--enable-source-maps','./dist/index.mjs' -WorkingDirectory (Join-Path `$Root 'artifacts\api-server') -PassThru -NoNewWindow
+    `$p = Start-Process -FilePath 'node' -ArgumentList '--enable-source-maps','./dist/index.mjs' -WorkingDirectory (Join-Path `$Root 'backend\api') -PassThru -NoNewWindow
     `$p.WaitForExit()
     Write-Host "[ts-watchdog] TypeScript API exited (code `$(`$p.ExitCode)) — restarting in 2s..."
     Start-Sleep -Seconds 2
 }
 "@
-Start-Process powershell -ArgumentList "-NoProfile","-Command",$tsWatchdog -WindowStyle Normal
+Start-Process powershell -ArgumentList "-NoProfile","-Command",$tsWatchdog -WindowStyle Hidden
 
 Start-Sleep -Seconds 6
 
 # ── 3. Go gateway — with auto-restart watchdog ───────────────────────────────
-$GoDir = Join-Path $Root "services\api-go"
+$GoDir = Join-Path $Root "backend\gateway"
 $GoExe = Join-Path $GoDir "api-go.exe"
 Write-Host "[3/4] Go gateway on :$($env:GO_API_PORT) (with watchdog)..." -ForegroundColor Yellow
 
@@ -98,15 +98,15 @@ while (`$true) {
     Start-Sleep -Seconds 2
 }
 "@
-Start-Process powershell -ArgumentList "-NoProfile","-Command",$goWatchdog -WindowStyle Normal
+Start-Process powershell -ArgumentList "-NoProfile","-Command",$goWatchdog -WindowStyle Hidden
 
 Start-Sleep -Seconds 2
 
 # ── 4. React frontend ────────────────────────────────────────────────────────
 Write-Host "[4/4] React frontend on :21950..." -ForegroundColor Yellow
 Start-Process powershell -ArgumentList "-NoProfile","-Command",
-    "cd '$Root'; pnpm --filter @workspace/finverify-os run dev 2>&1" `
-    -WindowStyle Normal
+    "cd '$Root'; `$env:PORT='21950'; pnpm dev:frontend 2>&1" `
+    -WindowStyle Hidden
 
 Write-Host ""
 Write-Host "  All services starting. Open: http://localhost:21950" -ForegroundColor Green

@@ -1,111 +1,77 @@
-version: "3.9"
-
-# FinVerify OS — Docker Compose
-# Runs all services: frontend, TypeScript API fallback, Go API gateway, Python extraction worker, Postgres.
-#
-# Quick start:
-#   docker-compose up
-#
-# Or individual services:
-#   docker-compose up typescript-api python-worker go-api
-
+# Local full-stack development using the existing Neon database from .env.
+# Cloud deployment: Vercel frontend + three Railway services; see docs/DEPLOYMENT.md.
 services:
-  # ── PostgreSQL ─────────────────────────────────────────────────────────────
-  postgres:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: finverify
-      POSTGRES_PASSWORD: finverify_local
-      POSTGRES_DB: finverify
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U finverify"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-
-  # ── TypeScript API fallback ────────────────────────────────────────────────
   typescript-api:
     build:
       context: .
-      dockerfile: artifacts/api-server/Dockerfile
+      dockerfile: backend/api/Dockerfile
     restart: unless-stopped
-    ports:
-      - "8080:8080"
+    env_file: .env
     environment:
+      NODE_ENV: production
       PORT: 8080
-      DATABASE_URL: postgresql://finverify:finverify_local@postgres:5432/finverify
       PYTHON_WORKER_URL: http://python-worker:8091
-      STORAGE_PROVIDER: metadata_only
-    env_file:
-      - .env
-    depends_on:
-      postgres:
-        condition: service_healthy
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-local}
+    volumes:
+      - api_uploads:/app/uploads
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8080/api/health || exit 1"]
-      interval: 10s
-      timeout: 5s
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8080/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 10s
       retries: 5
+      start_period: 30s
 
-  # ── Python extraction worker ──────────────────────────────────────────────
   python-worker:
     build:
-      context: services/extraction-worker
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/worker/Dockerfile
     restart: unless-stopped
-    ports:
-      - "8091:8091"
+    env_file: .env
     environment:
+      PORT: 8091
       PYTHON_WORKER_PORT: 8091
-    env_file:
-      - .env
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8091/health || exit 1"]
-      interval: 10s
-      timeout: 5s
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8091/health', timeout=5)"]
+      interval: 15s
+      timeout: 10s
       retries: 5
+      start_period: 30s
 
-  # ── Go API gateway ────────────────────────────────────────────────────────
   go-api:
     build:
-      context: services/api-go
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/gateway/Dockerfile
     restart: unless-stopped
     ports:
-      - "8090:8090"
+      - "127.0.0.1:8090:8090"
+    env_file: .env
     environment:
+      PORT: 8090
       GO_API_PORT: 8090
       TYPESCRIPT_API_URL: http://typescript-api:8080
       PYTHON_WORKER_URL: http://python-worker:8091
-      DATABASE_URL: postgresql://finverify:finverify_local@postgres:5432/finverify
-    env_file:
-      - .env
     depends_on:
       typescript-api:
         condition: service_healthy
       python-worker:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8090/api/health || exit 1"]
-      interval: 10s
-      timeout: 5s
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8090/api/health || exit 1"]
+      interval: 15s
+      timeout: 15s
       retries: 5
+      start_period: 30s
 
-  # ── React/Vite frontend ───────────────────────────────────────────────────
   frontend:
     build:
-      context: artifacts/finverify-os
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: frontend/Dockerfile
     restart: unless-stopped
     ports:
-      - "5173:80"
+      - "127.0.0.1:5173:80"
     depends_on:
-      - go-api
+      go-api:
+        condition: service_healthy
 
 volumes:
-  postgres_data:
+  api_uploads:

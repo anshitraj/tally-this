@@ -33,10 +33,10 @@ Pre-CA finance verification dashboard for Indian startups — reconcile bank tra
 - `lib/db/src/schema/finverify.ts` — DB schema (9 tables)
 - `lib/api-spec/openapi.yaml` — OpenAPI spec (source of truth)
 - `lib/api-zod/src/generated/api.ts` — generated Zod schemas
-- `artifacts/api-server/src/routes/` — API route handlers
-- `artifacts/api-server/src/lib/seedData.ts` — demo seed data for NovaStack Labs
-- `artifacts/finverify-os/src/pages/` — all frontend pages
-- `artifacts/finverify-os/src/components/app/` — shared app components
+- `backend/api/src/routes/` — API route handlers
+- `backend/api/src/lib/seedData.ts` — demo seed data for NovaStack Labs
+- `frontend/src/pages/` — all frontend pages
+- `frontend/src/components/app/` — shared app components
 
 ## Architecture decisions
 

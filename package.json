@@ -3,20 +3,29 @@
   "version": "0.0.0",
   "license": "MIT",
   "scripts": {
+    "dev:frontend": "pnpm --filter @workspace/finverify-os dev",
+    "dev:api": "pnpm --filter @workspace/api-server dev",
+    "build:frontend": "pnpm --filter @workspace/finverify-os build",
+    "build:api": "pnpm --filter @workspace/api-server build",
+    "start:api": "pnpm --filter @workspace/api-server start",
+    "test:deployment": "node --test frontend/scripts/deployment.test.mjs",
     "preinstall": "node -e \"const fs=require('fs'); for (const f of ['package-lock.json','yarn.lock']) if (fs.existsSync(f)) fs.rmSync(f); if (!String(process.env.npm_config_user_agent||'').startsWith('pnpm/')) { console.error('Use pnpm instead'); process.exit(1); }\"",
     "build": "pnpm run typecheck && pnpm -r --if-present run build",
     "test:ai": "pnpm --filter @workspace/scripts run test:ai",
     "test:db": "pnpm --filter @workspace/scripts run test:db",
     "test:r2": "pnpm --filter @workspace/scripts run test:r2",
     "typecheck:libs": "tsc --build",
-    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
+    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./frontend\" --filter \"./backend/**\" --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
   },
   "private": true,
+  "packageManager": "pnpm@10.28.0",
   "devDependencies": {
-    "@esbuild/win32-x64": "^0.27.3",
-    "@rollup/rollup-win32-x64-msvc": "^4.60.4",
-    "lightningcss-win32-x64-msvc": "1.32.0",
     "prettier": "^3.8.3",
     "typescript": "~5.9.3"
+  },
+  "optionalDependencies": {
+    "@esbuild/win32-x64": "^0.27.3",
+    "@rollup/rollup-win32-x64-msvc": "^4.60.4",
+    "lightningcss-win32-x64-msvc": "1.32.0"
   }
 }

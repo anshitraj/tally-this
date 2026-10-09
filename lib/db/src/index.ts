@@ -30,8 +30,8 @@ export const db = drizzle(sql, { schema });
 
 // ── Backward-compat shim ──────────────────────────────────────────────────
 // `pool` was exported by the old pg-based driver and is referenced in:
-//   - artifacts/api-server/src/index.ts  (keep-alive pinger — no longer needed)
-//   - artifacts/api-server/src/server/db/index.ts (re-export)
+//   - backend/api/src/index.ts  (keep-alive pinger — no longer needed)
+//   - backend/api/src/server/db/index.ts (re-export)
 // We export a minimal shim so no other file needs to change.
 // The keep-alive pinger in index.ts is safe to leave; the shim's connect()
 // does a real lightweight query and returns a release-able object.

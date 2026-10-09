@@ -1,7 +1,7 @@
 # FinVerify OS UI/UX Redesign Plan
 
 ## Audit Summary
-The app is a working pnpm monorepo. The product frontend lives in `artifacts/finverify-os` and already has React, TypeScript, Vite, Tailwind, shadcn-style primitives, Recharts, Framer Motion, Lucide icons, Wouter routes, and API-backed pages. The API and demo logic live in `artifacts/api-server`, including upload parsing, seeded finance records, matching, risks, reports, and platform data.
+The app is a working pnpm monorepo. The product frontend lives in `frontend` and already has React, TypeScript, Vite, Tailwind, shadcn-style primitives, Recharts, Framer Motion, Lucide icons, Wouter routes, and API-backed pages. The API and demo logic live in `backend/api`, including upload parsing, seeded finance records, matching, risks, reports, and platform data.
 
 Current UI issues observed:
 - Good product coverage, but page layouts use mixed card sizes, spacing, and ad hoc badge colors.

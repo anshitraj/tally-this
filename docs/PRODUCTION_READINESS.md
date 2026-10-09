@@ -46,13 +46,18 @@ Confirmed domain + HTTPS reverse proxy
 
 Use a managed container platform or a maintained server with automatic restarts, health checks and restricted ingress. Capacity must be measured with realistic PDFs and concurrent jobs; domain purchase alone does not provide compute, storage or email. Budget separately for database, containers, storage/egress, mailbox, transactional email, monitoring and optional OCR/AI usage. A Kubernetes cluster or a large microservice expansion is unnecessary for the initial pilot.
 
-The supplied deployment files require work before using them:
+The folder/deployment revision addresses the build-context mismatch, unsupported
+Compose storage setting, missing curl probes and public internal-service ports.
+It uses `frontend/` and three `backend/` services, keeps the existing Neon database,
+packages API runtime dependencies, preserves PDFKit font assets, and includes OCR
+tools in the API image. Compose now uses installed Node/Python/wget probes and its
+frontend Nginx configuration has explicit upload/timeout limits. See
+[DEPLOYMENT.md](DEPLOYMENT.md) for Vercel and Railway settings.
 
-- Frontend Dockerfile copies repository-root files, but Compose provides only the frontend subdirectory as its build context.
-- Compose selects `STORAGE_PROVIDER=metadata_only`, which is not a supported file-storage provider in the current storage service.
-- Compose health checks call `curl`; the supplied runtime images do not explicitly install it. Use a probe available in each final image.
-- Nginx upload size and proxy timeouts need to match the chosen product limits. Its standard request limit can reject larger statements before the API receives them.
-- Compose publishes database and worker ports. A production layout must restrict them to private networks.
+Remaining deployment work:
+
+- Run actual Linux container smoke tests and verify real upload limits through the Vercel/Railway proxy. Local Docker configuration validation does not prove image execution.
+- Keep Railway API and worker private, with only the gateway public. Verify the chosen hosts' ingress configuration.
 - Development Caddy configuration serves a Vite dev server and localhost. Production must serve built files and the confirmed hostname.
 - Validate Linux native dependencies, frozen-lockfile installs, runtime toolchains, non-root execution, graceful shutdown and deploy rollback. Do not ignore build errors with `|| true`.
 

@@ -30,8 +30,8 @@
 
 | Layer | Status | Notes |
 |---|---|---|
-| **Frontend → Go** | ✅ primary | Vite dev proxy `:5173 → :8090`. Production: nginx in `artifacts/finverify-os/Dockerfile` proxies `/api/` → `http://go-api:8090` |
-| **Go gateway** | ✅ live | `services/api-go/` — `chi` router + `httputil.ReverseProxy` with cancel-error suppression |
+| **Frontend → Go** | ✅ primary | Vite dev proxy `:5173 → :8090`. Production: nginx in `frontend/Dockerfile` proxies `/api/` → `http://go-api:8090` |
+| **Go gateway** | ✅ live | `backend/gateway/` — `chi` router + `httputil.ReverseProxy` with cancel-error suppression |
 | **Python worker** | ✅ live, primary parser | TypeScript `POST /api/uploads` calls Python `/extract/{source}` first; falls back to TS in-process parser if worker unreachable |
 | **TypeScript API** | ✅ fallback only | All routes still exist (Go proxies to TS). Internally still does ingest + DB writes + AI extraction. **NOT removed.** |
 | **Postgres (Neon)** | ✅ source of truth | `workflow_runs`, `run_sources`, `run_artifacts`, `action_history` tables live |
@@ -59,7 +59,7 @@ All ~70 other routes. Frontend never knows the difference.
 server: { proxy: { "/api": "http://localhost:8090" } }
 ```
 
-Production: `artifacts/finverify-os/Dockerfile` ships nginx with:
+Production: `frontend/Dockerfile` ships nginx with:
 ```
 location /api/ { proxy_pass http://go-api:8090; }
 ```
@@ -68,15 +68,15 @@ location /api/ { proxy_pass http://go-api:8090; }
 
 ```bash
 # Python worker (port 8091)
-cd services/extraction-worker
+cd backend/worker
 python3 -m uvicorn app.main:app --port 8091
 
 # TypeScript API fallback (port 8080)
 PORT=8080 PYTHON_WORKER_URL=http://localhost:8091 \
-  node artifacts/api-server/dist/index.mjs
+  node backend/api/dist/index.mjs
 
 # Go gateway (port 8090) — frontend talks to this
-cd services/api-go
+cd backend/gateway
 GO_API_PORT=8090 \
 TYPESCRIPT_API_URL=http://localhost:8080 \
 PYTHON_WORKER_URL=http://localhost:8091 \

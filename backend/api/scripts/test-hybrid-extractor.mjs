@@ -23,7 +23,7 @@ try {
   process.exit(1);
 }
 
-const { extractHybrid } = await import("file:///E:/accountant/Asset-Manager/artifacts/api-server/src/services/pdfTableExtractor.ts");
+const { extractHybrid } = await import("file:///E:/accountant/Asset-Manager/backend/api/src/services/pdfTableExtractor.ts");
 
 const hdfcText = `HDFC BANK Ltd
 Account Statement May 2026

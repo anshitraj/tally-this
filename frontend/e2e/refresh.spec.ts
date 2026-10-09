@@ -251,7 +251,7 @@ test("reports keep specialist exports available and handle blockers", async ({
     .getByRole("button", { name: "Download CA review pack", exact: true })
     .click();
   await expect(
-    page.getByText("Review 2 open items before exporting."),
+    page.getByText("Review 2 open items before exporting.", { exact: true }),
   ).toBeVisible();
   await page.locator(".fv-report-advanced summary").click();
   await expect(
