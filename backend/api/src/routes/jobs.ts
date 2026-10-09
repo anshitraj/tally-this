@@ -677,7 +677,7 @@ router.post("/jobs/ecommerce/sales-xml", requirePermission("reports.export"), as
   const built = buildEcommerceSalesXml(req.body);
   if (!built.ok) { res.status(422).json({ ok: false, errors: built.errors, message: "Sales vouchers need review or existing Tally ledger names." }); return; }
   if (!gate.privacy) await auditAction(req, "job.ecommerce_sales_xml_generated", "workflow_run", null, { rows: built.voucherCount, companyId });
-  res.json({ ...built, message: "Sales voucher working copy ready. Import into a test Tally company and review the Sales Register and GST ledgers." });
+  res.json({ ...built, message: `Sales voucher working copy ready.${built.excludedCancelled ? ` ${built.excludedCancelled} cancelled rows were left out.` : ""} Import into a test Tally company and review the Sales Register and GST ledgers.` });
 });
 
 router.post("/jobs/ecommerce/gst-json", requirePermission("reports.export"), async (req, res): Promise<void> => {

@@ -29,6 +29,8 @@ Workflow details: [`docs/PRODUCT_WORKFLOWS.md`](docs/PRODUCT_WORKFLOWS.md). Serv
 
 Public Repotic workflow comparison and remaining gaps: [`docs/REPOTIC_COMPARISON.md`](docs/REPOTIC_COMPARISON.md).
 
+Wider competitor research and implementation priorities: [`docs/COMPETITOR_REVIEW.md`](docs/COMPETITOR_REVIEW.md). Financial correctness and evidence required before accuracy claims: [`docs/ACCURACY_STANDARD.md`](docs/ACCURACY_STANDARD.md).
+
 ## Interface and product walkthroughs
 
 The landing page and workspace share a forest green and white visual system, a custom TallyThis wordmark and T/check symbol, and responsive layouts. The main navigation shows Clients, Bank → Tally, Bank ↔ Tally, E-commerce GST, Invoice ↔ Bank, Reports and Activity. The logo opens the workspace home; History, Settings and specialist pages remain under Advanced. Reports links directly to saved job outputs, offers a CA review PDF, and keeps individual reports under More options.

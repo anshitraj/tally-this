@@ -106,7 +106,7 @@ export function comparePortalTcs(sales: MarketplaceSale[], portal: TcsRow[]) {
     const portalAmount = Math.round(totals.portal * 100) / 100;
     return { state: byCode.get(code) ?? code, code, uploaded, portal: portalAmount, difference: Math.round((uploaded - portalAmount) * 100) / 100 };
   });
-  return { ok: true as const, rows, mismatches: rows.filter(row => Math.abs(row.difference) > 0.01).length };
+  return { ok: true as const, rows, mismatches: rows.filter(row => row.difference !== 0).length };
 }
 
 export function documentSummary(sales: MarketplaceSale[]) {

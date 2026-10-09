@@ -196,6 +196,8 @@ test("uploaded portal TCS compares states and rejects unreadable summaries", () 
   const mismatch = comparePortalTcs(pack.sales, [{ state: "27", amount: 12 }]);
   if (mismatch.ok) assert.ok(mismatch.mismatches > 0);
   assert.equal(readPortalTcs("State,Value\nKarnataka,100").ok, false);
+  const paiseDifference = comparePortalTcs(pack.sales, [{ state: "29", amount: 139.99 }, { state: "27", amount: 20 }]);
+  if (paiseDifference.ok) assert.equal(paiseDifference.mismatches, 1, "one paise difference is not an exact match");
   const adjusted = pack.sales.map((sale, index) => index === 0 ? { ...sale, tcsAmount: -sale.tcsAmount } : sale);
   const signed = comparePortalTcs(adjusted, [{ state: "29", amount: 0 }, { state: "27", amount: 20 }]);
   assert.equal(signed.ok, true);
@@ -218,6 +220,65 @@ test("Sales XML needs reviewed rows and B2B ledgers, then balances tax lines", (
     const total = [...voucher.matchAll(/<AMOUNT>(-?\d+\.\d{2})<\/AMOUNT>/g)].reduce((sum, match) => sum + Number(match[1]), 0);
     assert.equal(Math.round(total * 100), 0);
   }
+});
+
+test("cancelled documents are retained in evidence and excluded from GST and Sales vouchers", async () => {
+  const source = normalizeMarketplaceCsv(amazonCsv, "amazon", "amazon.csv").sales[1];
+  const cancelled = { ...source, invoiceNumber: "CANCEL-2", sourceRow: 99, transactionType: "CANCELLED", hsn: null };
+  const reviewed = reviewMarketplaceSales([source, cancelled], "amazon");
+  assert.equal(reviewed.ok, true);
+  if (!reviewed.ok) return;
+  assert.equal(reviewed.pack.sales.length, 2);
+  assert.equal(reviewed.pack.tabs.b2c.length, 1);
+  assert.equal(reviewed.pack.summary.gross, source.grossAmount);
+  assert.equal(reviewed.pack.summary.excludedSalesRows, 1);
+  const built = buildEcommerceSalesXml({ clientName: "Example", sales: reviewed.pack.sales });
+  assert.equal(built.ok, true);
+  if (built.ok) {
+    assert.equal(built.voucherCount, 1);
+    assert.equal(built.excludedCancelled, 1);
+    assert.doesNotMatch(built.xml, /CANCEL-2/);
+  }
+  const workbook = buildEcommerceWorkbook({ clientName: "Example", sales: reviewed.pack.sales });
+  assert.equal(workbook.getWorksheet("Summary")!.getCell("B10").value, source.grossAmount);
+  assert.equal(workbook.getWorksheet("Sales")!.getCell("R3").value, "Excluded from sales totals");
+});
+
+test("returns, credit notes and negative source adjustments cannot become ordinary sales", () => {
+  const source = normalizeMarketplaceCsv(amazonCsv, "amazon", "amazon.csv").sales[1];
+  for (const type of ["RETURN", "credit_note", "refund", "adjustment"]) {
+    const review = reviewMarketplaceSales([{ ...source, transactionType: type }], "amazon");
+    if (!review.ok) throw new Error("Review rejected a valid adjustment row");
+    assert.equal(review.pack.tabs.b2c.length, 0, type);
+    assert.equal(review.pack.summary.gross, 0, type);
+    assert.ok(review.pack.sales[0].issues.length, type);
+    assert.equal(buildEcommerceSalesXml({ clientName: "Example", sales: review.pack.sales }).ok, false, type);
+  }
+  const negative = normalizeMarketplaceCsv("Invoice Number,Invoice Date,Taxable Value,CGST,SGST,Gross Amount,HSN,GST Rate,Place of Supply\nCN-1,01/05/2026,-100,-9,-9,-118,610910,18,Karnataka", "amazon", "negative.csv");
+  assert.equal(negative.sales[0].transactionType, "adjustment");
+  assert.equal(negative.tabs.b2c.length, 0);
+});
+
+test("cess is checked separately from the GST rate and preserved in working exports", () => {
+  const source = normalizeMarketplaceCsv(amazonCsv, "amazon", "amazon.csv").sales[1];
+  const row = { ...source, taxableValue: 100, cgst: 9, sgst: 9, igst: 0, cess: 5, grossAmount: 123 };
+  const review = reviewMarketplaceSales([row], "amazon");
+  assert.equal(review.ok, true);
+  if (!review.ok) return;
+  assert.equal(review.pack.summary.errors, 0);
+  assert.equal(review.pack.summary.gst, 18);
+  assert.equal(review.pack.summary.cess, 5);
+  const json = buildGstDraftJson(review.pack);
+  assert.equal(json.ok, true);
+  if (json.ok) assert.equal(json.json.b2c[0].csamt, 5);
+  const xml = buildEcommerceSalesXml({ clientName: "Example", sales: review.pack.sales });
+  assert.equal(xml.ok, true);
+  if (xml.ok) assert.match(xml.xml, /<LEDGERNAME>Output Cess<\/LEDGERNAME>/);
+  const workbook = buildEcommerceWorkbook({ clientName: "Example", sales: review.pack.sales });
+  assert.equal(workbook.getWorksheet("Sales")!.getCell("P2").value, 5);
+  assert.equal(workbook.getWorksheet("Summary")!.getCell("B12").value, 5);
+  const mismatch = reviewMarketplaceSales([{ ...row, grossAmount: 123.50 }], "amazon");
+  if (mismatch.ok) assert.ok(mismatch.pack.sales[0].issues.some(issue => issue.includes("do not add up")), "a difference below one rupee is still a discrepancy");
 });
 
 test("marketplace Excel summary keeps numeric sales and uploaded TCS by state", async () => {
@@ -360,19 +421,29 @@ test("newest-first statements do not raise balance warnings", () => {
   assert.equal(summary.transactions.filter(txn => txn.confidence < 0.9).length, 0);
 });
 
-test("same-day unique amounts match without a shared reference", () => {
+test("same-day unique amounts without shared evidence remain review suggestions", () => {
   const bank = parseBankStatement(bankCsv, "bank.csv");
   const tally = parseTallyLedgerCsv(tallyCsv);
   const result = compareBankWithTally(bank.transactions, tally);
-  assert.equal(result.counts.confirmed, 10);
-  assert.equal(result.counts.suggested, 0);
+  assert.equal(result.counts.confirmed, 0);
+  assert.equal(result.counts.suggested, 10);
 });
 
 test("a Tally bank-ledger export with debit and credit swapped still matches", () => {
   const bank = parseBankStatement(bankCsv, "bank.csv");
   const flipped = parseTallyLedgerCsv(tallyCsv).map(row => ({ ...row, debit: row.credit, credit: row.debit }));
   const result = compareBankWithTally(bank.transactions, flipped);
-  assert.equal(result.counts.confirmed, 10);
+  assert.equal(result.counts.confirmed, 0);
+  assert.equal(result.counts.suggested, 10);
+});
+
+test("confirmed bank matches need exact amounts and a complete shared reference", () => {
+  const txn = parseBankStatement(bankCsv, "bank.csv").transactions[0];
+  const row = { ...parseTallyLedgerCsv(tallyCsv)[0], narration: "Payment UTR12345678" };
+  assert.equal(compareBankWithTally([txn], [row]).counts.confirmed, 1);
+  assert.equal(compareBankWithTally([txn], [{ ...row, debit: row.debit! + .50 }]).counts.confirmed, 0, "rupee-tolerant amounts need review");
+  assert.equal(compareBankWithTally([txn], [{ ...row, narration: "Payment UTR123456789" }]).counts.confirmed, 0, "a reference substring is not shared evidence");
+  assert.equal(compareBankWithTally([{ ...txn, reference: "1" }], [{ ...row, narration: "Payment 1" }]).counts.confirmed, 0, "short references remain ambiguous");
 });
 
 test("two equal payments on nearby days stay suggestions, not automatic matches", () => {

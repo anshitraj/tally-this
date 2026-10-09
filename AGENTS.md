@@ -201,3 +201,11 @@ Before finishing any UI or backend task:
 - Review visual consistency.
 - Confirm no routes are broken.
 - Run the workspace build before final response.
+
+## Financial accuracy and competitor parity
+- The user's goal is complete Repotic workflow coverage and a better CA experience. Track evidence in `docs/COMPETITOR_REVIEW.md`; a matching feature name or bank logo is not proven capability.
+- Follow `docs/ACCURACY_STANDARD.md`. Target exact agreement for every source row and financial value in supported formats, with zero known silent errors; uncertain or unsupported data must require review or stop.
+- Do not advertise universal 100% accuracy, GST portal compatibility, Tally import compatibility or competitor superiority without measured evidence and stated coverage.
+- A balanced statement does not prove correct narration or ledger choice. A unique amount/date or high similarity score alone must not confirm a financial match.
+- Preserve cancellations, returns, credit notes, negative adjustments and cess distinctly. Never count an unsupported adjustment as an ordinary sale or change taxable values just to force a TCS/settlement match.
+- Verify actual GST utility/portal and TallyPrime acceptance, per-document values, exclusions and repeat-import behavior before claiming production output support.

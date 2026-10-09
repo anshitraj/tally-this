@@ -68,3 +68,18 @@ test("accountant corrects HSN, compares uploaded TCS and downloads the draft on 
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: "../tmp/ecommerce-review-390.png", fullPage: true });
 });
+
+test("excluded marketplace documents are explained without overflowing the mobile result", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await setup(page);
+  await page.route("**/api/jobs/ecommerce/normalize", route => route.fulfill({ json: {
+    ...pack({ ...sale, hsn: "610910", issues: [] }),
+    summary: { ...pack().summary, documents: 2, errors: 0, excludedSalesRows: 1 },
+  } }));
+  await page.goto("/app/jobs/ecommerce-gst");
+  await page.locator('input[type="file"]').first().setInputFiles({ name: "amazon.csv", mimeType: "text/csv", buffer: Buffer.from("invoice,taxable\nINV-1,100") });
+  await expect(page.getByText("Sales totals exclude 1 cancelled, return or adjustment row", { exact: false })).toBeVisible();
+  await expect(page.getByText("sales rows read", { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: "../tmp/ecommerce-exclusions-390.png", fullPage: true });
+});

@@ -54,7 +54,7 @@ interface Pack {
   platform: string;
   files?: string[];
   sales: Sale[];
-  summary: { documents: number; taxableValue: number; gst: number; gross: number; refunds: number; tcs: number; b2b: number; b2c: number; errors: number };
+  summary: { documents: number; taxableValue: number; gst: number; cess?: number; gross: number; refunds: number; tcs: number; b2b: number; b2c: number; errors: number; excludedSalesRows?: number };
   tabs: { b2b: Sale[]; b2c: Sale[]; hsn: Array<{ hsn: string; gstRate: number | null; taxableValue: number; count: number; supply: "B2B" | "B2C" }>; tcs: Sale[]; table14: Sale[]; errors: Sale[] };
   documents?: Array<{ platform: string; issued: number; cancelled: number; source: "uploaded reports" | "accountant correction" }>;
 }
@@ -92,6 +92,7 @@ export default function EcommerceGstPage() {
   const [files, setFiles] = useState<File[]>([]);
   const [platform, setPlatform] = useState<Platform>("auto");
   const [error, setError] = useState("");
+  const [exportNote, setExportNote] = useState("");
   const [pack, setPack] = useState<Pack | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [tab, setTab] = useState<(typeof TABS)[number]>("B2B");
@@ -112,6 +113,7 @@ export default function EcommerceGstPage() {
     setFiles(picked);
     setStage("working");
     setError("");
+    setExportNote("");
     setDownloaded(false);
     setTcsComparison(null);
     setReviewSale(null);
@@ -161,6 +163,7 @@ export default function EcommerceGstPage() {
     setTcsComparison(null);
     setDownloaded(false);
     setReviewSale(null);
+    setExportNote("");
     setError("");
   };
 
@@ -207,6 +210,7 @@ export default function EcommerceGstPage() {
       return;
     }
     setError("");
+    setExportNote(response.data.message || "Sales XML working copy downloaded. Check it in a test Tally company.");
     downloadText(response.data.fileName || "TallyThis_Marketplace_Sales_Review.xml", response.data.xml, "application/xml");
   };
 
@@ -277,12 +281,12 @@ export default function EcommerceGstPage() {
             }
           >
             <div className="grid grid-cols-2 gap-6">
-              <BigStat value={summary.documents} label="invoices read" tone="good" />
+              <BigStat value={summary.documents} label="sales rows read" tone="good" />
               <BigStat value={summary.errors} label={summary.errors === 1 ? "needs review" : "need review"} tone={summary.errors > 0 ? "attention" : "good"} />
             </div>
             <div className="mt-5 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
               <Mini label="Taxable value" value={inr(summary.taxableValue)} />
-              <Mini label="GST" value={inr(summary.gst)} />
+              <Mini label={summary.cess ? "GST + cess" : "GST"} value={inr(summary.gst + (summary.cess ?? 0))} />
               <Mini label="TCS" value={inr(summary.tcs)} />
               <Mini label="B2B · B2C" value={`${summary.b2b} · ${summary.b2c}`} />
             </div>
@@ -292,6 +296,8 @@ export default function EcommerceGstPage() {
           {needsPortalTcs && <Notice tone="info">TCS comes from marketplace reports only. Upload a GST portal TCS summary to compare before CA review.</Notice>}
           {tcsComparison && <Notice tone={tcsComparison.mismatches ? "warn" : "success"}>{tcsComparison.message} {tcsComparison.mismatches ? "Potential risk — needs CA review." : "Check the uploaded portal file and return period before filing."}</Notice>}
           {error && <Notice tone="error" onClose={() => setError("")}>{error}</Notice>}
+          {Boolean(summary.excludedSalesRows) && <Notice tone="warn">Sales totals exclude {summary.excludedSalesRows} cancelled, return or adjustment {summary.excludedSalesRows === 1 ? "row" : "rows"}. Check their treatment before filing. Potential risk — needs CA review.</Notice>}
+          {exportNote && <Notice tone="info" onClose={() => setExportNote("")}>{exportNote}</Notice>}
           {downloaded && (
             <Notice tone="success">GSTR-1 draft (JSON) and sales summary (CSV) downloaded. Potential risk — needs CA review before filing.</Notice>
           )}
@@ -302,7 +308,7 @@ export default function EcommerceGstPage() {
               {tcsComparison && tcsComparison.mismatches > 0 && (
                 <div className="mb-4 overflow-auto rounded-xl border border-border">
                   <table className="w-full min-w-[460px] text-left text-xs"><thead className="bg-muted"><tr><th className="p-3">State</th><th>Marketplace TCS</th><th>Portal TCS</th><th>Difference</th></tr></thead><tbody>
-                    {tcsComparison.rows.filter(row => Math.abs(row.difference) > .01).map(row => <tr key={row.code} className="border-t border-border"><td className="p-3">{row.state}</td><td>{inr(row.uploaded)}</td><td>{inr(row.portal)}</td><td className="font-semibold text-amber-700">{inr(row.difference)}</td></tr>)}
+                    {tcsComparison.rows.filter(row => row.difference !== 0).map(row => <tr key={row.code} className="border-t border-border"><td className="p-3">{row.state}</td><td>{inr(row.uploaded)}</td><td>{inr(row.portal)}</td><td className="font-semibold text-amber-700">{inr(row.difference)}</td></tr>)}
                   </tbody></table>
                 </div>
               )}
@@ -401,7 +407,7 @@ export default function EcommerceGstPage() {
             </div>
             <div>
               <div className="text-sm font-semibold">Tally Sales voucher working copy</div>
-              <p className="mt-1 text-xs text-muted-foreground">Uses existing Sales, Marketplace Customers and Output GST ledgers in your test Tally company. For B2B, name each buyer’s existing ledger. Refunds and unresolved rows stop this export.</p>
+              <p className="mt-1 text-xs text-muted-foreground">Uses existing Sales, Marketplace Customers and Output GST ledgers in your test Tally company. For B2B, name each buyer’s existing ledger. Cancelled documents are left out. Returns, adjustments and unresolved sales stop this export.</p>
               {b2bGstins.map(gstin => <label key={gstin} className="mt-2 block text-xs">Buyer {gstin}<input className="fv-input mt-1 w-full" value={partyLedgers[gstin] ?? ""} onChange={event => setPartyLedgers(current => ({ ...current, [gstin]: event.target.value }))} placeholder="Existing Tally party ledger" /></label>)}
               <button type="button" className="fv-button-secondary mt-3" onClick={tallyXml}>Download Sales XML for test import</button>
               <p className="mt-2 text-xs text-muted-foreground">Sales and CGST/SGST/IGST/Cess lines are balanced. Import into a test Tally company and check Sales Register and GST reports. Settlement and fee vouchers are not included. Potential risk — needs CA review.</p>

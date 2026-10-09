@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 import { z } from "zod";
+import { marketplaceDocumentKind } from "./ecommerceGst";
 
 const saleSchema = z.object({
   platform: z.string().max(80),
@@ -12,6 +13,9 @@ const saleSchema = z.object({
   cgst: z.number().finite(),
   sgst: z.number().finite(),
   igst: z.number().finite(),
+  cess: z.number().finite().default(0),
+  refundAmount: z.number().finite().default(0),
+  transactionType: z.string().max(80).default("sale"),
   grossAmount: z.number().finite(),
   tcsAmount: z.number().finite(),
   hsn: z.string().max(30).nullable(),
@@ -29,7 +33,7 @@ export const ecommerceWorkbookSchema = z.object({
 export type EcommerceWorkbookInput = z.infer<typeof ecommerceWorkbookSchema>;
 
 const MONEY = '#,##0.00;[Red](#,##0.00)';
-const sum = (sales: EcommerceWorkbookInput["sales"], key: "taxableValue" | "cgst" | "sgst" | "igst" | "grossAmount" | "tcsAmount") =>
+const sum = (sales: EcommerceWorkbookInput["sales"], key: "taxableValue" | "cgst" | "sgst" | "igst" | "cess" | "grossAmount" | "tcsAmount") =>
   Math.round(sales.reduce((total, sale) => total + sale[key], 0) * 100) / 100;
 
 function styleHeader(sheet: ExcelJS.Worksheet) {
@@ -41,6 +45,7 @@ function styleHeader(sheet: ExcelJS.Worksheet) {
 
 /** Working summary of uploaded marketplace data; it does not assert GST portal agreement. */
 export function buildEcommerceWorkbook(input: EcommerceWorkbookInput) {
+  const activeSales = input.sales.filter(sale => marketplaceDocumentKind(sale) === "sale");
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "TallyThis";
   const summary = workbook.addWorksheet("Summary");
@@ -52,14 +57,16 @@ export function buildEcommerceWorkbook(input: EcommerceWorkbookInput) {
     ["Client", input.clientName],
     ["Uploaded sales rows", input.sales.length],
     ["Rows needing review", input.sales.filter(sale => sale.issues.length > 0).length],
-    ["Taxable value", sum(input.sales, "taxableValue")],
-    ["CGST", sum(input.sales, "cgst")],
-    ["SGST", sum(input.sales, "sgst")],
-    ["IGST", sum(input.sales, "igst")],
-    ["Gross amount", sum(input.sales, "grossAmount")],
+    ["Active sales taxable value", sum(activeSales, "taxableValue")],
+    ["CGST", sum(activeSales, "cgst")],
+    ["SGST", sum(activeSales, "sgst")],
+    ["IGST", sum(activeSales, "igst")],
+    ["Active sales gross amount", sum(activeSales, "grossAmount")],
     ["TCS from uploaded reports", sum(input.sales, "tcsAmount")],
+    ["Cess on active sales", sum(activeSales, "cess")],
+    ["Rows excluded from sales totals", input.sales.length - activeSales.length],
   ] as const) summary.addRow(pair);
-  for (let row = 6; row <= 11; row += 1) summary.getCell(`B${row}`).numFmt = MONEY;
+  for (let row = 6; row <= 12; row += 1) summary.getCell(`B${row}`).numFmt = MONEY;
   summary.addRow([]);
   summary.addRow(["Note", input.tcsComparison
     ? "Draft from uploaded reports. TCS comparison uses a user-uploaded portal summary; verify taxpayer, period and source. Potential risk — needs CA review."
@@ -82,6 +89,9 @@ export function buildEcommerceWorkbook(input: EcommerceWorkbookInput) {
     { header: "Gross", key: "gross", width: 17 },
     { header: "TCS", key: "tcs", width: 15 },
     { header: "Review", key: "review", width: 42 },
+    { header: "Cess", key: "cess", width: 15 },
+    { header: "Document type", key: "documentType", width: 20 },
+    { header: "Sales treatment", key: "salesTreatment", width: 30 },
   ];
   styleHeader(sales);
   for (const sale of input.sales) {
@@ -90,27 +100,32 @@ export function buildEcommerceWorkbook(input: EcommerceWorkbookInput) {
       platform: sale.platform, orderId: sale.orderId ?? "", invoice: sale.invoiceNumber ?? "", date,
       gstin: sale.gstin ?? "", place: sale.placeOfSupply ?? "", hsn: sale.hsn ?? "", rate: sale.gstRate,
       taxable: sale.taxableValue, cgst: sale.cgst, sgst: sale.sgst, igst: sale.igst,
-      gross: sale.grossAmount, tcs: sale.tcsAmount, review: sale.issues.join("; ") || "Ready",
+      gross: sale.grossAmount, tcs: sale.tcsAmount, cess: sale.cess,
+      documentType: sale.transactionType, salesTreatment: marketplaceDocumentKind(sale) === "sale" ? "Sales draft" : "Excluded from sales totals",
+      review: sale.issues.join("; ") || (marketplaceDocumentKind(sale) === "cancelled" ? "Cancelled — excluded" : "Ready for review"),
     });
     if (date instanceof Date) row.getCell(4).numFmt = "dd mmm yyyy";
     for (let col = 9; col <= 14; col += 1) row.getCell(col).numFmt = MONEY;
+    row.getCell(16).numFmt = MONEY;
     if (sale.issues.length > 0) row.getCell(15).font = { color: { argb: "FF9A5B00" }, bold: true };
   }
-  sales.autoFilter = { from: "A1", to: `O${input.sales.length + 1}` };
+  sales.autoFilter = { from: "A1", to: `R${input.sales.length + 1}` };
 
   const byState = new Map<string, EcommerceWorkbookInput["sales"]>();
   const byHsn = new Map<string, EcommerceWorkbookInput["sales"]>();
   for (const sale of input.sales) {
     const state = sale.placeOfSupply || "Not provided";
     byState.set(state, [...(byState.get(state) ?? []), sale]);
-    const hsn = sale.hsn || "Not provided";
-    byHsn.set(hsn, [...(byHsn.get(hsn) ?? []), sale]);
+    if (marketplaceDocumentKind(sale) === "sale") {
+      const hsn = sale.hsn || "Not provided";
+      byHsn.set(hsn, [...(byHsn.get(hsn) ?? []), sale]);
+    }
   }
   const tcs = workbook.addWorksheet("TCS by state");
-  tcs.columns = [{ header: "Place of supply", width: 25 }, { header: "Rows", width: 12 }, { header: "Taxable", width: 20 }, { header: "TCS in uploads", width: 20 }];
+  tcs.columns = [{ header: "Place of supply", width: 25 }, { header: "Rows", width: 12 }, { header: "Active sales taxable", width: 23 }, { header: "TCS in uploads", width: 20 }];
   styleHeader(tcs);
   for (const [state, rows] of [...byState].sort(([a], [b]) => a.localeCompare(b))) {
-    const row = tcs.addRow([state, rows.length, sum(rows, "taxableValue"), sum(rows, "tcsAmount")]);
+    const row = tcs.addRow([state, rows.length, sum(rows.filter(sale => marketplaceDocumentKind(sale) === "sale"), "taxableValue"), sum(rows, "tcsAmount")]);
     row.getCell(3).numFmt = MONEY;
     row.getCell(4).numFmt = MONEY;
   }
