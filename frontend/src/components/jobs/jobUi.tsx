@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AlertTriangle, CheckCircle2, ChevronDown, FileText, Loader2, Lock, ShieldCheck, Sparkles, UploadCloud, X } from "lucide-react";
 import { getActiveClient, setActiveClient, type ActiveClient } from "@/lib/activeClient";
-import { isPrivacyOn, upgradeMailto, usePrivacy } from "@/lib/privacy";
+import { isPrivacyOn, loadPlan, upgradeMailto, usePrivacy } from "@/lib/privacy";
+import { IncognitoIcon } from "@/components/app/IncognitoIcon";
 import { cn } from "@/lib/utils";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -129,7 +130,7 @@ export async function postDownload(path: string, payload: unknown): Promise<{ ok
 
 // ── Layout ──────────────────────────────────────────────────────────────────
 
-export function JobShell({ title, outcome, children }: { title: string; outcome: string; children: ReactNode }) {
+export function JobShell({ title, outcome, children, modeLocked = false }: { title: string; outcome: string; children: ReactNode; modeLocked?: boolean }) {
   const { active } = useClients();
   return (
     <div className="fv-job-shell mx-auto w-full px-4 py-6 sm:py-10">
@@ -139,63 +140,59 @@ export function JobShell({ title, outcome, children }: { title: string; outcome:
         <p className="mt-1.5 text-sm text-muted-foreground sm:text-base">{outcome}</p>
         <div className="fv-job-flow" aria-label="Upload, review, export"><span><i>01</i> Upload</span><span><i>02</i> Review</span><span><i>03</i> Export</span></div>
       </div>
-      <PrivacySwitch />
+      <PrivacySwitch locked={modeLocked} />
       {children}
     </div>
   );
 }
 
-/** Shows which client the work is for. One tap to switch. */
-/**
- * Privacy mode: nothing from the upload is saved and no history is kept. Only on paid plans, so
- * a free account sees one quiet line that explains it and how to get it.
- */
-export function PrivacySwitch() {
+/** The server checks premium access on every upload; this is a preference, not an entitlement. */
+export function PrivacySwitch({ locked = false }: { locked?: boolean }) {
   const privacy = usePrivacy();
-  if (!privacy.loaded) return null;
-
-  if (!privacy.available && !privacy.on) {
-    return (
-      <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-dashed border-border px-4 py-2.5 text-sm text-muted-foreground">
-        <span className="inline-flex items-center gap-2 font-medium text-foreground"><Lock className="h-4 w-4" />Privacy mode</span>
-        <span>Nothing saved, nothing in History. Part of our paid plans.</span>
-        <a className="font-semibold text-[var(--fv-accent-dark)] hover:underline" href={upgradeMailto("Privacy mode")}>Email us to switch it on</a>
-      </div>
-    );
-  }
-
-  if (!privacy.available && privacy.on) {
-    return (
-      <div className="mb-4">
-        <Notice tone="warn">
-          <div className="font-semibold">Privacy mode is on, but your plan does not include it.</div>
-          <div className="mt-1">Uploads are stopped so nothing is saved by mistake. <button type="button" className="font-semibold underline" onClick={() => privacy.set(false)}>Turn it off</button> to continue normally, or <a className="font-semibold underline" href={upgradeMailto("Privacy mode")}>email us</a> to renew.</div>
-        </Notice>
-      </div>
-    );
-  }
-
+  const [showInfo, setShowInfo] = useState(false);
   return (
-    <div className={cn("mb-4 rounded-xl border px-4 py-2.5 text-sm", privacy.on ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-border bg-card")}>
-      <div className="flex items-center justify-between gap-3">
-        <span className="inline-flex items-center gap-2 font-medium"><ShieldCheck className="h-4 w-4" />Privacy mode</span>
+    <section className="fv-upload-mode" aria-label="Upload mode">
+      <div className="fv-mode-tabs" role="group" aria-label="Choose upload mode">
         <button
-          type="button"
-          role="switch"
-          aria-checked={privacy.on}
-          aria-label="Privacy mode"
-          onClick={() => privacy.set(!privacy.on)}
-          className={cn("relative h-6 w-11 shrink-0 rounded-full transition after:absolute after:-inset-2.5 after:content-['']", privacy.on ? "bg-emerald-600" : "bg-muted-foreground/30")}
+          type="button" aria-pressed={!privacy.on} disabled={locked}
+          onClick={() => { privacy.set(false); setShowInfo(false); }}
+          className={cn("fv-mode-tab", !privacy.on && "is-selected")}
         >
-          <span className={cn("absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition", privacy.on && "translate-x-5")} />
+          <ShieldCheck className="h-4 w-4" /><span>Normal</span>
+        </button>
+        <button
+          type="button" aria-pressed={privacy.on} disabled={locked || privacy.status === "loading"}
+          aria-label={privacy.available ? "Incognito" : "Incognito — Premium locked"}
+          onClick={() => {
+            if (privacy.available) { privacy.set(true); setShowInfo(false); }
+            else setShowInfo(true);
+          }}
+          className={cn("fv-mode-tab", privacy.on && "is-selected")}
+        >
+          <IncognitoIcon className="h-5 w-5" /><span>Incognito</span>
+          {!privacy.available && <Lock className="fv-mode-lock" />}
+          <span className="fv-mode-premium">Premium</span>
         </button>
       </div>
-      <p className={cn("mt-1 text-xs", privacy.on ? "text-emerald-800" : "text-muted-foreground")}>
+      <p className="fv-mode-description" aria-live="polite">
         {privacy.on
-          ? "On. This file and its result are not saved and will not appear in History. They are gone when you leave this page, so download what you need."
-          : "Off. Switch on for files that must not be stored: nothing is saved and nothing appears in History."}
+          ? "Same accuracy checks. Files and results aren’t saved to your workspace. Download before leaving."
+          : "Accuracy checks with saved history. Review anything flagged before exporting."}
       </p>
-    </div>
+      {locked && <p className="fv-mode-description">Mode is fixed for this job. Start a new upload to change it.</p>}
+      {privacy.status === "loading" && <p className="fv-mode-description">Checking Premium access…</p>}
+      {privacy.status === "error" && (
+        <p className="fv-mode-description">Premium access couldn’t be checked. <button type="button" className="underline" onClick={() => void loadPlan(true)}>Try again</button>{privacy.on && " Incognito uploads remain blocked until access is verified."}</p>
+      )}
+      {(showInfo || (privacy.loaded && !privacy.available && privacy.on)) && (
+        <div className="fv-mode-info" role="status">
+          <strong>{privacy.status === "error" ? "Premium access could not be verified" : privacy.on ? "Incognito needs an active Premium plan" : "Incognito is included with Premium"}</strong>
+          <p>Process uploads without saving files, results or job history. Both modes use the same checks; scanned files need your consent before AI reading in Incognito.</p>
+          {privacy.on && <p>Your selected mode is kept. Uploads are stopped so nothing is saved by mistake.</p>}
+          <a href={upgradeMailto("TallyThis Incognito Premium")}>Contact us for Premium access</a>
+        </div>
+      )}
+    </section>
   );
 }
 

@@ -177,7 +177,7 @@ export default function InvoiceBankPage() {
   };
 
   return (
-    <JobShell title="Invoice ↔ Bank" outcome="Upload invoices and bank statement to find missing or unmatched payments.">
+    <JobShell title="Invoice ↔ Bank" outcome="Upload invoices and bank statement to find missing or unmatched payments." modeLocked={stage !== "idle" && stage !== "error"}>
       {(stage === "idle" || stage === "error") && (
         <div className="space-y-4">
           {stage === "error" && <Notice tone="error">{error}</Notice>}
@@ -232,7 +232,7 @@ export default function InvoiceBankPage() {
             )}
           </ResultCard>
 
-          {data.privacy && <Notice tone="success">Privacy mode: nothing here is saved. Download the report before you leave this page.</Notice>}
+          {data.privacy && <Notice tone="success">Incognito: this file and result aren’t saved to your workspace. Download the report before leaving.</Notice>}
           {data.unreadable.length > 0 && (
             <Notice tone="warn">Could not read: {data.unreadable.join(", ")}. Upload a clearer copy or an invoice list.</Notice>
           )}

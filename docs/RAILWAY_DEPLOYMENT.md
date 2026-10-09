@@ -35,9 +35,19 @@ Do not append `/api` to BACKEND_ORIGIN. Never copy database, JWT, R2 or provider
 secrets into Vercel frontend variables.
 
 Add `tallythis.xyz` in that Vercel project's Domains settings and apply the exact
-DNS records Vercel supplies at the registrar. At deployment verification time,
-`tally-this.vercel.app` returned 404 and `tallythis.xyz` timed out; the live frontend
-and its API proxy have therefore not yet been verified.
+DNS records Vercel supplies at the registrar. The initial deployment check timed
+out. A later check on 9 October 2026 confirmed that `https://tallythis.xyz/`,
+`/login` and `/app/jobs/bank-to-tally` return frontend HTML with HTTP 200.
+`https://tallythis.xyz/api/health` returns HTTP 200 and reports the Go gateway,
+TypeScript fallback, Python worker and database as healthy. Unauthenticated
+`/api/account/plan` and `/api/auth/me` return HTTP 401, as expected.
+
+This confirms the custom-domain frontend and same-origin API proxy are reachable.
+It does not verify an authenticated upload, export, Tally import or GST filing.
+The improvements on `codex/finverify-upload-architecture`, including the Normal /
+Incognito selector, are separate from the deployed `main` release. Pushing that
+branch does not update the production deployment. The current deployed commit
+must be checked in each host's release dashboard before claiming feature delivery.
 
 ## Verification and remaining work
 

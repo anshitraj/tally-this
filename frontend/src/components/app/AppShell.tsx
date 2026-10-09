@@ -24,6 +24,8 @@ import { BrandMark } from "@/components/app/finverify-ui";
 import { getUser, logout } from "@/lib/auth";
 import { useClients } from "@/components/jobs/jobUi";
 import { cn } from "@/lib/utils";
+import { usePrivacy } from "@/lib/privacy";
+import { IncognitoIcon } from "@/components/app/IncognitoIcon";
 
 type NavItem = { label: string; href: string; icon: LucideIcon };
 
@@ -213,6 +215,7 @@ function NavItems({
 }
 
 export default function AppShell({ children }: { children: ReactNode }) {
+  const privacy = usePrivacy();
   const [location, navigate] = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(() =>
@@ -325,7 +328,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
   );
 
   return (
-    <div className="fv-app-shell flex h-screen overflow-hidden bg-background text-foreground">
+    <div className={cn("fv-app-shell flex h-screen overflow-hidden bg-background text-foreground", privacy.on && "is-incognito dark")} data-upload-mode={privacy.on ? "incognito" : "normal"}>
       <aside className="fv-app-sidebar hidden shrink-0 lg:flex">
         {sidebar}
       </aside>
@@ -381,6 +384,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
             )}
           </div>
           <div className="ml-auto flex min-w-0 items-center gap-2">
+            {privacy.on && <span className="fv-incognito-indicator"><IncognitoIcon /><span>Incognito</span></span>}
             <ClientSwitcher />
           </div>
         </header>

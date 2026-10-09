@@ -71,7 +71,7 @@ export function aiDecision(input: {
 }
 
 export const PRIVACY_NOT_AVAILABLE =
-  "Privacy mode is part of our paid plans. Email us to upgrade and it will be switched on for your account.";
+  "Incognito needs an active Premium plan. Contact us to upgrade; this upload has not been saved.";
 
 export const AI_CONSENT_MESSAGE =
   "This file is a scan, so an AI service has to read it. It is sent over an encrypted connection to Google Gemini on a paid business account: Google does not use it to train its models and may keep a log for a limited time to prevent abuse. TallyThis does not save the file or the result.";

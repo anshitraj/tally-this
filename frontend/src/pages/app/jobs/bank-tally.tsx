@@ -206,7 +206,7 @@ export default function BankTallyPage() {
   let shown = 0;
 
   return (
-    <JobShell title="Bank ↔ Tally" outcome="Upload your bank statement and Tally export to find mismatches.">
+    <JobShell title="Bank ↔ Tally" outcome="Upload your bank statement and Tally export to find mismatches." modeLocked={stage !== "idle" && stage !== "error"}>
       {(stage === "idle" || stage === "error") && (
         <div className="space-y-4">
           {stage === "error" && <Notice tone="error">{error}</Notice>}
@@ -253,7 +253,7 @@ export default function BankTallyPage() {
             )}
           </ResultCard>
 
-          {data.privacy && <Notice tone="success">Privacy mode: nothing here is saved. Download the report before you leave this page.</Notice>}
+          {data.privacy && <Notice tone="success">Incognito: this file and result aren’t saved to your workspace. Download the report before leaving.</Notice>}
           {error && <Notice tone="error" onClose={() => setError("")}>{error}</Notice>}
 
           {reviewOpen && (

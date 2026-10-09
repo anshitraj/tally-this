@@ -242,7 +242,7 @@ export default function HistoryPage() {
           </p>
         )}
         {!loading && !error && (
-          <p className="text-center text-xs text-muted-foreground">Work done in Privacy mode is never saved, so it does not appear here.</p>
+          <p className="text-center text-xs text-muted-foreground">Incognito jobs aren’t saved to your workspace, so they do not appear here.</p>
         )}
       </div>
     </div>

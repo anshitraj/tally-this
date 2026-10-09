@@ -143,6 +143,8 @@ function reviewCount(txns: NormalizedBankTxn[]) {
 // ── Detect: drop any file on Home and get sent to the right job ────────────
 
 router.post("/jobs/detect", requirePermission("uploads.read"), upload.array("files", 20), async (req, res): Promise<void> => {
+  const gate = await privacyGate(req, res);
+  if (!gate) return;
   const files = filesOf(req, "files");
   if (files.length === 0) {
     res.status(400).json({ ok: false, message: "Choose a file." });

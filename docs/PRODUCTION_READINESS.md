@@ -8,7 +8,7 @@ The interface, upload workflows and exports work locally. Production launch stil
 
 - Product name: **TallyThis**. The custom T/check symbol, forest green wordmark, favicon, landing page, login, workspace, report headings and export filenames use this identity.
 - Contact: **contact@tallythis.xyz**. The footer and help page link to it; API support responses default to it. `SUPPORT_EMAIL` can override the API default.
-- Website domain remains pending confirmation: the purchase was described as `tally.xyz`, while the proposed brand/email use `tallythis.xyz`. No canonical URL, domain redirect or production OAuth hostname has been guessed.
+- Website: `https://tallythis.xyz` serves the frontend and proxies `/api/health` successfully, verified on 9 October. Public login and app URLs return HTML; authenticated upload/review/export and OAuth flows still need deployed verification. Mailbox delivery is a separate check.
 - Existing package names, database tables, report schema identifiers, browser storage keys and event names retain their existing names for compatibility. They do not determine the public company name.
 - Adding a `mailto:` link does not create a mailbox. The email domain must be controlled separately from the website domain if they differ.
 
@@ -136,4 +136,4 @@ Use a staging environment first. Launch only after the applicable P0 items have 
 - [ ] Privacy/terms/retention/provider disclosures and support process approved.
 - [ ] Rollback and incident ownership documented; paid entitlements match actual billing behavior.
 
-Local verification on 9 October: workspace build/typechecks passed, 41 API workflow/parser tests passed, and 15 browser tests passed, including 360px, 390px and 768px layouts. A 390px bank result screenshot was inspected and the browser tests found no horizontal overflow. The frontend build still warns about an 875 kB JavaScript chunk. Live hosting, DNS, mailbox delivery, restoration, load testing, real bank statement fixtures, Tally import and a full adversarial tenant test suite remain unverified.
+Local verification on 9 October: workspace build/typechecks and 41 API workflow/parser tests passed. The bank review, Excel and navigation browser checks passed, including 360px, 390px and 768px layouts. Incognito adds entitlement, expired-plan, retry, cross-tab, account-switch, mode-lock and mobile checks. The frontend build still warns about a large initial JavaScript chunk (approximately 878 kB). Live frontend HTTPS and service health are verified; authenticated live workflows, mailbox delivery, restoration, load testing, real bank statement fixtures, Tally import and a full adversarial tenant test suite remain unverified. See [RAILWAY_DEPLOYMENT.md](RAILWAY_DEPLOYMENT.md) for branch versus deployment status.

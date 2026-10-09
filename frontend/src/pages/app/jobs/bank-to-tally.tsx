@@ -374,7 +374,7 @@ export default function BankToTallyPage() {
   }, [bankLedger, displayBankName, result?.accountNumberMasked]);
 
   return (
-    <JobShell title="Bank Statement → Tally" outcome="Upload your bank statement and get a Tally-ready file.">
+    <JobShell title="Bank Statement → Tally" outcome="Upload your bank statement and get a Tally-ready file." modeLocked={stage !== "idle" && stage !== "error"}>
       {(stage === "idle" || stage === "error") && (
         <div className="space-y-4">
           {stage === "error" && <Notice tone="error">{error}</Notice>}
@@ -485,7 +485,7 @@ export default function BankToTallyPage() {
           </ResultCard>
 
           {result.privacy && !generated && (
-            <Notice tone="success">Privacy mode: nothing here is saved. Download the Tally file before you leave this page.</Notice>
+            <Notice tone="success">Incognito: this file and result aren’t saved to your workspace. Download before leaving this page.</Notice>
           )}
           {error && <Notice tone="error" onClose={() => setError("")}>{error}</Notice>}
           {generated && (

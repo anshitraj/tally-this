@@ -189,7 +189,7 @@ export default function EcommerceGstPage() {
   const rows: Sale[] = pack ? (tab === "B2B" ? pack.tabs.b2b : tab === "B2C" ? pack.tabs.b2c : tab === "TCS" ? pack.tabs.tcs : tab === "Table 14" ? pack.tabs.table14 : []) : [];
 
   return (
-    <JobShell title="E-commerce GST" outcome="Upload marketplace reports and prepare a GST review draft.">
+    <JobShell title="E-commerce GST" outcome="Upload marketplace reports and prepare a GST review draft." modeLocked={stage !== "idle" && stage !== "error"}>
       {(stage === "idle" || stage === "error") && (
         <div className="space-y-4">
           {stage === "error" && <Notice tone="error">{error}</Notice>}
@@ -232,7 +232,7 @@ export default function EcommerceGstPage() {
             </div>
           </ResultCard>
 
-          {pack.privacy && !downloaded && <Notice tone="success">Privacy mode: nothing here is saved. Download your reports before you leave this page.</Notice>}
+          {pack.privacy && !downloaded && <Notice tone="success">Incognito: this file and result aren’t saved to your workspace. Download your reports before leaving.</Notice>}
           {error && <Notice tone="error" onClose={() => setError("")}>{error}</Notice>}
           {downloaded && (
             <Notice tone="success">GSTR-1 draft (JSON) and sales summary (CSV) downloaded. Potential risk — needs CA review before filing.</Notice>
