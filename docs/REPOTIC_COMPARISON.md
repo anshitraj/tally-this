@@ -6,7 +6,7 @@ Repotic's public [home page](https://www.repotic.in/) presents two products: ban
 
 ## CA verdict
 
-For a real client today, I would use the workflow already proven with that client's statement and target TallyPrime company. On current evidence, I would trial Repotic first for e-commerce GSTR-1 because TallyThis lacks portal TCS comparison, editable HSN/document corrections and a portal-validated JSON export. For a bank that TallyPrime already accepts directly, I would also try [TallyPrime's own statement import](https://help.tallysolutions.com/bank-statement/). TallyThis's balance proof, exception review and Excel working copy are useful, but I would not rely on its XML for live books until the exact bank format and repeat import have passed an accountant's test.
+For a real client today, I would use the workflow already proven with that client's statement and target TallyPrime company. On current evidence, I would trial Repotic first for e-commerce GSTR-1 because its public site advertises portal-oriented output, while TallyThis's GST JSON remains a proprietary draft and its broader marketplace layouts are unverified. TallyThis now offers editable HSN/document corrections and uploaded TCS comparison, but those local features have synthetic tests only. For a bank that TallyPrime already accepts directly, I would also try [TallyPrime's own statement import](https://help.tallysolutions.com/bank-statement/). TallyThis's balance proof, exception review and Excel working copy are useful, but I would not rely on its XML for live books until the exact bank format and repeat import have passed an accountant's test.
 
 The TallyThis bank screen now makes review the next action when rows, ledgers or unproved totals need attention. A failed printed closing balance or incomplete row sequence stops the Tally download. This reduces accidental use of an unreviewed export; it does not establish import compatibility.
 
@@ -25,18 +25,18 @@ The current identity directory recognizes 61 names, and seven have local logos. 
 
 | Step | Repotic public description | TallyThis now | Remaining gap |
 | --- | --- | --- | --- |
-| Upload | 10+ named marketplaces | Amazon, Flipkart, Meesho, Myntra and JioMart recognition, plus generic columns | Dedicated templates for GlowRoad, AJIO, CityMall, LimeRoad, Paytm, Snapdeal and Shop101 are missing. |
-| Review | Editable GSTR-1 sections, TCS comparison with GST portal, HSN bulk fixes, document summaries | Draft B2B/B2C/HSN/TCS/Table 14 views and issue list | No in-app row correction, portal TCS comparison, HSN bulk edit/turnover rule, or editable document summary. Current TCS figures come only from uploaded files. |
-| Export | GST JSON, Tally XML, CSV, Excel accounting summary | Draft JSON, CSV, Excel working summary, and a basic receipt XML under details | JSON is a TallyThis draft, not proven GST portal-ready. The XML uses Receipt entries and does not implement GST-ledger sales vouchers or settlement reconciliation. |
+| Upload | 10+ named marketplaces | Recognizes Amazon, Flipkart, Meesho, Myntra, JioMart, GlowRoad, Shop101, Paytm, Snapdeal, AJIO, CityMall and LimeRoad by file name or header, plus generic columns | Recognition is not verified layout support. Only existing Amazon synthetic fixtures have exercised the GST row mapper; obtain redacted exports and implement/test each real report layout. |
+| Review | Editable GSTR-1 sections, TCS comparison with GST portal, HSN bulk fixes, document summaries | Editable sales rows and document counts; B2B/B2C HSN summaries; bulk HSN/rate correction; HSN-length review for turnover above ₹5 crore; state-wise comparison with an uploaded State/TCS CSV or spreadsheet | Current comparison accepts only a state-wise TCS summary with recognizable State and TCS columns. It does not fetch GST data or verify the return period or GSTIN. Refunds need linked credit-note handling. |
+| Export | GST JSON, Tally XML, CSV, Excel accounting summary | Draft JSON and CSV; Excel working summary including document counts; balanced Tally Sales voucher XML with Sales and GST ledger lines for reviewed sales | JSON remains a TallyThis draft, not GST portal-ready. Sales XML needs existing party/GST ledgers and a test import into TallyPrime; settlement, fees, returns and repeat-import behavior are unverified. |
 
-When GST issues exist, the TallyThis screen now leads with review and labels the download a working draft. The current review list cannot correct source rows in place; the user must fix the marketplace report and upload it again.
+When GST issues exist, the TallyThis screen leads with review, recalculates sections after correction and labels downloads as working drafts. An accountant must check corrected rows against source evidence.
 
 ## Priorities before claiming feature parity
 
 1. Test actual failing bank statements (redacted) and add one fixture for each format. Verify the detected bank, all rows, totals, balances, password path and XML import in TallyPrime.
-2. Build an editable, revalidated e-commerce review model. Keep GST JSON as a draft until its schema and sample output are validated against the GST offline utility.
-3. Add an uploaded GST portal TCS statement comparison, state-wise differences, and a clear unresolved-items gate.
-4. Implement real marketplace sales vouchers with GST ledger splits, returns and settlement handling; validate them in TallyPrime before labelling the output as sales accounting.
+2. Validate the GST JSON schema and a sample output against the current official GST offline utility and portal; the current proprietary draft must not be uploaded as if it were accepted. Verify B2B/B2C, Table 12 HSN, Table 13 documents, Table 14, GSTIN and period behavior.
+3. Test the uploaded portal TCS comparison on redacted real portal files, including amendments, negative adjustments, period and taxpayer checks. Resolve mismatches before export.
+4. Import marketplace Sales vouchers in a TallyPrime test company. Add linked credit notes, fees and settlement accounting, then verify duplicate/repeat import behavior.
 5. Add dedicated marketplace templates and test them with licensed sample exports. Do not infer broad platform support from the generic parser.
 
 TallyThis also has Bank ↔ Tally and Invoice ↔ Bank review flows beyond Repotic's public bank converter description. Those do not fill the e-commerce gaps above. All workflows remain upload-based; the optional local Tally gateway is separate from a hosted direct integration.

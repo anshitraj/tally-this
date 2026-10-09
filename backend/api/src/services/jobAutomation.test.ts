@@ -5,7 +5,9 @@ import test from "node:test";
 import { counterpartyFrom, parseBankStatement, unifyParties } from "./bankStatement";
 import { buildTallyVoucherXml, LEDGER_OPTIONS, suggestLedger, validateTallyVoucherXml } from "./tallyVoucherXml";
 import { compareBankWithTally, parseTallyLedgerCsv } from "./statementCompare";
-import { buildGstDraftJson, mergeEcommercePacks, normalizeMarketplaceCsv } from "./ecommerceGst";
+import { buildGstDraftJson, mergeEcommercePacks, normalizeMarketplaceCsv, salesToCsv } from "./ecommerceGst";
+import { comparePortalTcs, readPortalTcs, reviewDocumentSummary, reviewMarketplaceSales } from "./ecommerceReview";
+import { buildEcommerceSalesXml } from "./ecommerceSalesXml";
 import { detectFileKind, detectMarketplace } from "./fileDetect";
 import { compareInvoicesWithBank, parseInvoiceCsv } from "./invoiceVerify";
 import { recognizeStatement } from "./statementOcr";
@@ -161,15 +163,77 @@ test("amazon sales become a draft gst json", () => {
   if (gst.ok) assert.equal(gst.json.schema, "finverify.gstr1.draft.v1");
 });
 
+test("marketplace CSV escapes spreadsheet formulas in uploaded text", () => {
+  const pack = normalizeMarketplaceCsv(amazonCsv, "amazon", "amazon.csv");
+  const csv = salesToCsv([{ ...pack.sales[0], invoiceNumber: "=HYPERLINK(\"https://example.test\")" }]);
+  assert.match(csv, /"'=HYPERLINK/);
+});
+
+test("reviewed GST rows recalculate HSN sections and document counts", () => {
+  const pack = normalizeMarketplaceCsv(amazonCsv, "amazon", "amazon.csv");
+  const changed = pack.sales.map(sale => sale.invoiceNumber === "INV-A-2" ? { ...sale, hsn: "620400", gstRate: 18 } : sale);
+  const reviewed = reviewMarketplaceSales(changed, "amazon", true);
+  assert.equal(reviewed.ok, true);
+  if (!reviewed.ok) return;
+  assert.ok(reviewed.pack.tabs.hsn.some(row => row.supply === "B2C" && row.hsn === "620400"));
+  assert.ok(reviewed.pack.sales.some(sale => sale.hsn === "6109" && sale.issues.some(issue => issue.includes("HSN length"))));
+  const docs = reviewDocumentSummary([{ platform: "amazon", issued: 7, cancelled: 1, source: "accountant correction" }], reviewed.pack.sales);
+  assert.equal(docs.ok, true);
+  if (docs.ok) assert.equal(docs.rows[0].issued, 7);
+  assert.equal(reviewDocumentSummary([{ platform: "amazon", issued: 1, cancelled: 2 }], reviewed.pack.sales).ok, false);
+  const recounted = reviewDocumentSummary([{ platform: "amazon", issued: 99, cancelled: 0, source: "uploaded reports" }], reviewed.pack.sales);
+  if (recounted.ok) assert.equal(recounted.rows[0].issued, 3, "source-derived counts follow reviewed invoice rows");
+});
+
+test("uploaded portal TCS compares states and rejects unreadable summaries", () => {
+  const pack = normalizeMarketplaceCsv(amazonCsv, "amazon", "amazon.csv");
+  const portal = readPortalTcs("State,TCS Amount\nKarnataka,140\n27 - Maharashtra,20\n");
+  assert.equal(portal.ok, true);
+  if (!portal.ok) return;
+  const compared = comparePortalTcs(pack.sales, portal.rows);
+  assert.equal(compared.ok, true);
+  if (compared.ok) assert.equal(compared.mismatches, 0);
+  const mismatch = comparePortalTcs(pack.sales, [{ state: "27", amount: 12 }]);
+  if (mismatch.ok) assert.ok(mismatch.mismatches > 0);
+  assert.equal(readPortalTcs("State,Value\nKarnataka,100").ok, false);
+  const adjusted = pack.sales.map((sale, index) => index === 0 ? { ...sale, tcsAmount: -sale.tcsAmount } : sale);
+  const signed = comparePortalTcs(adjusted, [{ state: "29", amount: 0 }, { state: "27", amount: 20 }]);
+  assert.equal(signed.ok, true);
+  if (signed.ok) assert.ok(signed.rows.find(row => row.code === "29")!.uploaded < 0, "negative TCS adjustments keep their sign");
+});
+
+test("Sales XML needs reviewed rows and B2B ledgers, then balances tax lines", () => {
+  const pack = normalizeMarketplaceCsv(amazonCsv, "amazon", "amazon.csv");
+  assert.equal(buildEcommerceSalesXml({ clientName: "Example", sales: pack.sales }).ok, false);
+  const clean = pack.sales.filter(sale => sale.transactionType !== "refund");
+  const missingParties = buildEcommerceSalesXml({ clientName: "Example", sales: clean });
+  assert.equal(missingParties.ok, false);
+  if (!missingParties.ok) assert.match(missingParties.errors.join(" "), /party ledgers/i);
+  const built = buildEcommerceSalesXml({ clientName: "Example", sales: clean, partyLedgers: { "29ABCDE1234F1Z5": "Customer Karnataka", "27AABCU9603R1ZM": "Customer Maharashtra" } });
+  assert.equal(built.ok, true);
+  if (!built.ok) return;
+  assert.equal((built.xml.match(/<VOUCHER VCHTYPE="Sales"/g) ?? []).length, clean.length);
+  assert.match(built.xml, /<LEDGERNAME>Output CGST<\/LEDGERNAME>/);
+  for (const voucher of built.xml.match(/<VOUCHER VCHTYPE="Sales"[\s\S]*?<\/VOUCHER>/g) ?? []) {
+    const total = [...voucher.matchAll(/<AMOUNT>(-?\d+\.\d{2})<\/AMOUNT>/g)].reduce((sum, match) => sum + Number(match[1]), 0);
+    assert.equal(Math.round(total * 100), 0);
+  }
+});
+
 test("marketplace Excel summary keeps numeric sales and uploaded TCS by state", async () => {
   const pack = normalizeMarketplaceCsv(amazonCsv, "amazon", "amazon_sales_may_2026.csv");
-  const workbook = buildEcommerceWorkbook({ clientName: "Example Client", sales: pack.sales });
+  const comparison = comparePortalTcs(pack.sales, [{ state: "Karnataka", amount: 140 }, { state: "Maharashtra", amount: 20 }]);
+  assert.equal(comparison.ok, true);
+  if (!comparison.ok) return;
+  const workbook = buildEcommerceWorkbook({ clientName: "Example Client", sales: pack.sales, documents: [{ platform: "amazon", issued: 3, cancelled: 0, source: "accountant correction" }], tcsComparison: comparison });
   const loaded = new ExcelJS.Workbook();
   await loaded.xlsx.load(await workbook.xlsx.writeBuffer());
   assert.equal(loaded.getWorksheet("Summary")?.getCell("B4").value, pack.sales.length);
   assert.equal(loaded.getWorksheet("Summary")?.getCell("B11").value, Math.round(pack.sales.reduce((total, sale) => total + sale.tcsAmount, 0) * 100) / 100);
   assert.equal(loaded.getWorksheet("Sales")?.getCell("I2").value, pack.sales[0].taxableValue);
   assert.ok((loaded.getWorksheet("TCS by state")?.rowCount ?? 0) > 1);
+  assert.ok((loaded.getWorksheet("Portal TCS comparison")?.rowCount ?? 0) > 1);
+  assert.equal(loaded.getWorksheet("Documents")?.getCell("B2").value, 3);
 });
 
 test("invoice register suggests a payment match", () => {
@@ -239,6 +303,12 @@ test("marketplace is detected from the file name or header", () => {
   assert.equal(detectMarketplace("flipkart_sales_may.csv", ""), "flipkart");
   assert.equal(detectMarketplace("sales.csv", "Sub Order No,Supplier ID,Taxable Value"), "meesho");
   assert.equal(detectMarketplace("sales.csv", "Order ID,Invoice Number,Taxable Value"), "generic");
+});
+
+test("additional marketplace names are recognized without claiming layout coverage", () => {
+  for (const [name, expected] of [["GlowRoad", "glowroad"], ["Shop101", "shop101"], ["Paytm", "paytm"], ["Snapdeal", "snapdeal"], ["AJIO", "ajio"], ["CityMall", "citymall"], ["LimeRoad", "limeroad"]] as const) {
+    assert.equal(detectMarketplace(`${name}_sales.csv`, "Invoice,Amount\nA,100"), expected);
+  }
 });
 
 test("several marketplace reports merge into one pack", () => {

@@ -46,6 +46,13 @@ const PLATFORM_HINTS: Array<[MarketplacePlatform, RegExp]> = [
   ["meesho", /meesho|supplier id|sub order/i],
   ["myntra", /myntra|ppmp|\bstyle id/i],
   ["jiomart", /jiomart|jio mart/i],
+  ["glowroad", /glow\s?road/i],
+  ["shop101", /shop\s?101/i],
+  ["paytm", /paytm/i],
+  ["snapdeal", /snapdeal/i],
+  ["ajio", /ajio/i],
+  ["citymall", /city\s?mall/i],
+  ["limeroad", /lime\s?road/i],
 ];
 
 /** Guesses the marketplace from the file name, then the header and first rows. */
@@ -77,7 +84,7 @@ export function detectFileKind(file: UploadedFile): { kind: FileKind; platform?:
   }
   const header = (scanCsvTable(text)?.columns ?? []).join(" ").toLowerCase();
   const preamble = text.split(/\r?\n/).slice(0, 8).join(" ").toLowerCase();
-  if (/order id|order_id|sub order|asin|fsn|taxable value|place of supply|tcs/.test(header) || /amazon|flipkart|meesho|myntra|jiomart/.test(name)) {
+  if (/order id|order_id|sub order|asin|fsn|taxable value|place of supply|tcs/.test(header) || /amazon|flipkart|meesho|myntra|jiomart|glowroad|shop101|paytm|snapdeal|ajio|citymall|limeroad/.test(name)) {
     return { kind: "marketplace_report", platform: detectMarketplace(file.originalname, text) };
   }
   if (/vch|voucher|particulars/.test(header) && !/balance|withdrawal|deposit/.test(header)) return { kind: "tally_export" };

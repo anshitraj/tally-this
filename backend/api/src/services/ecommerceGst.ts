@@ -5,7 +5,7 @@
 
 import { normalizeAmount, normalizeDate, scanCsvTable } from "./bankStatement";
 
-export type MarketplacePlatform = "amazon" | "flipkart" | "meesho" | "myntra" | "jiomart" | "generic";
+export type MarketplacePlatform = "amazon" | "flipkart" | "meesho" | "myntra" | "jiomart" | "glowroad" | "shop101" | "paytm" | "snapdeal" | "ajio" | "citymall" | "limeroad" | "generic";
 
 export interface MarketplaceSale {
   platform: string;
@@ -51,12 +51,13 @@ export interface EcommercePack {
   tabs: {
     b2b: MarketplaceSale[];
     b2c: MarketplaceSale[];
-    hsn: Array<{ hsn: string; gstRate: number | null; taxableValue: number; count: number }>;
+    hsn: Array<{ hsn: string; gstRate: number | null; taxableValue: number; count: number; supply: "B2B" | "B2C" }>;
     tcs: MarketplaceSale[];
     table14: MarketplaceSale[];
     errors: MarketplaceSale[];
   };
   gstJson?: unknown;
+  documents?: Array<{ platform: string; issued: number; cancelled: number; source: "uploaded reports" | "accountant correction" }>;
   errors: string[];
 }
 
@@ -91,11 +92,11 @@ export function mergeEcommercePacks(packs: EcommercePack[]): EcommercePack {
 function marketplaceRowsToSales(rows: Record<string, string>[], platform: MarketplacePlatform, fileName: string): MarketplaceSale[] {
   return rows.map((row, index) => {
     const gstin = pick(row, ["gstin", "buyer gstin", "customer gstin"]) || null;
-    const taxable = Math.abs(normalizeAmount(pick(row, ["taxable", "taxable value", "item price"])) ?? 0);
+    const taxable = Math.abs(normalizeAmount(pick(row, ["taxable value", "taxable amount", "item taxable", "net taxable", "taxable", "item price"])) ?? 0);
     const cgst = Math.abs(normalizeAmount(pick(row, ["cgst"])) ?? 0);
     const sgst = Math.abs(normalizeAmount(pick(row, ["sgst"])) ?? 0);
     const igst = Math.abs(normalizeAmount(pick(row, ["igst"])) ?? 0);
-    const gross = Math.abs(normalizeAmount(pick(row, ["gross", "invoice amount", "invoice value", "order amount"])) ?? round2(taxable + cgst + sgst + igst));
+    const gross = Math.abs(normalizeAmount(pick(row, ["gross amount", "invoice amount", "invoice value", "order amount", "item total", "gross"])) ?? round2(taxable + cgst + sgst + igst));
     const refund = Math.abs(normalizeAmount(pick(row, ["refund"])) ?? 0);
     const hsn = pick(row, ["hsn"]) || null;
     const rateRaw = normalizeAmount(pick(row, ["gst rate", "tax rate", "rate"]));
@@ -112,7 +113,7 @@ function marketplaceRowsToSales(rows: Record<string, string>[], platform: Market
     }
     return {
       platform,
-      orderId: pick(row, ["order id", "order-id", "order no"]) || null,
+      orderId: pick(row, ["order id", "sub order", "sub-order", "order-id", "order no", "order number", "order reference"]) || null,
       invoiceNumber: pick(row, ["invoice number", "invoice no", "invoice"]) || null,
       invoiceDate: normalizeDate(pick(row, ["invoice date", "order date", "date"])),
       gstin,
@@ -125,8 +126,8 @@ function marketplaceRowsToSales(rows: Record<string, string>[], platform: Market
       cess: Math.abs(normalizeAmount(pick(row, ["cess"])) ?? 0),
       grossAmount: gross,
       refundAmount: refund,
-      marketplaceFees: Math.abs(normalizeAmount(pick(row, ["fee", "marketplace fee", "commission"])) ?? 0),
-      tcsAmount: Math.abs(normalizeAmount(pick(row, ["tcs"])) ?? 0),
+      marketplaceFees: Math.abs(normalizeAmount(pick(row, ["marketplace fee", "selling fee", "commission", "fee"])) ?? 0),
+      tcsAmount: normalizeAmount(pick(row, ["tcs"])) ?? 0,
       hsn,
       gstRate: rateRaw,
       transactionType: txnType,
@@ -137,32 +138,47 @@ function marketplaceRowsToSales(rows: Record<string, string>[], platform: Market
   }).filter(sale => sale.invoiceNumber || sale.orderId || sale.grossAmount > 0);
 }
 
-function buildEcommercePack(sales: MarketplaceSale[], platform: string): EcommercePack {
+export function buildEcommercePack(sales: MarketplaceSale[], platform: string, annualTurnoverAbove5Cr?: boolean): EcommercePack {
   const seen = new Set<string>();
-  sales.forEach(sale => {
+  const reviewed = sales.map(sale => ({ ...sale, issues: [] as string[] }));
+  reviewed.forEach(sale => {
+    if (!sale.invoiceNumber) sale.issues.push("Missing invoice number. Potential risk — needs CA review.");
+    if (!sale.invoiceDate) sale.issues.push("Missing invoice date. Potential risk — needs CA review.");
+    if (!sale.hsn) sale.issues.push("Missing HSN. Potential risk — needs CA review.");
+    else if (!/^\d{4,8}$/.test(sale.hsn) || (annualTurnoverAbove5Cr && sale.hsn.length < 6)) sale.issues.push("HSN length needs review. Potential risk — needs CA review.");
+    if (sale.gstRate == null) sale.issues.push("Missing GST rate. Potential risk — needs CA review.");
+    if (sale.gstin && !/^[0-9]{2}[A-Z0-9]{13}$/i.test(sale.gstin)) sale.issues.push("GSTIN format needs review. Potential risk — needs CA review.");
+    if (!sale.placeOfSupply) sale.issues.push("Place of supply is missing. Potential risk — needs CA review.");
+    if (sale.grossAmount === 0 && sale.refundAmount === 0 && !/cancel/i.test(sale.transactionType)) sale.issues.push("Invoice total is zero. Potential risk — needs CA review.");
+    const tax = sale.cgst + sale.sgst + sale.igst + sale.cess;
+    if (sale.transactionType.includes("refund") || sale.refundAmount > 0) sale.issues.push("Refund needs a linked credit note before return export. Potential risk — needs CA review.");
+    else if (Math.abs(sale.taxableValue + tax - sale.grossAmount) > 1) sale.issues.push("Invoice value and tax do not add up. Potential risk — needs CA review.");
+    if (sale.gstRate != null && sale.taxableValue > 0 && Math.abs(tax - sale.taxableValue * sale.gstRate / 100) > 1) sale.issues.push("GST rate and tax amount do not agree. Potential risk — needs CA review.");
     const key = `${sale.invoiceNumber ?? ""}:${sale.orderId ?? ""}:${sale.grossAmount}`;
     if (sale.invoiceNumber && seen.has(key)) sale.issues.push("Possible duplicate invoice. Potential risk — needs CA review.");
     seen.add(key);
   });
 
-  const b2b = sales.filter(sale => Boolean(sale.gstin) && sale.transactionType !== "refund");
-  const b2c = sales.filter(sale => !sale.gstin && sale.transactionType !== "refund");
-  const hsnMap = new Map<string, { hsn: string; gstRate: number | null; taxableValue: number; count: number }>();
-  sales.forEach(sale => {
-    const key = sale.hsn ?? "missing";
-    const current = hsnMap.get(key) ?? { hsn: key, gstRate: sale.gstRate, taxableValue: 0, count: 0 };
+  const eligible = reviewed.filter(sale => !sale.transactionType.includes("refund") && sale.refundAmount === 0);
+  const b2b = eligible.filter(sale => Boolean(sale.gstin));
+  const b2c = eligible.filter(sale => !sale.gstin);
+  const hsnMap = new Map<string, { hsn: string; gstRate: number | null; taxableValue: number; count: number; supply: "B2B" | "B2C" }>();
+  eligible.forEach(sale => {
+    const supply = sale.gstin ? "B2B" : "B2C";
+    const key = `${supply}:${sale.hsn ?? "missing"}:${sale.gstRate ?? "missing"}`;
+    const current = hsnMap.get(key) ?? { hsn: sale.hsn ?? "missing", gstRate: sale.gstRate, taxableValue: 0, count: 0, supply };
     current.taxableValue = round2(current.taxableValue + sale.taxableValue);
     current.count += 1;
     hsnMap.set(key, current);
   });
-  const errors = sales.filter(sale => sale.issues.length > 0);
+  const errors = reviewed.filter(sale => sale.issues.length > 0);
   const summary = {
-    documents: sales.length,
-    taxableValue: round2(sales.reduce((sum, sale) => sum + sale.taxableValue, 0)),
-    gst: round2(sales.reduce((sum, sale) => sum + sale.cgst + sale.sgst + sale.igst + sale.cess, 0)),
-    gross: round2(sales.reduce((sum, sale) => sum + sale.grossAmount, 0)),
-    refunds: round2(sales.reduce((sum, sale) => sum + sale.refundAmount, 0)),
-    tcs: round2(sales.reduce((sum, sale) => sum + sale.tcsAmount, 0)),
+    documents: reviewed.length,
+    taxableValue: round2(reviewed.reduce((sum, sale) => sum + sale.taxableValue, 0)),
+    gst: round2(reviewed.reduce((sum, sale) => sum + sale.cgst + sale.sgst + sale.igst + sale.cess, 0)),
+    gross: round2(reviewed.reduce((sum, sale) => sum + sale.grossAmount, 0)),
+    refunds: round2(reviewed.reduce((sum, sale) => sum + sale.refundAmount, 0)),
+    tcs: round2(reviewed.reduce((sum, sale) => sum + sale.tcsAmount, 0)),
     b2b: b2b.length,
     b2c: b2c.length,
     errors: errors.length,
@@ -171,17 +187,17 @@ function buildEcommercePack(sales: MarketplaceSale[], platform: string): Ecommer
   return {
     status: errors.length > 0 ? "needs_review" : "parsed",
     message: errors.length > 0
-      ? `Normalized ${sales.length} marketplace rows. ${errors.length} need CA review.`
-      : `Normalized ${sales.length} marketplace rows.`,
+      ? `Normalized ${reviewed.length} marketplace rows. ${errors.length} need CA review.`
+      : `Normalized ${reviewed.length} marketplace rows.`,
     platform,
-    sales,
+    sales: reviewed,
     summary,
     tabs: {
       b2b,
       b2c,
       hsn: [...hsnMap.values()],
-      tcs: sales.filter(sale => sale.tcsAmount > 0),
-      table14: sales.filter(sale => sale.transactionType.includes("9(5)") || sale.transactionType.includes("table 14") || sale.platform !== "generic" && sale.igst + sale.cgst + sale.sgst > 0 && sale.transactionType.includes("operator")),
+      tcs: reviewed.filter(sale => sale.tcsAmount !== 0),
+      table14: reviewed.filter(sale => sale.transactionType.includes("9(5)") || sale.transactionType.includes("table 14") || sale.platform !== "generic" && sale.igst + sale.cgst + sale.sgst > 0 && sale.transactionType.includes("operator")),
       errors,
     },
     errors: [],
@@ -216,6 +232,7 @@ export function buildGstDraftJson(pack: EcommercePack) {
     hsn: pack.tabs.hsn,
     tcs: pack.tabs.tcs.map(sale => ({ inum: sale.invoiceNumber, tcs: sale.tcsAmount })),
     table14: pack.tabs.table14.map(sale => ({ inum: sale.invoiceNumber, note: "Potential risk — needs CA review." })),
+    documentSummary: pack.documents ?? [],
   };
   if (!json.schema || !Array.isArray(json.b2b) || !Array.isArray(json.b2c)) {
     return { ok: false as const, errors: ["GST draft JSON failed structural checks."] };
@@ -227,7 +244,8 @@ export function salesToCsv(sales: MarketplaceSale[]) {
   const headers = ["platform", "orderId", "invoiceNumber", "invoiceDate", "gstin", "buyerState", "placeOfSupply", "taxableValue", "cgst", "sgst", "igst", "grossAmount", "tcsAmount", "hsn", "gstRate", "transactionType"];
   const lines = sales.map(sale => headers.map(header => {
     const value = sale[header as keyof MarketplaceSale];
-    const text = value == null ? "" : String(value);
+    const raw = value == null ? "" : String(value);
+    const text = typeof value === "string" && /^[\s\u0000-\u001f]*[=+\-@]/.test(raw) ? `'${raw}` : raw;
     return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
   }).join(","));
   return [headers.join(","), ...lines].join("\n");

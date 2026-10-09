@@ -22,6 +22,8 @@ const saleSchema = z.object({
 export const ecommerceWorkbookSchema = z.object({
   clientName: z.string().max(200),
   sales: z.array(saleSchema).min(1).max(20000),
+  documents: z.array(z.object({ platform: z.string().max(80), issued: z.number().int().nonnegative(), cancelled: z.number().int().nonnegative(), source: z.string().max(40) })).max(100).optional(),
+  tcsComparison: z.object({ rows: z.array(z.object({ state: z.string().max(100), code: z.string().max(10), uploaded: z.number().finite(), portal: z.number().finite(), difference: z.number().finite() })).max(50) }).optional(),
 });
 
 export type EcommerceWorkbookInput = z.infer<typeof ecommerceWorkbookSchema>;
@@ -59,7 +61,9 @@ export function buildEcommerceWorkbook(input: EcommerceWorkbookInput) {
   ] as const) summary.addRow(pair);
   for (let row = 6; row <= 11; row += 1) summary.getCell(`B${row}`).numFmt = MONEY;
   summary.addRow([]);
-  summary.addRow(["Note", "Draft from uploaded marketplace reports. TCS has not been compared with the GST portal. Potential risk — needs CA review."]);
+  summary.addRow(["Note", input.tcsComparison
+    ? "Draft from uploaded reports. TCS comparison uses a user-uploaded portal summary; verify taxpayer, period and source. Potential risk — needs CA review."
+    : "Draft from uploaded marketplace reports. TCS has not been compared with the GST portal. Potential risk — needs CA review."]);
 
   const sales = workbook.addWorksheet("Sales");
   sales.columns = [
@@ -110,6 +114,15 @@ export function buildEcommerceWorkbook(input: EcommerceWorkbookInput) {
     row.getCell(3).numFmt = MONEY;
     row.getCell(4).numFmt = MONEY;
   }
+  if (input.tcsComparison) {
+    const compared = workbook.addWorksheet("Portal TCS comparison");
+    compared.columns = [{ header: "State", width: 25 }, { header: "Marketplace TCS", width: 20 }, { header: "Uploaded portal TCS", width: 20 }, { header: "Difference", width: 20 }];
+    styleHeader(compared);
+    for (const result of input.tcsComparison.rows) {
+      const row = compared.addRow([result.state, result.uploaded, result.portal, result.difference]);
+      for (let col = 2; col <= 4; col += 1) row.getCell(col).numFmt = MONEY;
+    }
+  }
   const hsn = workbook.addWorksheet("HSN summary");
   hsn.columns = [{ header: "HSN", width: 20 }, { header: "Rows", width: 12 }, { header: "Taxable", width: 20 }, { header: "Gross", width: 20 }];
   styleHeader(hsn);
@@ -117,6 +130,12 @@ export function buildEcommerceWorkbook(input: EcommerceWorkbookInput) {
     const row = hsn.addRow([code, rows.length, sum(rows, "taxableValue"), sum(rows, "grossAmount")]);
     row.getCell(3).numFmt = MONEY;
     row.getCell(4).numFmt = MONEY;
+  }
+  if (input.documents?.length) {
+    const documents = workbook.addWorksheet("Documents");
+    documents.columns = [{ header: "Marketplace", width: 25 }, { header: "Issued", width: 14 }, { header: "Cancelled", width: 14 }, { header: "Basis", width: 25 }];
+    styleHeader(documents);
+    for (const row of input.documents) documents.addRow([row.platform, row.issued, row.cancelled, row.source]);
   }
   return workbook;
 }
