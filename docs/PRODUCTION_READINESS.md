@@ -16,7 +16,7 @@ The interface, upload workflows and exports work locally. Production launch stil
 
 | Area | Required work | Evidence needed to launch |
 | --- | --- | --- |
-| Authentication | Repair OAuth callback handling and account linking; add email ownership verification and password recovery; limit login/register attempts. | Login, recovery, linking, expired/revoked sessions and malicious redirect checks pass on staging. |
+| Authentication | Neon Auth is wired in (email code confirmation, code-based reset, Google/GitHub via Neon; sign-in attempts per email are limited for the older sign-in). Still needed: a live end-to-end test of sign-up, code, reset and both OAuth providers (including Safari, since Neon's session cookie is cross-site), a custom SMTP sender and own Google/GitHub OAuth apps in the Neon console, "Allow Localhost" turned off, production domains added as trusted, and `LEGACY_PASSWORD_LOGIN=false` once users have moved. | Login, recovery, linking, expired/revoked sessions and malicious redirect checks pass on staging. |
 | Permissions | Align Go and Express role checks and client scoping for reads, imports, approvals, downloads and exports. | Founder, CA, finance and viewer tests; a second unrelated workspace cannot access another client's data. |
 | Tally connector | Keep customer-run gateways separate from unrestricted server-side network access. Restrict permitted destinations and worker ingress. | Worker is inaccessible publicly; blocked-destination checks pass. A cloud worker's localhost is not a customer's Tally installation. |
 | Dependencies | Resolve runtime dependency advisories and rerun Node, Python and Go checks. | Reachable high/critical vulnerabilities closed or documented with verified mitigations. |
@@ -94,6 +94,17 @@ Only public settings belong in frontend build variables. Use separate production
 6. Add canonical/share metadata and a sitemap for public pages after the domain is confirmed. Keep app data, staging pages and test accounts out of search indexing.
 
 [Cloudflare's official Workspace DNS instructions](https://developers.cloudflare.com/dns/manage-dns-records/how-to/set-up-google-workspace/) explain the mailbox records and authentication. Follow the chosen email provider's own records if using another provider.
+
+## Sign-in email through Resend
+
+Neon Auth sends the 6-digit confirmation and reset codes. Its shared sender is rate-limited, so production should use your own SMTP provider. [Resend supports SMTP](https://resend.com/docs/send-with-smtp): host `smtp.resend.com`, port 465 (or 587), username `resend`, password a Resend API key. Steps:
+
+1. In Resend, add `tallythis.xyz` as a sending domain and add the DNS records it shows (SPF and DKIM). Copy them from Resend's Records tab. If DNS is on Cloudflare, set those records to "DNS only" (grey cloud). Wait until the domain shows Verified.
+2. Create a Resend API key limited to sending, for this purpose only.
+3. In the Neon console open Settings → Better Auth → Custom SMTP provider and enter host, port, username `resend`, the API key as the password, a sender on the verified domain (for example `auth@tallythis.xyz`) and the sender name. Save. Enter the key only in the Neon console; never in chat, code or a committed file.
+4. Send yourself a test: create an account, confirm the code arrives, and check it is not in spam. Rotate the key if it is ever exposed.
+
+Replies to the sender address go nowhere unless that mailbox exists; the footer contact stays `contact@tallythis.xyz`.
 
 ## Financial correctness and privacy acceptance
 

@@ -26,6 +26,8 @@ export const usersTable = pgTable("users", {
   email: text("email").notNull(),
   passwordHash: text("password_hash"),
   passwordSalt: text("password_salt"),
+  // The person's id in Neon Auth, set when they first sign in that way.
+  neonUserId: text("neon_user_id").unique(),
   role: text("role").notNull().default("founder"),
   status: text("status").notNull().default("active"),
   lastLoginAt: timestamp("last_login_at"),

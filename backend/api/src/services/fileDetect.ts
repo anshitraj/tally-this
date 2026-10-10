@@ -9,6 +9,17 @@ export type UploadedFile = Pick<Express.Multer.File, "originalname" | "mimetype"
 
 const IMAGE_EXT = new Set(["png", "jpg", "jpeg", "webp", "tif", "tiff", "bmp"]);
 
+/** A spreadsheet that cannot be opened. The message is safe to show as it is. */
+export class UnreadableFileError extends Error {
+  constructor(message = "This Excel file could not be opened. It may be damaged or password-protected. Save it again as .xlsx or CSV and try again.") {
+    super(message);
+    this.name = "UnreadableFileError";
+  }
+}
+
+// Uploaded workbooks are untrusted: formulas and styles are never needed, and the row count is bounded.
+const WORKBOOK_LIMITS = { cellFormula: false, cellHTML: false, cellStyles: false, sheetRows: 250_000 } as const;
+
 export function extensionOf(fileName: string) {
   return fileName.split(".").pop()?.toLowerCase() ?? "";
 }
@@ -22,7 +33,12 @@ export function isDocumentFile(file: UploadedFile) {
 export function sheetToCsvText(file: UploadedFile): string {
   const ext = extensionOf(file.originalname);
   if (ext !== "xlsx" && ext !== "xls" && ext !== "xlsm") return file.buffer.toString("utf8").replace(/^\uFEFF/, "");
-  const workbook = XLSX.read(file.buffer, { type: "buffer", cellDates: false });
+  let workbook: XLSX.WorkBook;
+  try {
+    workbook = XLSX.read(file.buffer, { type: "buffer", cellDates: false, ...WORKBOOK_LIMITS });
+  } catch {
+    throw new UnreadableFileError();
+  }
   let best = "";
   let bestRows = -1;
   for (const name of workbook.SheetNames) {

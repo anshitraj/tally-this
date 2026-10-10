@@ -45,6 +45,13 @@ onlyBuiltDependencies:
   - unrs-resolver
 
 overrides:
+  # Security advisories 9-10 Oct 2026: patched releases of packages that express/exceljs pull in.
+  proxy-addr: '>=2.0.8'
+  qs: '>=6.16.0'
+  fast-uri: '>=3.1.8'
+  body-parser: '>=2.3.0'
+  'brace-expansion@^1.1.0': '>=1.1.21 <2'
+  'brace-expansion@^2.0.0': '>=2.1.7 <3'
   '@esbuild-kit/esm-loader': npm:tsx@^4.21.0
   '@expo/ngrok-bin>@expo/ngrok-bin-darwin-arm64': '-'
   '@expo/ngrok-bin>@expo/ngrok-bin-darwin-x64': '-'

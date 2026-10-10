@@ -3,13 +3,15 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "dev": "pnpm run build && pnpm run start",
     "build": "node ./build.mjs",
     "start": "node --enable-source-maps ./dist/index.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "esbuild src/services/jobAutomation.test.ts src/services/pdfStatement.test.ts --bundle --platform=node --format=esm --packages=external --outdir=dist/tests --out-extension:.js=.mjs --log-level=warning && node --test dist/tests/jobAutomation.test.mjs dist/tests/pdfStatement.test.mjs",
+    "test": "esbuild src/services/jobAutomation.test.ts src/services/pdfStatement.test.ts src/services/neonAuth.test.ts --bundle --platform=node --format=esm --packages=external --outdir=dist/tests --out-extension:.js=.mjs --log-level=warning && node --test dist/tests/jobAutomation.test.mjs dist/tests/pdfStatement.test.mjs dist/tests/neonAuth.test.mjs",
     "read-statement": "esbuild scripts/read-statement.ts --bundle --platform=node --format=esm --external:pdf-parse --external:pdfkit --external:@anthropic-ai/sdk --external:zod --external:drizzle-orm --external:dotenv --external:pino --outfile=dist/tools/read-statement.mjs --log-level=warning && node dist/tools/read-statement.mjs"
   },
   "dependencies": {
@@ -27,12 +29,13 @@
     "exceljs": "^4.4.0",
     "express": "^5.2.1",
     "helmet": "^8.2.0",
-    "multer": "^2.1.1",
+    "jose": "^6.2.12",
+    "multer": "^2.4.0",
     "pdf-parse": "^2.4.5",
     "pdfkit": "^0.15.1",
     "pino": "^9.14.0",
     "pino-http": "^10.5.0",
-    "xlsx": "^0.18.5",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zod": "catalog:"
   },
   "devDependencies": {

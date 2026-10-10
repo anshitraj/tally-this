@@ -18,6 +18,8 @@ import { deleteStoredObject } from "../services/storage";
 import { getAIStatus } from "../server/ai/providerRouter";
 import { finishOAuth, oauthProviderStatus, startOAuth } from "../services/oauth";
 import { seedDemoData } from "../lib/seedData";
+import { createLoginThrottle, throttleMessage } from "../services/loginThrottle";
+import { neonAuthConfig } from "../services/neonAuth";
 
 const router: IRouter = Router();
 
@@ -42,7 +44,16 @@ router.get("/company", requirePermission("settings.manage_company"), async (req,
   } : null);
 });
 
+const loginThrottle = createLoginThrottle({
+  maxFailures: Number(process.env.LOGIN_MAX_FAILURES) || 8,
+  windowMs: (Number(process.env.LOGIN_LOCK_MINUTES) || 15) * 60 * 1000,
+});
+
 router.post("/auth/login", async (req, res): Promise<void> => {
+  if (process.env.LEGACY_PASSWORD_LOGIN === "false") {
+    res.status(403).json({ error: "Please use the current sign-in page." });
+    return;
+  }
   const email = String(req.body?.email ?? "").toLowerCase().trim();
   const password = String(req.body?.password ?? "");
 
@@ -51,16 +62,26 @@ router.post("/auth/login", async (req, res): Promise<void> => {
     return;
   }
 
+  const lock = loginThrottle.check(email);
+  if (lock.blocked) {
+    res.setHeader("Retry-After", String(lock.retryAfterSeconds));
+    res.status(429).json({ error: throttleMessage(lock.retryAfterSeconds) });
+    return;
+  }
+
   const [user] = await db.select().from(usersTable).where(eq(usersTable.email, email)).limit(1);
   if (!user || user.status !== "active") {
+    loginThrottle.fail(email);
     res.status(401).json({ error: "Invalid credentials" });
     return;
   }
 
   if (!user.passwordHash || !user.passwordSalt || !verifyPassword(password, user.passwordSalt, user.passwordHash)) {
+    loginThrottle.fail(email);
     res.status(401).json({ error: "Invalid credentials" });
     return;
   }
+  loginThrottle.reset(email);
 
   const [company] = user.companyId
     ? await db.select().from(companiesTable).where(eq(companiesTable.id, user.companyId)).limit(1)
@@ -235,6 +256,11 @@ router.get("/auth/github/callback", async (req, res): Promise<void> => {
 });
 
 router.post("/auth/register", async (req, res): Promise<void> => {
+  // Accounts made here have no email confirmation, so they are not allowed once Neon Auth is on.
+  if (neonAuthConfig()) {
+    res.status(403).json({ error: "Please create your account on the sign-up page so we can confirm your email." });
+    return;
+  }
   const name = String(req.body?.name ?? "").trim();
   const email = String(req.body?.email ?? "").toLowerCase().trim();
   const password = String(req.body?.password ?? "");

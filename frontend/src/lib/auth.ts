@@ -61,6 +61,10 @@ export async function logout(): Promise<void> {
   localStorage.removeItem(AUTH_KEY);
   // The chosen client belongs to the account that just left; the next sign-in picks its own.
   localStorage.removeItem("finverify_active_client");
+  if (localStorage.getItem("finverify_neon")) {
+    localStorage.removeItem("finverify_neon");
+    void import("@/lib/neonAuth").then(module => module.neonSignOut());
+  }
   if (!token) return;
   try {
     await fetch("/api/auth/logout", {

@@ -11,6 +11,9 @@ import { buildEcommerceSalesXml } from "./ecommerceSalesXml";
 import { detectFileKind, detectMarketplace } from "./fileDetect";
 import { compareInvoicesWithBank, parseInvoiceCsv } from "./invoiceVerify";
 import { recognizeStatement } from "./statementOcr";
+import { createLoginThrottle, throttleMessage } from "./loginThrottle";
+import * as XLSX from "xlsx";
+import { UnreadableFileError, sheetToCsvText } from "./fileDetect";
 import { detectBankFromStatement } from "./bankDirectory";
 import { buildBankToTallyWorkbook } from "./bankToTallyWorkbook";
 import { buildEcommerceWorkbook } from "./ecommerceWorkbook";
@@ -607,4 +610,43 @@ test("history shows the last three months by default and the message says how to
   assert.equal(cutoff.toISOString().slice(0, 10), "2026-07-09");
   assert.match(outsideWindowMessage(3, "help@example.com"), /older than 3 months.*email us at help@example\.com/);
   assert.match(outsideWindowMessage(3, ""), /contact us/);
+});
+
+test("repeated wrong passwords lock that email for a while, then it recovers", () => {
+  const throttle = createLoginThrottle({ maxFailures: 3, windowMs: 60_000 });
+  const t0 = 1_000_000;
+  for (let i = 0; i < 3; i++) {
+    assert.equal(throttle.check("a@x.in", t0 + i).blocked, false);
+    throttle.fail("a@x.in", t0 + i);
+  }
+  const locked = throttle.check("a@x.in", t0 + 10);
+  assert.equal(locked.blocked, true);
+  assert.ok(locked.retryAfterSeconds > 0 && locked.retryAfterSeconds <= 60);
+  assert.equal(throttle.check("b@x.in", t0 + 10).blocked, false, "another email is not affected");
+  assert.equal(throttle.check("a@x.in", t0 + 61_000).blocked, false, "the lock ends after the window");
+  throttle.fail("a@x.in", t0 + 61_000);
+  assert.equal(throttle.check("a@x.in", t0 + 61_001).blocked, false, "the count starts again after the window");
+});
+
+test("a good sign-in clears the failure count", () => {
+  const throttle = createLoginThrottle({ maxFailures: 2, windowMs: 60_000 });
+  throttle.fail("a@x.in", 1);
+  throttle.reset("a@x.in");
+  throttle.fail("a@x.in", 2);
+  assert.equal(throttle.check("a@x.in", 3).blocked, false);
+  assert.match(throttleMessage(61), /2 minutes/);
+  assert.match(throttleMessage(5), /1 minute\./);
+});
+
+test("Excel files are read as .xlsx and as the older .xls, and a damaged one gives a clear error", () => {
+  const book = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([["Date", "Narration", "Amount"], ["01/05/2026", "UPI-ACME", 5000]]), "Sheet1");
+  for (const [bookType, name] of [["xlsx", "a.xlsx"], ["biff8", "a.xls"]] as const) {
+    const buffer = XLSX.write(book, { type: "buffer", bookType }) as Buffer;
+    const csv = sheetToCsvText({ originalname: name, mimetype: "", buffer });
+    assert.match(csv, /Date,Narration,Amount/, name);
+    assert.match(csv, /UPI-ACME,5000/, name);
+  }
+  assert.throws(() => sheetToCsvText({ originalname: "broken.xlsx", mimetype: "", buffer: Buffer.from("PK\u0003\u0004 not a workbook") }), UnreadableFileError);
+  assert.equal(sheetToCsvText({ originalname: "plain.csv", mimetype: "text/csv", buffer: Buffer.from("a,b\n1,2") }), "a,b\n1,2", "CSV is passed through");
 });

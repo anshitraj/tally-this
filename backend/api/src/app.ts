@@ -7,6 +7,7 @@ import router from "./routes";
 import { logger } from "./lib/logger";
 import { attachAuthContext } from "./middleware/authz";
 import { periodLockMiddleware } from "./middleware/periodLock";
+import { UnreadableFileError } from "./services/fileDetect";
 
 const CORS_ORIGIN = process.env.CORS_ORIGIN ?? "http://localhost:21950";
 
@@ -66,6 +67,11 @@ app.use("/api", (err: unknown, req: express.Request, res: express.Response, _nex
 
   if (typeof err === "object" && err !== null && "type" in err && err.type === "entity.too.large") {
     res.status(413).json({ ok: false, message: "This request is too large. Split the file into smaller statements and try again." });
+    return;
+  }
+
+  if (err instanceof UnreadableFileError) {
+    res.status(422).json({ ok: false, message: err.message });
     return;
   }
 
