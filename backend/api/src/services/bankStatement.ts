@@ -153,25 +153,34 @@ const MONTHS: Record<string, string> = {
 export function normalizeDate(raw: string | null | undefined): string | null {
   if (!raw) return null;
   const text = String(raw).trim();
+  const valid = (year: string, month: string, day: string) => {
+    const yyyy = Number(year);
+    const mm = Number(month);
+    const dd = Number(day);
+    const actual = new Date(Date.UTC(yyyy, mm - 1, dd));
+    return yyyy >= 1900 && yyyy <= 2100 && actual.getUTCFullYear() === yyyy && actual.getUTCMonth() === mm - 1 && actual.getUTCDate() === dd
+      ? `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`
+      : null;
+  };
   const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  if (iso) return valid(iso[1], iso[2], iso[3]);
   const dmy = text.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/);
   if (dmy) {
     const year = dmy[3].length === 2 ? `20${dmy[3]}` : dmy[3];
-    return `${year}-${dmy[2].padStart(2, "0")}-${dmy[1].padStart(2, "0")}`;
+    return valid(year, dmy[2], dmy[1]);
   }
   // "31 Mar 2026", "03-Apr-2025", "03-Apr-25", "3 April, 2026"
   const named = text.match(/^(\d{1,2})[\s\-/.]+([A-Za-z]{3,9})[\s\-/.,]+(\d{4}|\d{2})\b/);
   if (named) {
     const month = MONTHS[named[2].toLowerCase()];
     const year = named[3].length === 2 ? `20${named[3]}` : named[3];
-    if (month) return `${year}-${month}-${named[1].padStart(2, "0")}`;
+    if (month) return valid(year, month, named[1]);
   }
   // "Mar 31, 2026"
   const us = text.match(/^([A-Za-z]{3,9})\s+(\d{1,2}),?\s+(\d{4})\b/);
   if (us) {
     const month = MONTHS[us[1].toLowerCase()];
-    if (month) return `${us[3]}-${month}-${us[2].padStart(2, "0")}`;
+    if (month) return valid(us[3], month, us[2]);
   }
   return null;
 }
@@ -328,14 +337,20 @@ export function parseBankStatement(text: string, fileName = "statement.csv"): Ba
   const accountNumberMasked = detectAccount(scanned.preamble);
   const warnings: string[] = [];
   const transactions: NormalizedBankTxn[] = [];
+  let unreadableDatedRows = 0;
+  let invalidDateRows = 0;
   let previousBalance: number | null = null;
 
   scanned.rows.forEach((row, index) => {
     const narration = pick(row, NARRATION_KEYS);
     const lower = narration.toLowerCase();
     if (/^(opening balance|closing balance|total|brought forward|carried forward)$/.test(lower)) return;
-    const date = normalizeDate(pick(row, DATE_KEYS));
-    if (!date) return;
+    const rawDate = pick(row, DATE_KEYS);
+    const date = normalizeDate(rawDate);
+    if (!date) {
+      if (rawDate && narration.trim()) invalidDateRows += 1;
+      return;
+    }
 
     let debit = normalizeAmount(pick(row, DEBIT_KEYS));
     let credit = normalizeAmount(pick(row, CREDIT_KEYS));
@@ -363,7 +378,12 @@ export function parseBankStatement(text: string, fileName = "statement.csv"): Ba
       }
     }
 
-    if ((debit == null || debit === 0) && (credit == null || credit === 0)) return;
+    if ((debit == null || debit === 0) && (credit == null || credit === 0)) {
+      // A dated table row may be a real transaction in an unfamiliar bank format.
+      // Never silently omit it and present an incomplete export as successful.
+      if (narration.trim()) unreadableDatedRows += 1;
+      return;
+    }
     if (debit === 0) debit = null;
     if (credit === 0) credit = null;
     if (balance != null) previousBalance = balance;
@@ -391,6 +411,28 @@ export function parseBankStatement(text: string, fileName = "statement.csv"): Ba
       sourceQuote: quote.slice(0, 500),
     });
   });
+
+  if (unreadableDatedRows > 0 || invalidDateRows > 0) {
+    const reasons = [
+      unreadableDatedRows > 0 ? `${unreadableDatedRows} dated ${unreadableDatedRows === 1 ? "row has" : "rows have"} no readable paid or received amount` : "",
+      invalidDateRows > 0 ? `${invalidDateRows} ${invalidDateRows === 1 ? "row has" : "rows have"} an unreadable or invalid date` : "",
+    ].filter(Boolean);
+    return {
+      status: "failed",
+      message: `The statement cannot be exported: ${reasons.join("; ")}. Try another bank export format so no transactions are left out.`,
+      bankName,
+      periodLabel: detectPeriod(scanned.preamble, transactions.map(txn => txn.date)),
+      accountNumberMasked,
+      transactions: [],
+      openingBalance: null,
+      closingBalance: null,
+      debitTotal: 0,
+      creditTotal: 0,
+      lowConfidenceCount: 0,
+      detectedColumns: scanned.columns,
+      warnings: ["A statement row could not be read; export was stopped."],
+    };
+  }
 
   if (transactions.length === 0) {
     return {

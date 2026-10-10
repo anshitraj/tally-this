@@ -119,13 +119,21 @@ function alignTallyDirection(bank: NormalizedBankTxn[], tally: TallyRow[]): Tall
   return tally.map(row => ({ ...row, debit: row.credit, credit: row.debit }));
 }
 
-/** Exactly one candidate on each side means amount and date alone identify the pair. */
-function isUniquePair(txn: NormalizedBankTxn, row: TallyRow, bank: NormalizedBankTxn[], tally: TallyRow[], usedTally: Set<string>) {
+/** Uniqueness reduces ambiguity; it does not prove two entries are the same payment. */
+function isUniquePair(txn: NormalizedBankTxn, row: TallyRow, bank: NormalizedBankTxn[], tally: TallyRow[]) {
   const amount = amountOf(txn.debit, txn.credit);
   const near = (a: string, b: string) => calculateDateDistance(a, b) <= 7;
-  const tallyCandidates = tally.filter(other => !usedTally.has(other.id) && Math.abs(amountOf(other.debit, other.credit) - amount) <= 1 && near(other.date, txn.date));
+  const tallyCandidates = tally.filter(other => Math.abs(amountOf(other.debit, other.credit) - amount) <= 1 && near(other.date, txn.date));
   const bankCandidates = bank.filter(other => Math.abs(amountOf(other.debit, other.credit) - amount) <= 1 && near(other.date, row.date));
   return tallyCandidates.length === 1 && bankCandidates.length === 1;
+}
+
+function containsReference(text: string, reference: string | null | undefined) {
+  const value = reference?.trim().toUpperCase() ?? "";
+  // Short voucher numbers and partial substrings are not reliable shared evidence.
+  if (value.replace(/[^A-Z0-9]/g, "").length < 6 || !/\d/.test(value)) return false;
+  const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^A-Z0-9])${escaped}(?=$|[^A-Z0-9])`).test(text.toUpperCase());
 }
 
 export function compareBankWithTally(bank: NormalizedBankTxn[], rawTally: TallyRow[]): CompareResult {
@@ -161,10 +169,8 @@ export function compareBankWithTally(bank: NormalizedBankTxn[], rawTally: TallyR
         calculateNameSimilarity(txn.counterparty ?? "", row.ledgerName),
         calculateNameSimilarity(txn.narration, row.narration),
       );
-      const referenceMatches = Boolean(
-        (txn.reference && row.narration.toUpperCase().includes(txn.reference.toUpperCase()))
-        || (row.voucherNumber && txn.narration.toUpperCase().includes(row.voucherNumber.toUpperCase())),
-      );
+      const referenceMatches = containsReference(row.narration, txn.reference)
+        || containsReference(txn.narration, row.voucherNumber);
       const score = calculateConfidenceScore({
         amountMatches,
         dateDistance,
@@ -214,10 +220,12 @@ export function compareBankWithTally(bank: NormalizedBankTxn[], rawTally: TallyR
     }
 
     const sameDirection = direction(txn.debit, txn.credit) === direction(best.row.debit, best.row.credit);
-    const unique = best.amountMatches && best.dateDistance <= 2 && sameDirection && isUniquePair(txn, best.row, bank, tally, usedTally);
+    const exactAmount = Math.round(amountOf(txn.debit, txn.credit) * 100) === Math.round(amountOf(best.row.debit, best.row.credit) * 100);
+    const unique = best.amountMatches && best.dateDistance <= 2 && sameDirection && isUniquePair(txn, best.row, bank, tally);
+    const confirmed = exactAmount && sameDirection && best.dateDistance <= 2 && best.referenceMatches && unique;
     usedTally.add(best.row.id);
     const why = [
-      best.amountMatches ? "Amount matches" : "Amount differs",
+      exactAmount ? "Amount matches exactly" : best.amountMatches ? "Amounts are within the ₹1 review tolerance" : "Amount differs",
       `Name similarity ${best.nameSimilarity}%`,
       `Date distance ${best.dateDistance} day(s)`,
       best.referenceMatches ? "Reference or voucher found" : "No shared reference",
@@ -225,7 +233,7 @@ export function compareBankWithTally(bank: NormalizedBankTxn[], rawTally: TallyR
     ];
     items.push({
       key: `match-${txn.rowNumber}-${best.row.id}`,
-      bucket: best.score >= 85 || unique ? "confirmed" : "suggested",
+      bucket: confirmed ? "confirmed" : "suggested",
       status: "suggested",
       confidence: best.score,
       why,

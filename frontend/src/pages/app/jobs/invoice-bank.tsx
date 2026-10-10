@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, Sparkles } from "lucide-react";
 import {
+  AiConsentPrompt,
   BigStat,
   Choice,
   DropZone,
@@ -30,7 +31,10 @@ interface Item {
 }
 
 interface CompareResponse {
-  runId: string;
+  runId: string | null;
+  /** True when privacy mode was on: nothing about this run was saved. */
+  privacy?: boolean;
+  needsAiConsent?: boolean;
   comparison: { items: Item[] };
   invoiceCount: number;
   bankCount: number;
@@ -40,7 +44,7 @@ interface CompareResponse {
   wrongPassword?: boolean;
 }
 
-type Stage = "idle" | "working" | "done" | "error";
+type Stage = "idle" | "working" | "consent" | "done" | "error";
 type Decision = "approved" | "rejected" | "needs_info";
 
 const STEPS = ["Reading the bank statement", "Reading invoices", "Matching payments to invoices", "Listing what is missing"];
@@ -64,13 +68,19 @@ export default function InvoiceBankPage() {
   const [locked, setLocked] = useState(false);
   const [bankPassword, setBankPassword] = useState("");
   const [passwordError, setPasswordError] = useState("");
+  const [consentMessage, setConsentMessage] = useState("");
 
-  const compare = async (bank: File, invoices: File[], password = bankPassword) => {
+  const compare = async (bank: File, invoices: File[], password = bankPassword, allowAi = false) => {
     setStage("working");
     setError("");
     setPasswordError("");
-    const response = await postFiles<CompareResponse>("/api/jobs/invoice-bank/compare", { bank, invoices, bankFileName: bank.name, password: password || undefined });
+    const response = await postFiles<CompareResponse>("/api/jobs/invoice-bank/compare", { bank, invoices, bankFileName: bank.name, password: password || undefined, allowAi: allowAi ? "1" : undefined });
     if (!response.ok) {
+      if (response.data.needsAiConsent) {
+        setConsentMessage(response.data.message ?? "");
+        setStage("consent");
+        return;
+      }
       if (response.data.needsPassword) {
         setLocked(true);
         setBankPassword("");
@@ -121,7 +131,9 @@ export default function InvoiceBankPage() {
   const decide = async (key: string, status: Decision) => {
     setDecided(current => ({ ...current, [key]: status }));
     setItems(current => current.map(item => item.key === key ? { ...item, status } : item));
-    const response = await postJson<{ items: Item[] }>(`/api/jobs/runs/${data?.runId}/decision`, { key, status });
+    // A private run has nothing on the server to update; the choice stays on this page.
+    if (!data?.runId) return;
+    const response = await postJson<{ items: Item[] }>(`/api/jobs/runs/${data.runId}/decision`, { key, status });
     if (response.ok && response.data.items) setItems(response.data.items);
   };
 
@@ -165,7 +177,7 @@ export default function InvoiceBankPage() {
   };
 
   return (
-    <JobShell title="Invoice ↔ Bank" outcome="Upload invoices and bank statement to find missing or unmatched payments.">
+    <JobShell title="Invoice ↔ Bank" outcome="Upload invoices and bank statement to find missing or unmatched payments." modeLocked={stage !== "idle" && stage !== "error"}>
       {(stage === "idle" || stage === "error") && (
         <div className="space-y-4">
           {stage === "error" && <Notice tone="error">{error}</Notice>}
@@ -181,6 +193,15 @@ export default function InvoiceBankPage() {
       )}
 
       {stage === "working" && <Working steps={STEPS} />}
+
+      {stage === "consent" && bankFile && (
+        <AiConsentPrompt
+          fileName={invoiceFiles.length > 0 ? `${bankFile.name} + ${invoiceFiles.length} invoice ${invoiceFiles.length === 1 ? "file" : "files"}` : bankFile.name}
+          message={consentMessage}
+          onAllow={() => compare(bankFile, invoiceFiles, bankPassword, true)}
+          onCancel={reset}
+        />
+      )}
 
       {stage === "done" && data && (
         <div className="space-y-4">
@@ -211,6 +232,7 @@ export default function InvoiceBankPage() {
             )}
           </ResultCard>
 
+          {data.privacy && <Notice tone="success">Incognito: this file and result aren’t saved to your workspace. Download the report before leaving.</Notice>}
           {data.unreadable.length > 0 && (
             <Notice tone="warn">Could not read: {data.unreadable.join(", ")}. Upload a clearer copy or an invoice list.</Notice>
           )}

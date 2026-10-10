@@ -39,7 +39,13 @@ function xmlEscape(value: string) {
 
 function tallyDate(iso: string) {
   const match = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  return match ? `${match[1]}${match[2]}${match[3]}` : null;
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const actual = new Date(Date.UTC(year, month - 1, day));
+  if (actual.getUTCFullYear() !== year || actual.getUTCMonth() !== month - 1 || actual.getUTCDate() !== day) return null;
+  return `${match[1]}${match[2]}${match[3]}`;
 }
 
 function money(value: number) {
@@ -161,7 +167,7 @@ export function partyKey(txn: Pick<NormalizedBankTxn, "counterparty" | "narratio
   return (txn.counterparty || txn.narration.slice(0, 40)).trim();
 }
 
-export function resolveLedger(txn: NormalizedBankTxn, mappings: LedgerMapping[] = []): { name: string; group: string | null } {
+export function resolveLedger(txn: Pick<NormalizedBankTxn, "narration" | "description" | "counterparty" | "credit">, mappings: LedgerMapping[] = []): { name: string; group: string | null } {
   const narration = txn.narration || txn.description;
   const text = narration.toLowerCase();
   const key = partyKey(txn).toLowerCase();

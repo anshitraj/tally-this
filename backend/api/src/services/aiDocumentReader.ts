@@ -7,6 +7,7 @@ import { z } from "zod";
 import { callClaudeFiles, claudeConfig, claudeConfigured } from "../server/ai/providers/claudeProvider";
 import { callGeminiParts, geminiConfig } from "../server/ai/providers/geminiProvider";
 import { safeParseAIJson } from "../server/ai/safeJson";
+import { logger } from "../lib/logger";
 import { logAIUsage } from "../server/ai/usageLogger";
 import { estimateTokens, geminiModels, getAIProviderSettings, type AIProviderName } from "../server/ai/types";
 import type { InvoiceRow } from "./invoiceVerify";
@@ -24,8 +25,9 @@ function geminiConfigured() {
   return Boolean(process.env.GEMINI_API_KEY || process.env.GENAI_API_KEY);
 }
 
-export function aiDocumentReadingAvailable() {
-  return claudeConfigured() || geminiConfigured();
+export function aiDocumentReadingAvailable(privacy = false) {
+  // Private-file consent names Gemini specifically; Claude must not make that path appear available.
+  return geminiConfigured() || (!privacy && claudeConfigured());
 }
 
 export function mimeFor(fileName: string, declared?: string) {
@@ -72,7 +74,9 @@ async function readDocument<T>(input: {
   }
   // Same order as AI_PROVIDER_ORDER (default: every Gemini model, then Claude).
   const order = getAIProviderSettings().providerOrder.filter(name => name === "gemini" || name === "claude");
-  const attempts = (order.length > 0 ? order : ["gemini", "claude"] as AIProviderName[]).flatMap(name => byProvider[name] ?? []);
+  // Privacy mode tells the person their file goes to Gemini, so it never falls through to another vendor.
+  const providers = (order.length > 0 ? order : ["gemini", "claude"] as AIProviderName[]).filter(name => !input.privacy || name === "gemini");
+  const attempts = providers.flatMap(name => byProvider[name] ?? []);
   if (attempts.length === 0) return { ok: false, error: "no_ai_provider_configured" };
 
   let lastError = "ai_read_failed";
@@ -104,6 +108,8 @@ async function readDocument<T>(input: {
       lastError = parsed.error;
     } catch (err) {
       lastError = err instanceof Error ? err.message.slice(0, 120) : "ai_read_failed";
+      // The reason is a provider status such as an empty balance, never file content, so it is safe to log.
+      logger.warn({ provider: attempt.name, model: attempt.model, reason: lastError }, "AI document read failed");
       if (!input.privacy) await logAIUsage({
         companyId: input.companyId ?? null,
         userId: input.userId ?? null,

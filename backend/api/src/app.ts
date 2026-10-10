@@ -7,6 +7,7 @@ import router from "./routes";
 import { logger } from "./lib/logger";
 import { attachAuthContext } from "./middleware/authz";
 import { periodLockMiddleware } from "./middleware/periodLock";
+import { UnreadableFileError } from "./services/fileDetect";
 
 const CORS_ORIGIN = process.env.CORS_ORIGIN ?? "http://localhost:21950";
 
@@ -46,6 +47,9 @@ app.use(
   }),
 );
 app.use(cookieParser());
+// Job exports send reviewed rows back as JSON; the default 100 KB limit rejects
+// ordinary multi-page statements before XML or Excel generation can start.
+app.use("/api/jobs", express.json({ limit: "10mb" }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -60,6 +64,16 @@ app.use("/api", (err: unknown, req: express.Request, res: express.Response, _nex
   req.log?.error({ err }, "API request failed");
 
   if (res.headersSent) return;
+
+  if (typeof err === "object" && err !== null && "type" in err && err.type === "entity.too.large") {
+    res.status(413).json({ ok: false, message: "This request is too large. Split the file into smaller statements and try again." });
+    return;
+  }
+
+  if (err instanceof UnreadableFileError) {
+    res.status(422).json({ ok: false, message: err.message });
+    return;
+  }
 
   const databaseUnavailable =
     message.toLowerCase().includes("timeout") ||

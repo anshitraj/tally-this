@@ -79,5 +79,8 @@
   },
   "optionalDependencies": {
     "@tailwindcss/oxide-win32-x64-msvc": "^4.3.0"
+  },
+  "dependencies": {
+    "@neondatabase/auth": "0.5.0-beta"
   }
 }

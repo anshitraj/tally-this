@@ -244,6 +244,7 @@ test("reports keep specialist exports available and handle blockers", async ({
   await expect(
     page.getByRole("button", { name: "Download CA review pack", exact: true }),
   ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Download Excel workbook", exact: true })).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Download Invoices as CSV" }),
   ).toBeHidden();

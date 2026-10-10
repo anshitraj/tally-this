@@ -13,6 +13,7 @@ import { BankLogos } from "@/components/app/BankLogos";
 import {
   DropZone,
   Notice,
+  PrivacySwitch,
   postFiles,
   setPendingFiles,
   useClients,
@@ -187,6 +188,7 @@ export default function OverviewPage() {
           <span className="fv-micro">01 / START WITH YOUR FILE</span>
           <span>Upload → Review → Export</span>
         </div>
+        <PrivacySwitch locked={busy} />
         <DropZone
           multiple
           busy={busy}

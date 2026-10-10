@@ -22,11 +22,17 @@ import { privacyGate, type PrivacyGate } from "../services/privacy";
 import { AI_BLOCKED_MESSAGE, AI_CONSENT_MESSAGE, historyCutoff, historyMonths, outsideWindowMessage } from "../services/privacyPolicy";
 import { aiLedgerPicks, groupLedgers } from "../services/ledgerSuggest";
 import { supportEmail } from "../lib/brand";
+import { BANK_NAMES } from "../services/bankDirectory";
+import { bankWorkbookSchema, buildBankToTallyWorkbook } from "../services/bankToTallyWorkbook";
+import { ecommerceWorkbookSchema, buildEcommerceWorkbook } from "../services/ecommerceWorkbook";
+import { comparePortalTcs, documentSummary, readPortalTcs, reviewDocumentSummary, reviewMarketplaceSales } from "../services/ecommerceReview";
+import { buildEcommerceSalesXml } from "../services/ecommerceSalesXml";
+import * as XLSX from "xlsx";
 
 const router: IRouter = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 20 } });
 
-const PLATFORMS = new Set(["amazon", "flipkart", "meesho", "myntra", "jiomart", "generic"]);
+const PLATFORMS = new Set(["amazon", "flipkart", "meesho", "myntra", "jiomart", "glowroad", "shop101", "paytm", "snapdeal", "ajio", "citymall", "limeroad", "generic"]);
 
 function textBody(value: unknown) {
   return typeof value === "string" ? value : "";
@@ -140,6 +146,8 @@ function reviewCount(txns: NormalizedBankTxn[]) {
 // ── Detect: drop any file on Home and get sent to the right job ────────────
 
 router.post("/jobs/detect", requirePermission("uploads.read"), upload.array("files", 20), async (req, res): Promise<void> => {
+  const gate = await privacyGate(req, res);
+  if (!gate) return;
   const files = filesOf(req, "files");
   if (files.length === 0) {
     res.status(400).json({ ok: false, message: "Choose a file." });
@@ -196,6 +204,7 @@ router.post("/jobs/bank-statement/normalize", requirePermission("uploads.create"
     source: bank.source,
     check: bank.check ?? null,
     reviewCount: reviewCount(summary.transactions),
+    bankOptions: BANK_NAMES,
     ledgerGroups,
     ledgerOptions: LEDGER_OPTIONS,
     progress: { runId, status: "completed", progressPercent: 100, currentStep: "Ready", steps: ["Upload", "Read", "Check", "Ready"] },
@@ -236,6 +245,28 @@ router.post("/jobs/bank-to-tally/xml", requirePermission("uploads.create"), asyn
   }
   if (!gate.privacy) await auditAction(req, "job.tally_xml_generated", "workflow_run", null, { runId, voucherCount: result.voucherCount, companyId });
   res.json({ ok: true, xml: result.xml, fileName: result.fileName, voucherCount: result.voucherCount, message: `Tally file is ready. ${result.voucherCount} vouchers checked and balanced.` });
+});
+
+router.post("/jobs/bank-to-tally/excel", requirePermission("uploads.create"), async (req, res): Promise<void> => {
+  const companyId = await resolveBooksCompanyId(req, res);
+  if (companyId == null) return;
+  const gate = await privacyGate(req, res);
+  if (!gate) return;
+  const parsed = bankWorkbookSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(422).json({ ok: false, message: "The Excel file could not be created. Review the transactions and try again." });
+    return;
+  }
+  try {
+    const workbook = buildBankToTallyWorkbook(parsed.data);
+    const bytes = await workbook.xlsx.writeBuffer();
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", 'attachment; filename="TallyThis_Bank_Transactions.xlsx"');
+    res.send(Buffer.from(bytes));
+    if (!gate.privacy) void auditAction(req, "job.bank_excel_generated", "workflow_run", null, { companyId, rows: parsed.data.rows.length });
+  } catch {
+    res.status(500).json({ ok: false, message: "The Excel file could not be created. Try again." });
+  }
 });
 
 // AI ledger picks for parties the rules could not place. Called by the page after results show.
@@ -555,7 +586,7 @@ router.post("/jobs/ecommerce/normalize", requirePermission("uploads.create"), up
   if (!gate) return;
   const chosen = textBody(req.body?.platform).toLowerCase();
   if (chosen && chosen !== "auto" && !PLATFORMS.has(chosen)) {
-    res.status(400).json({ ok: false, message: "Choose Amazon, Flipkart, Meesho, Myntra, JioMart, or Other." });
+    res.status(400).json({ ok: false, message: "Choose a listed marketplace or Detect automatically." });
     return;
   }
   const files = filesOf(req, "files");
@@ -571,6 +602,7 @@ router.post("/jobs/ecommerce/normalize", requirePermission("uploads.create"), up
     res.status(422).json({ ok: false, ...pack });
     return;
   }
+  pack.documents = documentSummary(pack.sales);
   const runId = gate.privacy ? null : await rememberRun({
     companyId,
     userId: req.auth?.userId,
@@ -586,9 +618,77 @@ router.post("/jobs/ecommerce/normalize", requirePermission("uploads.create"), up
   res.json({ ok: true, privacy: gate.privacy, runId, ...pack, files: inputs.map(input => input.fileName), progress: { progressPercent: 100, currentStep: "Review GSTR-1 draft", status: "completed" } });
 });
 
+router.post("/jobs/ecommerce/review", requirePermission("uploads.create"), async (req, res): Promise<void> => {
+  const companyId = await resolveBooksCompanyId(req, res);
+  if (companyId == null) return;
+  const gate = await privacyGate(req, res);
+  if (!gate) return;
+  const platform = textBody(req.body?.platform) || "generic";
+  const reviewed = reviewMarketplaceSales(req.body?.sales, platform, req.body?.annualTurnoverAbove5Cr === true);
+  if (!reviewed.ok) { res.status(422).json({ ok: false, errors: reviewed.errors, message: "Review changes could not be validated." }); return; }
+  const documents = reviewDocumentSummary(req.body?.documents, reviewed.pack.sales);
+  if (!documents.ok) { res.status(422).json({ ok: false, errors: documents.errors, message: "Document counts could not be validated." }); return; }
+  reviewed.pack.documents = documents.rows;
+  const runId = textBody(req.body?.runId);
+  if (!gate.privacy && runId && !runId.startsWith("local-")) {
+    const saved = await saveRunArtifact(runId, { artifactType: "ecommerce_gst_review", title: "Reviewed GST working copy", jsonData: reviewed.pack, companyId });
+    if (!saved) { res.status(403).json({ ok: false, message: "The saved job is unavailable for this client. Review changes were not saved." }); return; }
+  }
+  if (!gate.privacy) await auditAction(req, "job.ecommerce_reviewed", "workflow_run", null, { runId, rows: reviewed.pack.sales.length, issues: reviewed.pack.summary.errors });
+  res.json({ ok: true, privacy: gate.privacy, runId: runId || null, ...reviewed.pack });
+});
+
+router.post("/jobs/ecommerce/tcs-compare", requirePermission("uploads.create"), upload.single("portalFile"), async (req, res): Promise<void> => {
+  const companyId = await resolveBooksCompanyId(req, res);
+  if (companyId == null) return;
+  const gate = await privacyGate(req, res);
+  if (!gate) return;
+  const file = req.file;
+  if (!file || !/\.(csv|xlsx|xls)$/i.test(file.originalname)) { res.status(400).json({ ok: false, message: "Upload a GST portal TCS summary as CSV or Excel." }); return; }
+  let sales: unknown;
+  try { sales = JSON.parse(textBody(req.body?.sales)); } catch { res.status(400).json({ ok: false, message: "Reviewed sales could not be read." }); return; }
+  const reviewed = reviewMarketplaceSales(sales, "marketplace");
+  if (!reviewed.ok) { res.status(422).json({ ok: false, errors: reviewed.errors, message: "Reviewed sales are invalid." }); return; }
+  let csv: string;
+  try {
+    if (/\.csv$/i.test(file.originalname)) csv = file.buffer.toString("utf8");
+    else {
+      const book = XLSX.read(file.buffer, { type: "buffer" });
+      csv = book.SheetNames.map(name => XLSX.utils.sheet_to_csv(book.Sheets[name], { blankrows: false })).find(text => /state/i.test(text) && /tcs|tax collected/i.test(text)) ?? "";
+    }
+  } catch { res.status(422).json({ ok: false, message: "The TCS workbook could not be read." }); return; }
+  const portal = readPortalTcs(csv);
+  if (!portal.ok) { res.status(422).json({ ok: false, message: portal.message }); return; }
+  const comparison = comparePortalTcs(reviewed.pack.sales, portal.rows);
+  if (!comparison.ok) { res.status(422).json({ ok: false, message: comparison.message }); return; }
+  const runId = textBody(req.body?.runId);
+  if (!gate.privacy && runId && !runId.startsWith("local-")) {
+    const saved = await saveRunArtifact(runId, { artifactType: "ecommerce_tcs_comparison", title: "Uploaded portal TCS comparison", jsonData: comparison, companyId });
+    if (!saved) { res.status(403).json({ ok: false, message: "The saved job is unavailable for this client." }); return; }
+  }
+  res.json({ ...comparison, source: "uploaded GST portal file", message: comparison.mismatches ? `${comparison.mismatches} state amounts need review.` : "Uploaded portal TCS amounts agree with the marketplace reports." });
+});
+
+router.post("/jobs/ecommerce/sales-xml", requirePermission("reports.export"), async (req, res): Promise<void> => {
+  const companyId = await resolveBooksCompanyId(req, res);
+  if (companyId == null) return;
+  const gate = await privacyGate(req, res);
+  if (!gate) return;
+  const built = buildEcommerceSalesXml(req.body);
+  if (!built.ok) { res.status(422).json({ ok: false, errors: built.errors, message: "Sales vouchers need review or existing Tally ledger names." }); return; }
+  if (!gate.privacy) await auditAction(req, "job.ecommerce_sales_xml_generated", "workflow_run", null, { rows: built.voucherCount, companyId });
+  res.json({ ...built, message: `Sales voucher working copy ready.${built.excludedCancelled ? ` ${built.excludedCancelled} cancelled rows were left out.` : ""} Import into a test Tally company and review the Sales Register and GST ledgers.` });
+});
+
 router.post("/jobs/ecommerce/gst-json", requirePermission("reports.export"), async (req, res): Promise<void> => {
-  const platform = (textBody(req.body?.platform).toLowerCase() || "generic") as MarketplacePlatform;
-  const pack = req.body?.pack ?? normalizeMarketplaceCsv(textBody(req.body?.text), platform, "marketplace.csv");
+  const provided = req.body?.pack;
+  const platform = (textBody(req.body?.platform || provided?.platform).toLowerCase() || "generic") as MarketplacePlatform;
+  const reviewed = provided ? reviewMarketplaceSales(provided.sales, platform, req.body?.annualTurnoverAbove5Cr === true) : null;
+  if (reviewed && !reviewed.ok) { res.status(422).json({ ok: false, errors: reviewed.errors, message: "Reviewed sales are invalid." }); return; }
+  const pack = reviewed?.ok ? reviewed.pack : normalizeMarketplaceCsv(textBody(req.body?.text), platform, "marketplace.csv");
+  const documents = reviewDocumentSummary(provided?.documents, pack.sales);
+  if (!documents.ok) { res.status(422).json({ ok: false, errors: documents.errors, message: "Document counts could not be validated." }); return; }
+  pack.documents = documents.rows;
   const built = buildGstDraftJson(pack);
   if (!built.ok) {
     res.status(422).json({ ok: false, errors: built.errors, message: "GST JSON was not created because validation failed. This is not a GST portal check." });
@@ -600,6 +700,28 @@ router.post("/jobs/ecommerce/gst-json", requirePermission("reports.export"), asy
 router.post("/jobs/ecommerce/csv", requirePermission("reports.export"), async (req, res): Promise<void> => {
   const sales = Array.isArray(req.body?.sales) ? req.body.sales : [];
   res.json({ ok: true, csv: salesToCsv(sales), message: "Accounting summary CSV is ready." });
+});
+
+router.post("/jobs/ecommerce/excel", requirePermission("reports.export"), async (req, res): Promise<void> => {
+  const companyId = await resolveBooksCompanyId(req, res);
+  if (companyId == null) return;
+  const gate = await privacyGate(req, res);
+  if (!gate) return;
+  const parsed = ecommerceWorkbookSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(422).json({ ok: false, message: "The Excel summary could not be created. Check the marketplace data and try again." });
+    return;
+  }
+  try {
+    const workbook = buildEcommerceWorkbook(parsed.data);
+    const bytes = await workbook.xlsx.writeBuffer();
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", 'attachment; filename="TallyThis_Ecommerce_Summary.xlsx"');
+    res.send(Buffer.from(bytes));
+    if (!gate.privacy) void auditAction(req, "job.ecommerce_excel_generated", "workflow_run", null, { companyId, rows: parsed.data.sales.length });
+  } catch {
+    res.status(500).json({ ok: false, message: "The Excel summary could not be created. Try again." });
+  }
 });
 
 // ── Invoice ↔ Bank ─────────────────────────────────────────────────────────

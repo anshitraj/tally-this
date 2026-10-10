@@ -12,6 +12,9 @@ import ActionHistory from "@/components/workflow/ActionHistory";
 import ProcessingSteps from "@/components/workflow/ProcessingSteps";
 import AdvancedUploadView from "@/components/uploads/AdvancedUploadView";
 import CurrentUploadedFiles from "@/components/uploads/CurrentUploadedFiles";
+import { isPrivacyOn, usePrivacy } from "@/lib/privacy";
+import { Notice } from "@/components/jobs/jobUi";
+import { Link } from "wouter";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -285,6 +288,7 @@ function uploadFolderName(source: string) {
 }
 
 export default function UploadsPage() {
+  const privacy = usePrivacy();
   const qc = useQueryClient();
   const { toast } = useToast();
   const [dragging, setDragging] = useState(false);
@@ -335,7 +339,9 @@ export default function UploadsPage() {
 
   const uploadMutation = useMutation({
     mutationFn: async ({ file, activeSourceType }: { file: File; activeSourceType: string }) => {
+      if (isPrivacyOn()) throw new Error("Use a core job for Incognito uploads. The advanced Upload Center saves files.");
       const parsed = await inspectFile(file, activeSourceType);
+      if (isPrivacyOn()) throw new Error("Mode changed before uploading. Open a core job to continue in Incognito.");
       setPreview(parsed);
       const fd = new FormData();
       fd.append("file", file);
@@ -563,6 +569,16 @@ export default function UploadsPage() {
   };
 
   const visibleUploads = showAllHistory ? data : data.slice(0, 5);
+
+  if (privacy.on) {
+    return (
+      <PageTransition className="mx-auto max-w-3xl">
+        <PageHeader title="Incognito uploads" subtitle="Choose a job to process your files without saving them to your workspace." />
+        <Notice>The advanced Upload Center saves files. Incognito is available in Bank → Tally, Bank ↔ Tally, E-commerce GST and Invoice ↔ Bank.</Notice>
+        <Link href="/app/overview" className="fv-button-primary mt-5">Choose a job</Link>
+      </PageTransition>
+    );
+  }
 
   return (
     <PageTransition className="mx-auto max-w-6xl">

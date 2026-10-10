@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, CheckCircle2, ChevronDown, FileText, Loader2, Lock, ShieldCheck, UploadCloud, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, FileText, Loader2, Lock, ShieldCheck, Sparkles, UploadCloud, X } from "lucide-react";
 import { getActiveClient, setActiveClient, type ActiveClient } from "@/lib/activeClient";
+import { isPrivacyOn, loadPlan, upgradeMailto, usePrivacy } from "@/lib/privacy";
+import { IncognitoIcon } from "@/components/app/IncognitoIcon";
 import { cn } from "@/lib/utils";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -48,14 +50,17 @@ export function useClients() {
   return { clients, active, source, choose };
 }
 
-export function downloadText(filename: string, content: string, type = "text/plain") {
-  const blob = new Blob([content], { type });
+export function downloadBlob(filename: string, blob: Blob) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
   link.download = filename;
   link.click();
   URL.revokeObjectURL(url);
+}
+
+export function downloadText(filename: string, content: string, type = "text/plain") {
+  downloadBlob(filename, new Blob([content], { type }));
 }
 
 export function toCsv(headers: string[], rows: Array<Array<unknown>>) {
@@ -77,6 +82,7 @@ export async function postFiles<T>(path: string, fields: Record<string, File | F
   const client = getActiveClient();
   if (client?.id) body.append("clientId", String(client.id));
   if (client?.name) body.append("clientName", client.name);
+  if (isPrivacyOn()) body.append("privacy", "1");
   for (const [key, value] of Object.entries(fields)) {
     if (value == null) continue;
     if (Array.isArray(value)) value.forEach(file => body.append(key, file));
@@ -96,7 +102,7 @@ export async function postJson<T>(path: string, payload: unknown): Promise<{ ok:
     const response = await fetch(`${BASE}${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(isPrivacyOn() && payload && typeof payload === "object" && !Array.isArray(payload) ? { ...payload, privacy: true } : payload),
     });
     const data = await response.json().catch(() => ({ ok: false }));
     return { ok: response.ok && data.ok !== false, data };
@@ -105,9 +111,26 @@ export async function postJson<T>(path: string, payload: unknown): Promise<{ ok:
   }
 }
 
+export async function postDownload(path: string, payload: unknown): Promise<{ ok: boolean; blob?: Blob; message?: string }> {
+  try {
+    const response = await fetch(`${BASE}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(isPrivacyOn() && payload && typeof payload === "object" && !Array.isArray(payload) ? { ...payload, privacy: true } : payload),
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      return { ok: false, message: data.message || "The download could not be created." };
+    }
+    return { ok: true, blob: await response.blob() };
+  } catch {
+    return { ok: false, message: "Could not reach TallyThis. Check your connection and try again." };
+  }
+}
+
 // ── Layout ──────────────────────────────────────────────────────────────────
 
-export function JobShell({ title, outcome, children }: { title: string; outcome: string; children: ReactNode }) {
+export function JobShell({ title, outcome, children, modeLocked = false }: { title: string; outcome: string; children: ReactNode; modeLocked?: boolean }) {
   const { active } = useClients();
   return (
     <div className="fv-job-shell mx-auto w-full px-4 py-6 sm:py-10">
@@ -117,12 +140,97 @@ export function JobShell({ title, outcome, children }: { title: string; outcome:
         <p className="mt-1.5 text-sm text-muted-foreground sm:text-base">{outcome}</p>
         <div className="fv-job-flow" aria-label="Upload, review, export"><span><i>01</i> Upload</span><span><i>02</i> Review</span><span><i>03</i> Export</span></div>
       </div>
+      <PrivacySwitch locked={modeLocked} />
       {children}
     </div>
   );
 }
 
-/** Shows which client the work is for. One tap to switch. */
+/** The server checks premium access on every upload; this is a preference, not an entitlement. */
+export function PrivacySwitch({ locked = false }: { locked?: boolean }) {
+  const privacy = usePrivacy();
+  const [showInfo, setShowInfo] = useState(false);
+  return (
+    <section className="fv-upload-mode" aria-label="Upload mode">
+      <div className="fv-mode-tabs" role="group" aria-label="Choose upload mode">
+        <button
+          type="button" aria-pressed={!privacy.on} disabled={locked}
+          onClick={() => { privacy.set(false); setShowInfo(false); }}
+          className={cn("fv-mode-tab", !privacy.on && "is-selected")}
+        >
+          <ShieldCheck className="h-4 w-4" /><span>Normal</span>
+        </button>
+        <button
+          type="button" aria-pressed={privacy.on} disabled={locked || privacy.status === "loading"}
+          aria-label={privacy.available ? "Incognito" : "Incognito — Premium locked"}
+          onClick={() => {
+            if (privacy.available) { privacy.set(true); setShowInfo(false); }
+            else setShowInfo(true);
+          }}
+          className={cn("fv-mode-tab", privacy.on && "is-selected")}
+        >
+          <IncognitoIcon className="h-5 w-5" /><span>Incognito</span>
+          {!privacy.available && <Lock className="fv-mode-lock" />}
+          <span className="fv-mode-premium">Premium</span>
+        </button>
+      </div>
+      <p className="fv-mode-description" aria-live="polite">
+        {privacy.on
+          ? "Same accuracy checks. Files and results aren’t saved to your workspace. Download before leaving."
+          : "Accuracy checks with saved history. Review anything flagged before exporting."}
+      </p>
+      {locked && <p className="fv-mode-description">Mode is fixed for this job. Start a new upload to change it.</p>}
+      {privacy.status === "loading" && <p className="fv-mode-description">Checking Premium access…</p>}
+      {privacy.status === "error" && (
+        <p className="fv-mode-description">Premium access couldn’t be checked. <button type="button" className="underline" onClick={() => void loadPlan(true)}>Try again</button>{privacy.on && " Incognito uploads remain blocked until access is verified."}</p>
+      )}
+      {(showInfo || (privacy.loaded && !privacy.available && privacy.on)) && (
+        <div className="fv-mode-info" role="status">
+          <strong>{privacy.status === "error" ? "Premium access could not be verified" : privacy.on ? "Incognito needs an active Premium plan" : "Incognito is included with Premium"}</strong>
+          <p>Process uploads without saving files, results or job history. Both modes use the same checks; scanned files need your consent before AI reading in Incognito.</p>
+          {privacy.on && <p>Your selected mode is kept. Uploads are stopped so nothing is saved by mistake.</p>}
+          <a href={upgradeMailto("TallyThis Incognito Premium")}>Contact us for Premium access</a>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/**
+ * Privacy mode reads a scan with AI only after this question is answered yes, one file at a time.
+ */
+export function AiConsentPrompt({
+  fileName,
+  message,
+  busy = false,
+  onAllow,
+  onCancel,
+}: {
+  fileName: string;
+  message: string;
+  busy?: boolean;
+  onAllow: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <section className="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
+      <div className="flex items-start gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-50 text-sky-800"><Sparkles className="h-5 w-5" /></div>
+        <div className="min-w-0 flex-1">
+          <div className="font-semibold">This scan needs AI to be read</div>
+          <p className="mt-1 truncate text-sm text-muted-foreground">{fileName}</p>
+          <p className="mt-2 text-sm text-muted-foreground">{message}</p>
+          <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+            <button type="button" className="fv-button-primary h-11" onClick={onAllow} disabled={busy}>{busy ? "Reading…" : "Read this file with AI"}</button>
+            <button type="button" className="fv-button-secondary h-11" onClick={onCancel} disabled={busy}>Use a different file</button>
+          </div>
+          <p className="mt-3 text-xs text-muted-foreground">Or download the statement as Excel/CSV from your bank. Those files never need AI.</p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function ClientChip() {
   const { clients, active, choose } = useClients();
   if (!active && clients.length === 0) return null;
@@ -474,13 +582,13 @@ export function StatementProof({ check }: { check: StatementCheck | null | undef
       <div className="mt-4 flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-900">
         <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
         <div>
-          <div className="font-semibold">Every row matches the bank's running balance</div>
+          <div className="font-semibold">Running-balance checks passed</div>
           <div className="text-xs text-emerald-800">
-            {check.checked} of {check.rows} rows proved
+            {check.passed} of {check.rows} transaction amounts match the running balance
             {check.openingBalance != null && <> · opening {inr(check.openingBalance)}</>}
             {check.closingBalance != null && <> · closing {inr(check.closingBalance)}</>}
             {check.closingMatches && <> · closing matches the statement</>}
-            {check.serialComplete && <> · no rows missing</>}
+            {check.serialComplete && <> · statement row sequence checked</>}
           </div>
         </div>
       </div>
@@ -495,7 +603,7 @@ export function StatementProof({ check }: { check: StatementCheck | null | undef
           {check.failed > 0 ? `${check.failed} ${check.failed === 1 ? "row does" : "rows do"} not match the running balance` : "Some rows could not be checked against the balance"}
         </div>
         <div className="text-xs text-amber-800">
-          {check.passed} of {check.rows} rows proved{check.closingMatches === false ? " · closing balance differs from the statement" : ""}. Review the flagged rows before export.
+          {check.passed} of {check.rows} transaction amounts match the running balance{check.closingMatches === false ? " · closing balance differs from the statement" : ""}. Compare unverified rows with the statement before export.
         </div>
       </div>
     </div>

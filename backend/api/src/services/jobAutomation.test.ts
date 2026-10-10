@@ -5,10 +5,20 @@ import test from "node:test";
 import { counterpartyFrom, parseBankStatement, unifyParties } from "./bankStatement";
 import { buildTallyVoucherXml, LEDGER_OPTIONS, suggestLedger, validateTallyVoucherXml } from "./tallyVoucherXml";
 import { compareBankWithTally, parseTallyLedgerCsv } from "./statementCompare";
-import { buildGstDraftJson, mergeEcommercePacks, normalizeMarketplaceCsv } from "./ecommerceGst";
+import { buildGstDraftJson, mergeEcommercePacks, normalizeMarketplaceCsv, salesToCsv } from "./ecommerceGst";
+import { comparePortalTcs, readPortalTcs, reviewDocumentSummary, reviewMarketplaceSales } from "./ecommerceReview";
+import { buildEcommerceSalesXml } from "./ecommerceSalesXml";
 import { detectFileKind, detectMarketplace } from "./fileDetect";
 import { compareInvoicesWithBank, parseInvoiceCsv } from "./invoiceVerify";
 import { recognizeStatement } from "./statementOcr";
+import { createLoginThrottle, throttleMessage } from "./loginThrottle";
+import * as XLSX from "xlsx";
+import { UnreadableFileError, sheetToCsvText } from "./fileDetect";
+import { detectBankFromStatement } from "./bankDirectory";
+import { buildBankToTallyWorkbook } from "./bankToTallyWorkbook";
+import { buildEcommerceWorkbook } from "./ecommerceWorkbook";
+import ExcelJS from "exceljs";
+import { aiDecision, historyCutoff, historyMonths, outsideWindowMessage, planIsActive, privacyAvailable, truthy } from "./privacyPolicy";
 
 function repoFile(name: string) {
   let dir = process.cwd();
@@ -35,6 +45,76 @@ test("bank statement keeps debit and credit values", () => {
   assert.match(summary.message, /Parsed successfully/);
 });
 
+test("bank detection prefers the account IFSC and understands short bank names", () => {
+  assert.equal(detectBankFromStatement("ICICI Bank\nBranch IFSC Code: ICIC0000123\nTransfer to HDFC Bank")?.name, "ICICI Bank");
+  assert.equal(detectBankFromStatement("Bank Name: KOTAK\nAccount Statement")?.name, "Kotak Mahindra Bank");
+  assert.equal(detectBankFromStatement("", "ICICI_Statement_May.pdf")?.name, "ICICI Bank");
+  assert.equal(detectBankFromStatement("IFSC: SMCB0001015\nAccount statement")?.name, "Shivalik Small Finance Bank");
+  assert.equal(detectBankFromStatement("Unity Small Finance Bank\nAccount statement")?.name, "Unity Small Finance Bank");
+  assert.equal(detectBankFromStatement("Account Statement", "statement.pdf"), null);
+});
+
+test("a dated bank row with an unreadable amount stops an incomplete export", () => {
+  const summary = parseBankStatement([
+    "Bank Name: HDFC Bank",
+    "Date,Narration,Debit,Credit,Balance",
+    "01/05/2026,UPI/ACME,500.00,,1000.00",
+    "02/05/2026,NEFT/PAYROLL,unreadable,,1500.00",
+  ].join("\n"), "statement.csv");
+  assert.equal(summary.status, "failed");
+  assert.equal(summary.transactions.length, 0);
+  assert.match(summary.message, /1 dated row has no readable/);
+});
+
+test("an impossible transaction date stops the statement export", () => {
+  const summary = parseBankStatement([
+    "Date,Narration,Debit,Credit,Balance",
+    "01/05/2026,UPI/ACME,500.00,,1000.00",
+    "31/02/2026,NEFT/PAYROLL,,100.00,1100.00",
+  ].join("\n"), "statement.csv");
+  assert.equal(summary.status, "failed");
+  assert.equal(summary.transactions.length, 0);
+  assert.match(summary.message, /invalid date/);
+});
+
+test("Excel working copy keeps reviewed ledger choices and separates left-out rows", async () => {
+  const source = parseBankStatement(bankCsv, "statement.csv").transactions.slice(0, 2);
+  const workbook = buildBankToTallyWorkbook({
+    clientName: "Example Client",
+    bankName: "HDFC Bank",
+    accountNumberMasked: "1234",
+    periodLabel: "May 2026",
+    rows: source.map((txn, index) => ({
+      rowNumber: txn.rowNumber,
+      date: txn.date,
+      narration: txn.narration,
+      reference: txn.reference,
+      debit: txn.debit,
+      credit: txn.credit,
+      balance: txn.balance,
+      counterparty: txn.counterparty,
+      ledgerChoice: index === 0 ? "Office Expenses" : "Suspense",
+      needsReview: index === 0,
+      reviewed: index === 0,
+      edited: false,
+      excluded: index === 1,
+    })),
+  });
+  const loaded = new ExcelJS.Workbook();
+  await loaded.xlsx.load(await workbook.xlsx.writeBuffer());
+  assert.equal(loaded.getWorksheet("Summary")?.getCell("B4").value, "HDFC Bank");
+  assert.equal(loaded.getWorksheet("Summary")?.getCell("B7").value, 1);
+  assert.equal(loaded.getWorksheet("Transactions")?.getCell("G2").value, "Office Expenses");
+  assert.equal(loaded.getWorksheet("Transactions")?.getCell("H2").value, "Checked");
+  assert.equal(loaded.getWorksheet("Transactions")?.getCell("D2").value, source[0].debit);
+  assert.equal(loaded.getWorksheet("Left out")?.getCell("G2").value, "Suspense");
+  const partyCopy = buildBankToTallyWorkbook({
+    clientName: "Example Client", bankName: "HDFC Bank", accountNumberMasked: null, periodLabel: null,
+    rows: [{ rowNumber: 1, date: "2026-05-01", narration: "UPI/ACME SUPPLIES", reference: null, debit: 500, credit: null, balance: null, counterparty: "ACME SUPPLIES", ledgerChoice: "Sundry Creditors", needsReview: false, reviewed: false, edited: false, excluded: false }],
+  });
+  assert.equal(partyCopy.getWorksheet("Transactions")?.getCell("G2").value, "Acme Supplies");
+});
+
 test("tally xml balances and rejects empty input", () => {
   const summary = parseBankStatement(bankCsv, "statement.csv");
   const built = buildTallyVoucherXml({
@@ -49,6 +129,9 @@ test("tally xml balances and rejects empty input", () => {
   const empty = buildTallyVoucherXml({ companyName: "NovaStack Labs Pvt Ltd", bankLedger: "HDFC Bank", transactions: [] });
   assert.equal(empty.ok, false);
   assert.equal(empty.xml, undefined);
+  const invalidDate = buildTallyVoucherXml({ companyName: "NovaStack Labs Pvt Ltd", bankLedger: "HDFC Bank", transactions: [{ ...summary.transactions[0], date: "2026-02-31" }] });
+  assert.equal(invalidDate.ok, false);
+  assert.match(invalidDate.errors.join(" "), /date/);
 });
 
 test("bank and tally comparison stays on the uploaded rows", () => {
@@ -81,6 +164,140 @@ test("amazon sales become a draft gst json", () => {
   const gst = buildGstDraftJson(pack);
   assert.equal(gst.ok, true);
   if (gst.ok) assert.equal(gst.json.schema, "finverify.gstr1.draft.v1");
+});
+
+test("marketplace CSV escapes spreadsheet formulas in uploaded text", () => {
+  const pack = normalizeMarketplaceCsv(amazonCsv, "amazon", "amazon.csv");
+  const csv = salesToCsv([{ ...pack.sales[0], invoiceNumber: "=HYPERLINK(\"https://example.test\")" }]);
+  assert.match(csv, /"'=HYPERLINK/);
+});
+
+test("reviewed GST rows recalculate HSN sections and document counts", () => {
+  const pack = normalizeMarketplaceCsv(amazonCsv, "amazon", "amazon.csv");
+  const changed = pack.sales.map(sale => sale.invoiceNumber === "INV-A-2" ? { ...sale, hsn: "620400", gstRate: 18 } : sale);
+  const reviewed = reviewMarketplaceSales(changed, "amazon", true);
+  assert.equal(reviewed.ok, true);
+  if (!reviewed.ok) return;
+  assert.ok(reviewed.pack.tabs.hsn.some(row => row.supply === "B2C" && row.hsn === "620400"));
+  assert.ok(reviewed.pack.sales.some(sale => sale.hsn === "6109" && sale.issues.some(issue => issue.includes("HSN length"))));
+  const docs = reviewDocumentSummary([{ platform: "amazon", issued: 7, cancelled: 1, source: "accountant correction" }], reviewed.pack.sales);
+  assert.equal(docs.ok, true);
+  if (docs.ok) assert.equal(docs.rows[0].issued, 7);
+  assert.equal(reviewDocumentSummary([{ platform: "amazon", issued: 1, cancelled: 2 }], reviewed.pack.sales).ok, false);
+  const recounted = reviewDocumentSummary([{ platform: "amazon", issued: 99, cancelled: 0, source: "uploaded reports" }], reviewed.pack.sales);
+  if (recounted.ok) assert.equal(recounted.rows[0].issued, 3, "source-derived counts follow reviewed invoice rows");
+});
+
+test("uploaded portal TCS compares states and rejects unreadable summaries", () => {
+  const pack = normalizeMarketplaceCsv(amazonCsv, "amazon", "amazon.csv");
+  const portal = readPortalTcs("State,TCS Amount\nKarnataka,140\n27 - Maharashtra,20\n");
+  assert.equal(portal.ok, true);
+  if (!portal.ok) return;
+  const compared = comparePortalTcs(pack.sales, portal.rows);
+  assert.equal(compared.ok, true);
+  if (compared.ok) assert.equal(compared.mismatches, 0);
+  const mismatch = comparePortalTcs(pack.sales, [{ state: "27", amount: 12 }]);
+  if (mismatch.ok) assert.ok(mismatch.mismatches > 0);
+  assert.equal(readPortalTcs("State,Value\nKarnataka,100").ok, false);
+  const paiseDifference = comparePortalTcs(pack.sales, [{ state: "29", amount: 139.99 }, { state: "27", amount: 20 }]);
+  if (paiseDifference.ok) assert.equal(paiseDifference.mismatches, 1, "one paise difference is not an exact match");
+  const adjusted = pack.sales.map((sale, index) => index === 0 ? { ...sale, tcsAmount: -sale.tcsAmount } : sale);
+  const signed = comparePortalTcs(adjusted, [{ state: "29", amount: 0 }, { state: "27", amount: 20 }]);
+  assert.equal(signed.ok, true);
+  if (signed.ok) assert.ok(signed.rows.find(row => row.code === "29")!.uploaded < 0, "negative TCS adjustments keep their sign");
+});
+
+test("Sales XML needs reviewed rows and B2B ledgers, then balances tax lines", () => {
+  const pack = normalizeMarketplaceCsv(amazonCsv, "amazon", "amazon.csv");
+  assert.equal(buildEcommerceSalesXml({ clientName: "Example", sales: pack.sales }).ok, false);
+  const clean = pack.sales.filter(sale => sale.transactionType !== "refund");
+  const missingParties = buildEcommerceSalesXml({ clientName: "Example", sales: clean });
+  assert.equal(missingParties.ok, false);
+  if (!missingParties.ok) assert.match(missingParties.errors.join(" "), /party ledgers/i);
+  const built = buildEcommerceSalesXml({ clientName: "Example", sales: clean, partyLedgers: { "29ABCDE1234F1Z5": "Customer Karnataka", "27AABCU9603R1ZM": "Customer Maharashtra" } });
+  assert.equal(built.ok, true);
+  if (!built.ok) return;
+  assert.equal((built.xml.match(/<VOUCHER VCHTYPE="Sales"/g) ?? []).length, clean.length);
+  assert.match(built.xml, /<LEDGERNAME>Output CGST<\/LEDGERNAME>/);
+  for (const voucher of built.xml.match(/<VOUCHER VCHTYPE="Sales"[\s\S]*?<\/VOUCHER>/g) ?? []) {
+    const total = [...voucher.matchAll(/<AMOUNT>(-?\d+\.\d{2})<\/AMOUNT>/g)].reduce((sum, match) => sum + Number(match[1]), 0);
+    assert.equal(Math.round(total * 100), 0);
+  }
+});
+
+test("cancelled documents are retained in evidence and excluded from GST and Sales vouchers", async () => {
+  const source = normalizeMarketplaceCsv(amazonCsv, "amazon", "amazon.csv").sales[1];
+  const cancelled = { ...source, invoiceNumber: "CANCEL-2", sourceRow: 99, transactionType: "CANCELLED", hsn: null };
+  const reviewed = reviewMarketplaceSales([source, cancelled], "amazon");
+  assert.equal(reviewed.ok, true);
+  if (!reviewed.ok) return;
+  assert.equal(reviewed.pack.sales.length, 2);
+  assert.equal(reviewed.pack.tabs.b2c.length, 1);
+  assert.equal(reviewed.pack.summary.gross, source.grossAmount);
+  assert.equal(reviewed.pack.summary.excludedSalesRows, 1);
+  const built = buildEcommerceSalesXml({ clientName: "Example", sales: reviewed.pack.sales });
+  assert.equal(built.ok, true);
+  if (built.ok) {
+    assert.equal(built.voucherCount, 1);
+    assert.equal(built.excludedCancelled, 1);
+    assert.doesNotMatch(built.xml, /CANCEL-2/);
+  }
+  const workbook = buildEcommerceWorkbook({ clientName: "Example", sales: reviewed.pack.sales });
+  assert.equal(workbook.getWorksheet("Summary")!.getCell("B10").value, source.grossAmount);
+  assert.equal(workbook.getWorksheet("Sales")!.getCell("R3").value, "Excluded from sales totals");
+});
+
+test("returns, credit notes and negative source adjustments cannot become ordinary sales", () => {
+  const source = normalizeMarketplaceCsv(amazonCsv, "amazon", "amazon.csv").sales[1];
+  for (const type of ["RETURN", "credit_note", "refund", "adjustment"]) {
+    const review = reviewMarketplaceSales([{ ...source, transactionType: type }], "amazon");
+    if (!review.ok) throw new Error("Review rejected a valid adjustment row");
+    assert.equal(review.pack.tabs.b2c.length, 0, type);
+    assert.equal(review.pack.summary.gross, 0, type);
+    assert.ok(review.pack.sales[0].issues.length, type);
+    assert.equal(buildEcommerceSalesXml({ clientName: "Example", sales: review.pack.sales }).ok, false, type);
+  }
+  const negative = normalizeMarketplaceCsv("Invoice Number,Invoice Date,Taxable Value,CGST,SGST,Gross Amount,HSN,GST Rate,Place of Supply\nCN-1,01/05/2026,-100,-9,-9,-118,610910,18,Karnataka", "amazon", "negative.csv");
+  assert.equal(negative.sales[0].transactionType, "adjustment");
+  assert.equal(negative.tabs.b2c.length, 0);
+});
+
+test("cess is checked separately from the GST rate and preserved in working exports", () => {
+  const source = normalizeMarketplaceCsv(amazonCsv, "amazon", "amazon.csv").sales[1];
+  const row = { ...source, taxableValue: 100, cgst: 9, sgst: 9, igst: 0, cess: 5, grossAmount: 123 };
+  const review = reviewMarketplaceSales([row], "amazon");
+  assert.equal(review.ok, true);
+  if (!review.ok) return;
+  assert.equal(review.pack.summary.errors, 0);
+  assert.equal(review.pack.summary.gst, 18);
+  assert.equal(review.pack.summary.cess, 5);
+  const json = buildGstDraftJson(review.pack);
+  assert.equal(json.ok, true);
+  if (json.ok) assert.equal(json.json.b2c[0].csamt, 5);
+  const xml = buildEcommerceSalesXml({ clientName: "Example", sales: review.pack.sales });
+  assert.equal(xml.ok, true);
+  if (xml.ok) assert.match(xml.xml, /<LEDGERNAME>Output Cess<\/LEDGERNAME>/);
+  const workbook = buildEcommerceWorkbook({ clientName: "Example", sales: review.pack.sales });
+  assert.equal(workbook.getWorksheet("Sales")!.getCell("P2").value, 5);
+  assert.equal(workbook.getWorksheet("Summary")!.getCell("B12").value, 5);
+  const mismatch = reviewMarketplaceSales([{ ...row, grossAmount: 123.50 }], "amazon");
+  if (mismatch.ok) assert.ok(mismatch.pack.sales[0].issues.some(issue => issue.includes("do not add up")), "a difference below one rupee is still a discrepancy");
+});
+
+test("marketplace Excel summary keeps numeric sales and uploaded TCS by state", async () => {
+  const pack = normalizeMarketplaceCsv(amazonCsv, "amazon", "amazon_sales_may_2026.csv");
+  const comparison = comparePortalTcs(pack.sales, [{ state: "Karnataka", amount: 140 }, { state: "Maharashtra", amount: 20 }]);
+  assert.equal(comparison.ok, true);
+  if (!comparison.ok) return;
+  const workbook = buildEcommerceWorkbook({ clientName: "Example Client", sales: pack.sales, documents: [{ platform: "amazon", issued: 3, cancelled: 0, source: "accountant correction" }], tcsComparison: comparison });
+  const loaded = new ExcelJS.Workbook();
+  await loaded.xlsx.load(await workbook.xlsx.writeBuffer());
+  assert.equal(loaded.getWorksheet("Summary")?.getCell("B4").value, pack.sales.length);
+  assert.equal(loaded.getWorksheet("Summary")?.getCell("B11").value, Math.round(pack.sales.reduce((total, sale) => total + sale.tcsAmount, 0) * 100) / 100);
+  assert.equal(loaded.getWorksheet("Sales")?.getCell("I2").value, pack.sales[0].taxableValue);
+  assert.ok((loaded.getWorksheet("TCS by state")?.rowCount ?? 0) > 1);
+  assert.ok((loaded.getWorksheet("Portal TCS comparison")?.rowCount ?? 0) > 1);
+  assert.equal(loaded.getWorksheet("Documents")?.getCell("B2").value, 3);
 });
 
 test("invoice register suggests a payment match", () => {
@@ -152,6 +369,12 @@ test("marketplace is detected from the file name or header", () => {
   assert.equal(detectMarketplace("sales.csv", "Order ID,Invoice Number,Taxable Value"), "generic");
 });
 
+test("additional marketplace names are recognized without claiming layout coverage", () => {
+  for (const [name, expected] of [["GlowRoad", "glowroad"], ["Shop101", "shop101"], ["Paytm", "paytm"], ["Snapdeal", "snapdeal"], ["AJIO", "ajio"], ["CityMall", "citymall"], ["LimeRoad", "limeroad"]] as const) {
+    assert.equal(detectMarketplace(`${name}_sales.csv`, "Invoice,Amount\nA,100"), expected);
+  }
+});
+
 test("several marketplace reports merge into one pack", () => {
   const flipkart = readFileSync(repoFile("fixtures/synthetic/flipkart_sales_may_2026.csv"), "utf8");
   const a = normalizeMarketplaceCsv(amazonCsv, "amazon", "amazon.csv");
@@ -201,19 +424,29 @@ test("newest-first statements do not raise balance warnings", () => {
   assert.equal(summary.transactions.filter(txn => txn.confidence < 0.9).length, 0);
 });
 
-test("same-day unique amounts match without a shared reference", () => {
+test("same-day unique amounts without shared evidence remain review suggestions", () => {
   const bank = parseBankStatement(bankCsv, "bank.csv");
   const tally = parseTallyLedgerCsv(tallyCsv);
   const result = compareBankWithTally(bank.transactions, tally);
-  assert.equal(result.counts.confirmed, 10);
-  assert.equal(result.counts.suggested, 0);
+  assert.equal(result.counts.confirmed, 0);
+  assert.equal(result.counts.suggested, 10);
 });
 
 test("a Tally bank-ledger export with debit and credit swapped still matches", () => {
   const bank = parseBankStatement(bankCsv, "bank.csv");
   const flipped = parseTallyLedgerCsv(tallyCsv).map(row => ({ ...row, debit: row.credit, credit: row.debit }));
   const result = compareBankWithTally(bank.transactions, flipped);
-  assert.equal(result.counts.confirmed, 10);
+  assert.equal(result.counts.confirmed, 0);
+  assert.equal(result.counts.suggested, 10);
+});
+
+test("confirmed bank matches need exact amounts and a complete shared reference", () => {
+  const txn = parseBankStatement(bankCsv, "bank.csv").transactions[0];
+  const row = { ...parseTallyLedgerCsv(tallyCsv)[0], narration: "Payment UTR12345678" };
+  assert.equal(compareBankWithTally([txn], [row]).counts.confirmed, 1);
+  assert.equal(compareBankWithTally([txn], [{ ...row, debit: row.debit! + .50 }]).counts.confirmed, 0, "rupee-tolerant amounts need review");
+  assert.equal(compareBankWithTally([txn], [{ ...row, narration: "Payment UTR123456789" }]).counts.confirmed, 0, "a reference substring is not shared evidence");
+  assert.equal(compareBankWithTally([{ ...txn, reference: "1" }], [{ ...row, narration: "Payment 1" }]).counts.confirmed, 0, "short references remain ambiguous");
 });
 
 test("two equal payments on nearby days stay suggestions, not automatic matches", () => {
@@ -340,4 +573,80 @@ test("names the bank cut short are treated as one party", () => {
   const rows = ["Brijesh Brij", "Brijesh Brije", "Vodafone Ide", "VODAFONE IDEA LIMITE", "Google", "Google India Se"].map(row);
   unifyParties(rows);
   assert.deepEqual(rows.map(item => item.counterparty), ["Brijesh Brije", "Brijesh Brije", "VODAFONE IDEA LIMITE", "VODAFONE IDEA LIMITE", "Google", "Google India Se"]);
+});
+
+test("privacy mode needs a paid, active plan", () => {
+  const now = new Date("2026-10-09T00:00:00Z");
+  assert.equal(privacyAvailable({ plan: "free", until: null }, {}, now), false);
+  assert.equal(privacyAvailable({ plan: "growth", until: null }, {}, now), true);
+  assert.equal(privacyAvailable({ plan: "Growth", until: new Date("2027-01-01") }, {}, now), true);
+  assert.equal(privacyAvailable({ plan: "growth", until: new Date("2026-10-01") }, {}, now), false, "a lapsed plan no longer counts");
+  assert.equal(planIsActive({ plan: "enterprise", until: null }, now), true);
+  assert.equal(privacyAvailable({ plan: "starter", until: null }, { PRIVACY_MODE_PLANS: "growth,ca_firm" }, now), false, "the operator can limit it to higher plans");
+  assert.equal(privacyAvailable({ plan: "unknown_plan", until: null }, {}, now), false);
+});
+
+test("privacy flags are read from forms and JSON alike", () => {
+  for (const yes of ["1", "true", "TRUE", true, 1]) assert.equal(truthy(yes), true, String(yes));
+  for (const no of ["0", "false", "", undefined, null, false, "no"]) assert.equal(truthy(no), false, String(no));
+});
+
+test("in privacy mode a file read without AI never goes to AI, and a scan only with consent", () => {
+  const base = { aiConfigured: true, confirmed: true };
+  assert.equal(aiDecision({ ...base, privacy: false, allowAi: false, readWithoutAi: false }), "use_ai", "normal mode is unchanged");
+  assert.equal(aiDecision({ ...base, privacy: true, allowAi: true, readWithoutAi: true }), "no_ai_needed", "even with consent a readable file stays off AI");
+  assert.equal(aiDecision({ ...base, privacy: true, allowAi: false, readWithoutAi: false }), "ask_consent");
+  assert.equal(aiDecision({ ...base, privacy: true, allowAi: true, readWithoutAi: false }), "use_ai");
+  assert.equal(aiDecision({ ...base, privacy: true, allowAi: true, readWithoutAi: false, confirmed: false }), "ai_blocked", "AI keys not confirmed as paid-tier");
+  assert.equal(aiDecision({ aiConfigured: false, confirmed: true, privacy: true, allowAi: true, readWithoutAi: false }), "ai_blocked");
+});
+
+test("history shows the last three months by default and the message says how to get older items", () => {
+  assert.equal(historyMonths({}), 3);
+  assert.equal(historyMonths({ HISTORY_MONTHS: "6" }), 6);
+  assert.equal(historyMonths({ HISTORY_MONTHS: "0" }), 3);
+  assert.equal(historyMonths({ HISTORY_MONTHS: "abc" }), 3);
+  const cutoff = historyCutoff(3, new Date("2026-10-09T10:00:00Z"));
+  assert.equal(cutoff.toISOString().slice(0, 10), "2026-07-09");
+  assert.match(outsideWindowMessage(3, "help@example.com"), /older than 3 months.*email us at help@example\.com/);
+  assert.match(outsideWindowMessage(3, ""), /contact us/);
+});
+
+test("repeated wrong passwords lock that email for a while, then it recovers", () => {
+  const throttle = createLoginThrottle({ maxFailures: 3, windowMs: 60_000 });
+  const t0 = 1_000_000;
+  for (let i = 0; i < 3; i++) {
+    assert.equal(throttle.check("a@x.in", t0 + i).blocked, false);
+    throttle.fail("a@x.in", t0 + i);
+  }
+  const locked = throttle.check("a@x.in", t0 + 10);
+  assert.equal(locked.blocked, true);
+  assert.ok(locked.retryAfterSeconds > 0 && locked.retryAfterSeconds <= 60);
+  assert.equal(throttle.check("b@x.in", t0 + 10).blocked, false, "another email is not affected");
+  assert.equal(throttle.check("a@x.in", t0 + 61_000).blocked, false, "the lock ends after the window");
+  throttle.fail("a@x.in", t0 + 61_000);
+  assert.equal(throttle.check("a@x.in", t0 + 61_001).blocked, false, "the count starts again after the window");
+});
+
+test("a good sign-in clears the failure count", () => {
+  const throttle = createLoginThrottle({ maxFailures: 2, windowMs: 60_000 });
+  throttle.fail("a@x.in", 1);
+  throttle.reset("a@x.in");
+  throttle.fail("a@x.in", 2);
+  assert.equal(throttle.check("a@x.in", 3).blocked, false);
+  assert.match(throttleMessage(61), /2 minutes/);
+  assert.match(throttleMessage(5), /1 minute\./);
+});
+
+test("Excel files are read as .xlsx and as the older .xls, and a damaged one gives a clear error", () => {
+  const book = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([["Date", "Narration", "Amount"], ["01/05/2026", "UPI-ACME", 5000]]), "Sheet1");
+  for (const [bookType, name] of [["xlsx", "a.xlsx"], ["biff8", "a.xls"]] as const) {
+    const buffer = XLSX.write(book, { type: "buffer", bookType }) as Buffer;
+    const csv = sheetToCsvText({ originalname: name, mimetype: "", buffer });
+    assert.match(csv, /Date,Narration,Amount/, name);
+    assert.match(csv, /UPI-ACME,5000/, name);
+  }
+  assert.throws(() => sheetToCsvText({ originalname: "broken.xlsx", mimetype: "", buffer: Buffer.from("PK\u0003\u0004 not a workbook") }), UnreadableFileError);
+  assert.equal(sheetToCsvText({ originalname: "plain.csv", mimetype: "text/csv", buffer: Buffer.from("a,b\n1,2") }), "a,b\n1,2", "CSV is passed through");
 });

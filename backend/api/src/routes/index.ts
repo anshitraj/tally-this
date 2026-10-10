@@ -27,6 +27,7 @@ import practiceRouter from "./practice";
 import tdsReconRouter from "./tdsRecon";
 import jobsRouter from "./jobs";
 import accountRouter from "./account";
+import neonAuthRouter from "./neonAuth";
 
 const router: IRouter = Router();
 
@@ -36,6 +37,7 @@ router.use(demoRouter);
 router.use(uploadsRouter);
 router.use(jobsRouter);
 router.use(accountRouter);
+router.use(neonAuthRouter);
 router.use(transactionsRouter);
 router.use(invoicesRouter);
 router.use(ledgerRouter);

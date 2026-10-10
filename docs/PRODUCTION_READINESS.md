@@ -1,6 +1,6 @@
 # TallyThis production launch checklist
 
-Reviewed 8 October 2026. This is a launch plan, not a production certification.
+Reviewed 9 October 2026. This is a launch plan, not a production certification.
 
 The interface, upload workflows and exports work locally. Production launch still needs security remediation, a tested deployment, and operational setup. A successful workspace build does not prove live DNS, email delivery, backups, tenant isolation or capacity.
 
@@ -8,7 +8,7 @@ The interface, upload workflows and exports work locally. Production launch stil
 
 - Product name: **TallyThis**. The custom T/check symbol, forest green wordmark, favicon, landing page, login, workspace, report headings and export filenames use this identity.
 - Contact: **contact@tallythis.xyz**. The footer and help page link to it; API support responses default to it. `SUPPORT_EMAIL` can override the API default.
-- Website domain remains pending confirmation: the purchase was described as `tally.xyz`, while the proposed brand/email use `tallythis.xyz`. No canonical URL, domain redirect or production OAuth hostname has been guessed.
+- Website: `https://tallythis.xyz` serves the frontend and proxies `/api/health` successfully, verified on 9 October. Public login and app URLs return HTML; authenticated upload/review/export and OAuth flows still need deployed verification. Mailbox delivery is a separate check.
 - Existing package names, database tables, report schema identifiers, browser storage keys and event names retain their existing names for compatibility. They do not determine the public company name.
 - Adding a `mailto:` link does not create a mailbox. The email domain must be controlled separately from the website domain if they differ.
 
@@ -16,7 +16,7 @@ The interface, upload workflows and exports work locally. Production launch stil
 
 | Area | Required work | Evidence needed to launch |
 | --- | --- | --- |
-| Authentication | Repair OAuth callback handling and account linking; add email ownership verification and password recovery; limit login/register attempts. | Login, recovery, linking, expired/revoked sessions and malicious redirect checks pass on staging. |
+| Authentication | Neon Auth is wired in (email code confirmation, code-based reset, Google/GitHub via Neon; sign-in attempts per email are limited for the older sign-in). Still needed: a live end-to-end test of sign-up, code, reset and both OAuth providers (including Safari, since Neon's session cookie is cross-site), a custom SMTP sender and own Google/GitHub OAuth apps in the Neon console, "Allow Localhost" turned off, production domains added as trusted, and `LEGACY_PASSWORD_LOGIN=false` once users have moved. | Login, recovery, linking, expired/revoked sessions and malicious redirect checks pass on staging. |
 | Permissions | Align Go and Express role checks and client scoping for reads, imports, approvals, downloads and exports. | Founder, CA, finance and viewer tests; a second unrelated workspace cannot access another client's data. |
 | Tally connector | Keep customer-run gateways separate from unrestricted server-side network access. Restrict permitted destinations and worker ingress. | Worker is inaccessible publicly; blocked-destination checks pass. A cloud worker's localhost is not a customer's Tally installation. |
 | Dependencies | Resolve runtime dependency advisories and rerun Node, Python and Go checks. | Reachable high/critical vulnerabilities closed or documented with verified mitigations. |
@@ -95,14 +95,28 @@ Only public settings belong in frontend build variables. Use separate production
 
 [Cloudflare's official Workspace DNS instructions](https://developers.cloudflare.com/dns/manage-dns-records/how-to/set-up-google-workspace/) explain the mailbox records and authentication. Follow the chosen email provider's own records if using another provider.
 
+## Sign-in email through Resend
+
+Neon Auth sends the 6-digit confirmation and reset codes. Its shared sender is rate-limited, so production should use your own SMTP provider. [Resend supports SMTP](https://resend.com/docs/send-with-smtp): host `smtp.resend.com`, port 465 (or 587), username `resend`, password a Resend API key. Steps:
+
+1. In Resend, add `tallythis.xyz` as a sending domain and add the DNS records it shows (SPF and DKIM). Copy them from Resend's Records tab. If DNS is on Cloudflare, set those records to "DNS only" (grey cloud). Wait until the domain shows Verified.
+2. Create a Resend API key limited to sending, for this purpose only.
+3. In the Neon console open Settings → Better Auth → Custom SMTP provider and enter host, port, username `resend`, the API key as the password, a sender on the verified domain (for example `auth@tallythis.xyz`) and the sender name. Save. Enter the key only in the Neon console; never in chat, code or a committed file.
+4. Send yourself a test: create an account, confirm the code arrives, and check it is not in spam. Rotate the key if it is ever exposed.
+
+Replies to the sender address go nowhere unless that mailbox exists; the footer contact stays `contact@tallythis.xyz`.
+
 ## Financial correctness and privacy acceptance
 
 - Test each supported bank/marketplace format with synthetic or consented, protected samples. Validate dates, signs, rounding, opening/closing balance, statement periods, duplicate entries and ambiguous matches.
 - Import the generated XML into a test Tally company using supported versions. Confirm ledgers, voucher totals and repeat-import behavior; downloading XML alone is insufficient validation.
 - Have an accountant review GST draft mappings, cancellations, refunds, fees, tax amounts and exception behavior. Keep outputs described as drafts for review rather than filing guarantees.
+- The marketplace review now supports row, HSN and document-count corrections, uploaded state-wise TCS comparison, Excel, and a Sales voucher XML working copy. These are local features only on the feature branch. GST portal-ready JSON, verified marketplace report layouts, TallyPrime import of Sales vouchers, linked credit notes and settlements still need evidence before launch.
 - Verify source links and review decisions persist for saved jobs and remain tied to the correct client. Exceptions must be actionable without revealing parser/provider complexity by default.
 - Test the core jobs without AI credentials. Unsupported scans must ask for a readable export or report that reading failed rather than silently return an empty successful result.
-- The present AI consent describes Google Gemini, while the document reader supports multiple providers. Align the wording with the actual selected provider, fallback behavior, contract, retention and location before enabling private document reading.
+- Privacy-mode document reading now permits only Gemini, matching the displayed consent. Verify the paid provider contract, retention and location before setting `PRIVACY_AI_ALLOWED=true`.
+- Maintain the [bank evidence matrix](BANK_SUPPORT.md). A recognized bank name or logo does not establish that its statement layout parses or imports correctly.
+- Apply the [financial accuracy standard](ACCURACY_STANDARD.md) and [competitor gap list](COMPETITOR_REVIEW.md). Universal “100% accuracy” and feature parity remain unproven. Test every supported format, tax/document treatment and confirmed match on independently checked source data before expanding claims.
 - Define the difference between hiding old history, deleting raw files, deleting extracted financial records, deleting an account and expiring backups. A retention date stored in a database is not a scheduled deletion service.
 - Publish subprocessors, support/grievance contact, breach response process and customer responsibilities. Have counsel assess applicable Indian privacy requirements and effective dates using the [official MeitY DPDP publications](https://www.meity.gov.in/documents/act-and-policies/digital-personal-data-protection-rules-2025-gDOxUjMtQWa?pageTitle=Digit).
 - Review TallyThis naming/trademark implications before investing further in public launch. Use truthful independence statements and avoid presenting bank logos as endorsements. This checklist does not establish trademark clearance.
@@ -135,4 +149,4 @@ Use a staging environment first. Launch only after the applicable P0 items have 
 - [ ] Privacy/terms/retention/provider disclosures and support process approved.
 - [ ] Rollback and incident ownership documented; paid entitlements match actual billing behavior.
 
-Local verification for the rebrand: workspace build/typechecks passed, 31 API workflow/parser tests passed, and 10 browser tests passed, including 360px, 390px and 768px layouts. Desktop/mobile visual inspection found no horizontal overflow or browser exceptions. Live hosting, DNS, mailbox delivery, restoration, load testing and a full adversarial tenant test suite remain unverified.
+Local verification on 9 October: workspace build/typechecks and API workflow/parser tests passed. The bank review, Excel and navigation browser checks passed, including 360px, 390px and 768px layouts. Incognito adds entitlement, expired-plan, retry, cross-tab, account-switch, mode-lock and mobile checks. Live frontend HTTPS and service health are verified; authenticated live workflows, mailbox delivery, restoration, load testing, real bank and marketplace fixtures, Tally import and a full adversarial tenant test suite remain unverified. See [RAILWAY_DEPLOYMENT.md](RAILWAY_DEPLOYMENT.md) for branch versus deployment status.
