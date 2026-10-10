@@ -19,11 +19,23 @@ const ROLES: Array<{ id: Role; label: string; detail: string; icon: typeof Brief
   { id: "business", label: "Business owner", detail: "I manage my own company's books", icon: Building },
 ];
 
-/** Account creation is step 1 (on the sign-up screen). This page is steps 2 and 3. */
+/** A name made up at sign-up (the start of the email, or "X's workspace") is not shown back as if the person typed it. */
+function suggested(value: string | undefined, email: string, placeholderPattern: RegExp) {
+  const text = (value ?? "").trim();
+  if (!text || text === email.split("@")[0] || placeholderPattern.test(text)) return "";
+  return text;
+}
+
+/**
+ * Step 1 finishes the account (name and firm, also after Google or GitHub), step 2 adds the first
+ * client and step 3 picks the first job.
+ */
 export default function OnboardingPage() {
   const [, navigate] = useLocation();
   const user = getUser();
-  const [step, setStep] = useState<2 | 3>(2);
+  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [fullName, setFullName] = useState(() => suggested(user?.name, user?.email ?? "", /^$/));
+  const [firmName, setFirmName] = useState(() => suggested(user?.company, user?.email ?? "", /'s workspace$/i));
   const [role, setRole] = useState<Role>("ca");
   const [clientName, setClientName] = useState("");
   const [accounting, setAccounting] = useState<Accounting>("Tally");
@@ -37,6 +49,33 @@ export default function OnboardingPage() {
   if (!user) return null;
 
   const ownBusiness = role === "business";
+
+  const saveProfile = async () => {
+    setError("");
+    const name = fullName.trim();
+    const company = firmName.trim();
+    if (!name) {
+      setError("Enter your name.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const response = await fetch(`${BASE}/api/account/profile`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, companyName: company }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok || !body.ok) {
+        setError(body.error || "Your details could not be saved. Try again.");
+        return;
+      }
+      login({ user: { ...user, name, company: company || user.company }, token: getAuthToken() ?? undefined });
+      setStep(2);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const saveClient = async (skip: boolean) => {
     setError("");
@@ -89,6 +128,51 @@ export default function OnboardingPage() {
       </header>
 
       <main className="mx-auto max-w-2xl px-4 py-10">
+        {step === 1 && (
+          <section>
+            <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Welcome to TallyThis</h1>
+            <p className="mt-2 text-sm text-muted-foreground">Two quick details so your reports carry the right names.</p>
+            <form
+              className="mt-6 space-y-4 rounded-2xl border border-border bg-card p-5"
+              onSubmit={event => { event.preventDefault(); if (!busy) void saveProfile(); }}
+            >
+              <div>
+                <label htmlFor="full-name" className="text-sm font-semibold">Your name</label>
+                <input
+                  id="full-name"
+                  name="name"
+                  autoComplete="name"
+                  autoFocus
+                  value={fullName}
+                  onChange={event => setFullName(event.target.value)}
+                  placeholder="Aarav Sharma"
+                  className="fv-input mt-2 h-12 w-full text-base"
+                  required
+                />
+              </div>
+              <div>
+                <label htmlFor="firm-name" className="text-sm font-semibold">Firm or business name</label>
+                <input
+                  id="firm-name"
+                  name="organization"
+                  autoComplete="organization"
+                  value={firmName}
+                  onChange={event => setFirmName(event.target.value)}
+                  placeholder="Mehta & Associates"
+                  className="fv-input mt-2 h-12 w-full text-base"
+                />
+                <p className="mt-2 text-xs text-muted-foreground">Shown on reports. You can change it later.</p>
+              </div>
+              {error && <p className="text-sm text-red-700">{error}</p>}
+              <div className="flex justify-end">
+                <button type="submit" className="fv-button-primary h-12 px-8 text-base" disabled={busy || !fullName.trim()}>
+                  {busy ? "Saving…" : "Continue"}
+                </button>
+              </div>
+            </form>
+          </section>
+        )}
+
         {step === 2 && (
           <section>
             <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Who are you?</h1>

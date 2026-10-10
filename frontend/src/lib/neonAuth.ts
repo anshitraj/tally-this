@@ -21,6 +21,8 @@ export interface NeonConfig {
   enabled: boolean;
   authUrl: string | null;
   legacyLogin: boolean;
+  /** The sample workspace can be opened here (never in production). */
+  demo: boolean;
 }
 
 export interface TallySession {
@@ -40,9 +42,16 @@ export class NeonAuthError extends Error {
 let configRequest: Promise<NeonConfig> | null = null;
 export function loadNeonConfig(): Promise<NeonConfig> {
   configRequest ??= fetch(`${BASE}/api/auth/neon/config`)
-    .then(response => (response.ok ? response.json() : null))
-    .then((data): NeonConfig => ({ enabled: data?.enabled === true && typeof data.authUrl === "string", authUrl: data?.authUrl ?? null, legacyLogin: data?.legacyLogin !== false }))
-    .catch((): NeonConfig => ({ enabled: false, authUrl: null, legacyLogin: true }));
+    .then(response => {
+      if (!response.ok) throw new Error(`config ${response.status}`);
+      return response.json();
+    })
+    .then((data): NeonConfig => ({ enabled: data?.enabled === true && typeof data.authUrl === "string", authUrl: data?.authUrl ?? null, legacyLogin: data?.legacyLogin !== false, demo: data?.demo === true }))
+    .catch((): NeonConfig => {
+      // Ask again next time instead of remembering a moment when the server could not be reached.
+      configRequest = null;
+      return { enabled: false, authUrl: null, legacyLogin: true, demo: false };
+    });
   return configRequest;
 }
 

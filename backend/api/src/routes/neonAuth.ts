@@ -154,6 +154,8 @@ router.get("/auth/neon/config", (_req, res): void => {
     enabled: Boolean(config),
     authUrl: config?.authUrl ?? null,
     legacyLogin: process.env.LEGACY_PASSWORD_LOGIN !== "false",
+    // The sample workspace is only offered where it can actually be opened.
+    demo: process.env.ALLOW_DEMO_SEED === "true" || process.env.NODE_ENV !== "production",
   });
 });
 
