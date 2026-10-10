@@ -126,7 +126,13 @@ export default function LoginPage() {
     if (!new URLSearchParams(window.location.search).has("neon_auth_session_verifier")) return;
     setBusy(true);
     void completeWithNeon()
-      .catch(err => setError(err instanceof Error ? err.message : "Sign-in could not be completed. Please try again."))
+      .catch(err => {
+        setError(err instanceof Error ? err.message : "Sign-in could not be completed. Please try again.");
+        // The note works once; drop it so a refresh starts clean.
+        const url = new URL(window.location.href);
+        url.searchParams.delete("neon_auth_session_verifier");
+        window.history.replaceState(window.history.state, "", url.toString());
+      })
       .finally(() => setBusy(false));
     // Runs once on arrival.
     // eslint-disable-next-line react-hooks/exhaustive-deps
