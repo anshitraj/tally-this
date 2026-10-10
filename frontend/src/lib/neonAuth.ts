@@ -56,60 +56,90 @@ async function neon(): Promise<NeonClient> {
   return clientRequest;
 }
 
-// Neon's messages are written for developers; these are the ones a person can act on.
+// Neon's messages are written for developers; these are the ones a person can act on. The first
+// match wins, so the more specific cases come first.
 const FRIENDLY: Array<[RegExp, string]> = [
-  [/invalid (email|password)|invalid_email_or_password|incorrect/i, "That email and password do not match."],
-  [/not verified|email_not_verified/i, "Confirm your email address first."],
-  [/already exists|user_already_exists|already registered/i, "This email already has an account. Sign in instead."],
-  [/otp|code/i, "That code is not right or has expired. Ask for a new one."],
-  [/password.*(short|least|characters)|too_short/i, "Use a password with at least 8 characters."],
-  [/too many|rate.?limit|429/i, "Too many tries. Please wait a few minutes and try again."],
+  [/email_not_confirmed|email_not_verified|not verified|not confirmed/i, "Confirm your email address first."],
+  [/invalid origin|(^|\s)(http )?403(\s|$)|forbidden/i, "Sign-in is not switched on for this web address yet. Please try again soon or email us."],
+  [/invalid_credentials|invalid[ _](email|password|login)|incorrect/i, "That email and password do not match."],
+  [/already exists|user_already_exists|already registered|email_exists/i, "This email already has an account. Sign in instead."],
+  [/weak_password|too_short|password.*(short|least|characters)/i, "Use a password with at least 8 characters."],
+  [/over_request_rate_limit|too many|rate.?limit|429/i, "Too many tries. Please wait a few minutes and try again."],
+  [/otp|invalid[ _]token|expired|bad_jwt|invalid[ _]code/i, "That code is not right or has expired. Ask for a new one."],
 ];
 
-function fail(error: { message?: string; code?: string; status?: number } | null | undefined, fallback: string): never {
-  const raw = `${error?.code ?? ""} ${error?.message ?? ""} ${error?.status ?? ""}`;
-  const friendly = FRIENDLY.find(([pattern]) => pattern.test(raw));
-  throw new NeonAuthError(friendly?.[1] ?? fallback, error?.code);
+interface Failure {
+  message?: string;
+  code?: string;
+  status?: number;
+}
+
+/** The text shown for a failed sign-in step. Exported so it can be checked on its own. */
+export function describeAuthFailure(error: Failure | null | undefined, fallback: string): string {
+  const raw = `${error?.code ?? ""} ${error?.message ?? ""}`;
+  return FRIENDLY.find(([pattern]) => pattern.test(raw))?.[1] ?? fallback;
+}
+
+function fail(error: Failure | null | undefined, fallback: string): never {
+  throw new NeonAuthError(describeAuthFailure(error, fallback), error?.code);
+}
+
+/**
+ * The Neon SDK throws for some failures and returns { error } for others. Both come back here as one
+ * failure (or null when the step worked).
+ */
+async function failureOf(step: () => Promise<unknown>): Promise<Failure | null> {
+  try {
+    const result = (await step()) as { error?: Failure | null } | null | undefined;
+    return result?.error ?? null;
+  } catch (err) {
+    const thrown = err as Failure | undefined;
+    return { message: thrown?.message ?? "Sign-in failed", code: thrown?.code, status: thrown?.status };
+  }
 }
 
 export async function neonSignUp(name: string, email: string, password: string) {
-  const { error } = await (await neon()).signUp.email({ name, email, password });
+  const error = await failureOf(async () => (await neon()).signUp.email({ name, email, password }));
   if (error) fail(error, "Your account could not be created. Please try again.");
 }
 
 export async function neonSendCode(email: string, type: "email-verification" | "forget-password") {
-  const { error } = await (await neon()).emailOtp.sendVerificationOtp({ email, type });
+  const error = await failureOf(async () => (await neon()).emailOtp.sendVerificationOtp({ email, type }));
   if (error) fail(error, "The code could not be sent. Please try again in a moment.");
 }
 
 export async function neonVerifyEmail(email: string, otp: string) {
-  const { error } = await (await neon()).emailOtp.verifyEmail({ email, otp });
+  const error = await failureOf(async () => (await neon()).emailOtp.verifyEmail({ email, otp }));
   if (error) fail(error, "That code is not right or has expired. Ask for a new one.");
 }
 
 /** Returns false when the account exists but its email is not confirmed yet. */
 export async function neonSignIn(email: string, password: string): Promise<boolean> {
-  const { error } = await (await neon()).signIn.email({ email, password });
+  const error = await failureOf(async () => (await neon()).signIn.email({ email, password }));
   if (!error) return true;
-  if (/verif/i.test(`${error.code ?? ""} ${error.message ?? ""}`) || error.status === 403) return false;
+  if (/email_not_confirmed|email_not_verified|not verified|not confirmed/i.test(`${error.code ?? ""} ${error.message ?? ""}`)) return false;
   fail(error, "Sign-in failed. Check your email and password.");
 }
 
 export async function neonResetPassword(email: string, otp: string, password: string) {
-  const { error } = await (await neon()).emailOtp.resetPassword({ email, otp, password });
+  const error = await failureOf(async () => (await neon()).emailOtp.resetPassword({ email, otp, password }));
   if (error) fail(error, "The password could not be changed. Ask for a new code and try again.");
 }
 
 export async function neonSocialStart(provider: "google" | "github", returnPath: string) {
-  const { error } = await (await neon()).signIn.social({ provider, callbackURL: `${window.location.origin}${returnPath}` });
+  const error = await failureOf(async () => (await neon()).signIn.social({ provider, callbackURL: `${window.location.origin}${returnPath}` }));
   if (error) fail(error, "That sign-in could not be started. Please try again.");
 }
 
 /** The signed token Neon holds for the person who just signed in, or null. */
 export async function neonToken(): Promise<string | null> {
   // The SDK puts the signed token it receives from Neon on the session as `token`.
-  const session = await (await neon()).getSession();
-  return session.data?.session?.token ?? null;
+  try {
+    const session = await (await neon()).getSession();
+    return session.data?.session?.token ?? null;
+  } catch (err) {
+    fail(err as Failure, "Sign-in could not be completed. Please try again.");
+  }
 }
 
 export async function neonSignOut() {
