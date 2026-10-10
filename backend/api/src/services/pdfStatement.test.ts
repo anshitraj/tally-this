@@ -74,6 +74,33 @@ test("reads amounts from the column they sit under and proves every row", async 
   assert.equal(read.check!.verified, true);
 });
 
+test("a Closing Balance column heading is not mistaken for a printed closing total", async () => {
+  const col = { date: 40, narration: 100, ref: 250, debit: 380, credit: 460, balance: 540 };
+  const lines: Line[] = [
+    { y: 40, cells: [{ text: "ICICI Bank Ltd - Statement of Account", x: 40 }] },
+    { y: 60, cells: [{ text: "Account No: XXXXXXXX4821", x: 40 }] },
+    { y: 90, cells: [{ text: "Date", x: col.date }, { text: "Narration", x: col.narration }, { text: "Chq/Ref No.", x: col.ref }, { text: "Withdrawal Amt", x: 345 }, { text: "Deposit Amt", x: 430 }, { text: "Closing Balance", x: 495 }] },
+    { y: 110, cells: [{ text: "01/06/2026", x: col.date }, { text: "UPI-SHARMA TRADERS", x: col.narration }, right("12,500.00", W), right("1,87,500.00", B)] },
+    { y: 128, cells: [{ text: "02/06/2026", x: col.date }, { text: "NEFT CR-MEHTA EXPORTS", x: col.narration }, right("45,000.00", D), right("2,32,500.00", B)] },
+    { y: 146, cells: [{ text: "04/06/2026", x: col.date }, { text: "IMPS-AIRTEL", x: col.narration }, right("1,179.00", W), right("2,31,321.00", B)] },
+  ];
+  const read = await readStatementPdf(await makePdf(lines), { fileName: "statement.pdf" });
+  assert.equal(read.status, "ok");
+  assert.equal(read.summary!.transactions.length, 3);
+  assert.notEqual(read.check!.closingMatches, false, "no printed closing total exists, so nothing can disagree");
+  assert.equal(read.check!.verified, true, JSON.stringify(read.check));
+  assert.ok(!read.summary!.warnings.some(warning => /closing balance printed/i.test(warning)));
+});
+
+test("a printed closing total that disagrees with the last row is still flagged", async () => {
+  const lines = kotakLines();
+  lines.push({ y: 260, cells: [{ text: "Closing Balance", x: 125 }, right("9,99,999.00", B)] });
+  const read = await readStatementPdf(await makePdf(lines), { fileName: "statement.pdf" });
+  assert.equal(read.check!.printedClosing, 999999);
+  assert.equal(read.check!.closingMatches, false);
+  assert.equal(read.check!.verified, false);
+});
+
 test("a row that breaks the running balance is caught", async () => {
   const read = await readStatementPdf(await makePdf(kotakLines("3,10,000.00")), { fileName: "statement.pdf" });
   assert.equal(read.check!.verified, false);

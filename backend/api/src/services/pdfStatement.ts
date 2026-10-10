@@ -550,13 +550,18 @@ function interpret(rows: Row[], allText: string, fileName: string): Omit<PdfStat
 
 function printedClosingBalance(allText: string, closingRows: number[], last: number | null): number | null {
   if (closingRows.length > 0) return closingRows[closingRows.length - 1];
-  const at = allText.search(/closing\s+balance/i);
-  if (at < 0) return null;
-  const nearby = allText.slice(at, at + 160).match(/-?(?:\d{1,3}(?:,\d{2,3})+|\d+)\.\d{2}/g) ?? [];
-  const values = nearby.map(value => Number(value.replace(/,/g, "")));
-  if (values.length === 0) return null;
-  if (last != null && values.some(value => Math.abs(value - last) <= 0.011)) return last;
-  return values[values.length - 1];
+  // "Closing Balance" is also a very common column heading. A heading is followed by the first
+  // transaction (a date), so only figures that come before the next date count as a printed total.
+  const dateAhead = new RegExp(`\\d{1,2}[\\-/.]\\d{1,2}[\\-/.]\\d{2,4}|\\d{1,2}[\\s\\-/.]+${MONTH}[\\s\\-/.,]+\\d{2,4}`, "i");
+  for (const label of allText.matchAll(/closing\s+balance/gi)) {
+    const tail = allText.slice((label.index ?? 0) + label[0].length, (label.index ?? 0) + label[0].length + 160);
+    const beforeNextDate = tail.slice(0, tail.search(dateAhead) >= 0 ? tail.search(dateAhead) : tail.length);
+    const values = (beforeNextDate.match(/-?(?:\d{1,3}(?:,\d{2,3})+|\d+)\.\d{2}/g) ?? []).map(value => Number(value.replace(/,/g, "")));
+    if (values.length === 0) continue;
+    if (last != null && values.some(value => Math.abs(value - last) <= 0.011)) return last;
+    return values[values.length - 1];
+  }
+  return null;
 }
 
 function accountNumber(headerText: string): string | null {
