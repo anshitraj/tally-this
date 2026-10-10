@@ -56,6 +56,8 @@ async function readDocument<T>(input: {
   /** Privacy mode: write no usage log either. */
   privacy?: boolean;
   score?: (data: T) => number;
+  /** A valid answer that found nothing. Two in a row means the file has nothing to find; stop paying for more tries. */
+  empty?: (data: T) => boolean;
 }): Promise<DocReadResult<T>> {
   const bytes = input.files.reduce((sum, file) => sum + file.data.length, 0);
   if (bytes > MAX_BYTES) return { ok: false, error: "file_too_large_for_ai" };
@@ -81,6 +83,7 @@ async function readDocument<T>(input: {
 
   let lastError = "ai_read_failed";
   let best: { data: T; provider: AIProviderName; model: string; score: number } | null = null;
+  let emptyAnswers = 0;
   for (let index = 0; index < attempts.length; index += 1) {
     const attempt = attempts[index];
     const started = Date.now();
@@ -103,6 +106,7 @@ async function readDocument<T>(input: {
         const score = input.score ? input.score(parsed.data) : 1;
         if (!best || score > best.score) best = { data: parsed.data, provider: attempt.name, model: attempt.model, score };
         if (score >= 1) break;
+        if (input.empty?.(parsed.data) && ++emptyAnswers >= 2) break;
         continue;
       }
       lastError = parsed.error;
@@ -296,6 +300,7 @@ export async function readBankStatementWithAI(input: {
     userId: input.userId,
     privacy: input.privacy,
     score,
+    empty: data => toSummary(data, input.fileName).summary.transactions.length === 0,
   });
   if (!result.ok) return result;
   const { summary, check } = toSummary(result.data, input.fileName);

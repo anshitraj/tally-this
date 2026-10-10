@@ -43,6 +43,7 @@ export interface StatementRead {
 
 const LOCKED = "This PDF is password-protected. Enter the PDF password to continue.";
 const WRONG = "That password did not open the PDF. Check it and try again.";
+const NO_ROWS = "No bank transactions were found in this file. Check that it is a bank statement, or upload the Excel/CSV statement from your net banking.";
 const AI_DOWN = "The AI reader is not available right now, so this scan could not be read. Try again in a little while, or use the bank's Excel/CSV download or a PDF from net banking.";
 
 /** Fewer failed rows wins; then more proved rows. */
@@ -94,6 +95,8 @@ export async function readBankStatementFile(
   if (decision === "ask_consent") return { ok: false, summary: null, source: "none", needsAiConsent: true, message: AI_CONSENT_MESSAGE };
   if (decision === "ai_blocked") return { ok: false, summary: null, source: "none", message: AI_BLOCKED_MESSAGE };
   let aiFailed = false;
+  // The AI could read the file but found no transactions in it: not an outage.
+  let aiFoundNothing = false;
   if (decision === "use_ai" && aiDocumentReadingAvailable(privacy)) {
     let files: Array<{ data: Buffer; mimeType: string }> = [];
     if (isPdf && ctx.password) files = (await renderPdfPages(file.buffer, ctx.password).catch(() => [])).map(data => ({ data, mimeType: "image/png" }));
@@ -107,6 +110,8 @@ export async function readBankStatementFile(
           if (!ai.read.check.verified) summary.warnings = [...summary.warnings, "AI extracted — pending review."];
           return { ok: true, summary, source: "ai", aiProvider: ai.read.provider, check: ai.read.check, message: summary.message };
         }
+      } else if (ai.error === "no_transactions_read") {
+        aiFoundNothing = true;
       } else {
         aiFailed = true;
       }
@@ -114,7 +119,7 @@ export async function readBankStatementFile(
   }
   if (layout) return { ok: true, summary: layout.summary, source: "pdf_layout", check: layout.check, message: layout.summary.message };
   // Privacy mode keeps to the in-memory readers: no temp files, no local OCR, no helper services.
-  if (privacy) return { ok: false, summary: null, source: "none", message: aiFailed ? AI_DOWN : "No transactions could be read from this file. Try the bank's Excel or CSV download." };
+  if (privacy) return { ok: false, summary: null, source: "none", message: aiFailed ? AI_DOWN : aiFoundNothing ? NO_ROWS : "No transactions could be read from this file. Try the bank's Excel or CSV download." };
 
   // 3. Last resort: the older text-table and OCR pipeline.
   let ruleSummary: BankStatementSummary | null = null;
@@ -148,6 +153,8 @@ export async function readBankStatementFile(
     source: "none",
     message: aiFailed
       ? AI_DOWN
+      : aiFoundNothing
+      ? NO_ROWS
       : aiDocumentReadingAvailable()
       ? `${base} Try the bank's Excel or CSV download.`
       : `${base} Add a Claude or Gemini API key to read scanned statements, or upload the bank's Excel/CSV download.`,
