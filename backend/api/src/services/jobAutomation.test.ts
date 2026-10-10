@@ -13,7 +13,7 @@ import { compareInvoicesWithBank, parseInvoiceCsv } from "./invoiceVerify";
 import { recognizeStatement } from "./statementOcr";
 import { createLoginThrottle, throttleMessage } from "./loginThrottle";
 import * as XLSX from "xlsx";
-import { UnreadableFileError, sheetToCsvText } from "./fileDetect";
+import { NOT_A_STATEMENT, UnreadableFileError, notAStatementMessage, sheetToCsvText } from "./fileDetect";
 import { detectBankFromStatement } from "./bankDirectory";
 import { buildBankToTallyWorkbook } from "./bankToTallyWorkbook";
 import { buildEcommerceWorkbook } from "./ecommerceWorkbook";
@@ -649,4 +649,13 @@ test("Excel files are read as .xlsx and as the older .xls, and a damaged one giv
   }
   assert.throws(() => sheetToCsvText({ originalname: "broken.xlsx", mimetype: "", buffer: Buffer.from("PK\u0003\u0004 not a workbook") }), UnreadableFileError);
   assert.equal(sheetToCsvText({ originalname: "plain.csv", mimetype: "text/csv", buffer: Buffer.from("a,b\n1,2") }), "a,b\n1,2", "CSV is passed through");
+});
+
+test("a file that is not a bank statement says so, and names what it looks like", () => {
+  const csv = (name: string, text: string) => ({ originalname: name, mimetype: "text/csv", buffer: Buffer.from(text) });
+  assert.equal(notAStatementMessage({ originalname: "notes.pdf", mimetype: "application/pdf", buffer: Buffer.from("") }), NOT_A_STATEMENT, "a PDF of something else");
+  assert.equal(notAStatementMessage(csv("random.csv", "Name,Team,Notes\nAsha,Ops,Hello")), NOT_A_STATEMENT);
+  assert.match(notAStatementMessage(csv("tally.csv", "Date,Particulars,Vch Type,Vch No.,Debit,Credit\n01/05/2026,ACME,Payment,1,500,")), /Tally export.*Bank ↔ Tally/);
+  assert.match(notAStatementMessage(csv("amazon_sales.csv", "Order ID,ASIN,Taxable Value,Place of Supply\n1,B0X,100,KA")), /marketplace sales report.*E-commerce GST/);
+  assert.match(NOT_A_STATEMENT, /something else/);
 });

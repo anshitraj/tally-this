@@ -10,7 +10,7 @@ import { readStatementPdf, renderPdfPages } from "./pdfStatement";
 import { checkRunningBalance, chronological, type StatementCheck } from "./statementCheck";
 import { AI_BLOCKED_MESSAGE, AI_CONSENT_MESSAGE, aiDecision } from "./privacyPolicy";
 import { parseInvoiceCsv, type InvoiceRow } from "./invoiceVerify";
-import { extensionOf, isDocumentFile, sheetToCsvText } from "./fileDetect";
+import { NOT_A_STATEMENT, extensionOf, isDocumentFile, notAStatementMessage, sheetToCsvText } from "./fileDetect";
 
 export { detectFileKind, detectMarketplace, sheetToCsvText } from "./fileDetect";
 
@@ -43,7 +43,7 @@ export interface StatementRead {
 
 const LOCKED = "This PDF is password-protected. Enter the PDF password to continue.";
 const WRONG = "That password did not open the PDF. Check it and try again.";
-const NO_ROWS = "No bank transactions were found in this file. Check that it is a bank statement, or upload the Excel/CSV statement from your net banking.";
+const NO_ROWS = NOT_A_STATEMENT;
 const AI_DOWN = "The AI reader is not available right now, so this scan could not be read. Try again in a little while, or use the bank's Excel/CSV download or a PDF from net banking.";
 
 /** Fewer failed rows wins; then more proved rows. */
@@ -63,7 +63,9 @@ export async function readBankStatementFile(
     const text = sheetToCsvText(file);
     const summary = parseBankStatement(text, fileName);
     if (summary.transactions.length === 0) {
-      return { ok: false, summary, source: "none", message: summary.message };
+      // A sheet that is plainly another kind of file gets a message that says so.
+      const other = notAStatementMessage(file);
+      return { ok: false, summary, source: "none", message: other === NOT_A_STATEMENT && /statement|narration|withdrawal|deposit|balance/i.test(text.slice(0, 600)) ? summary.message : other };
     }
     const ordered = chronological(summary.transactions);
     // The opening balance of a sheet is derived from its first row, so it cannot prove anything.
