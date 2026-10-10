@@ -132,7 +132,7 @@ export default function OverviewPage() {
     const job = response.data?.job;
     if (!response.ok || !job) {
       setNotice(
-        "We could not tell what this file is. Pick an automation below.",
+        "This looks like something else, so we could not match it to a job. Pick a job below, or drop a bank statement, Tally export, marketplace report or invoices.",
       );
       return;
     }
