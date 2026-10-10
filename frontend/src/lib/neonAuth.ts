@@ -136,7 +136,9 @@ export async function neonResetPassword(email: string, otp: string, password: st
 }
 
 export async function neonSocialStart(provider: "google" | "github", returnPath: string) {
-  const error = await failureOf(async () => (await neon()).signIn.social({ provider, callbackURL: `${window.location.origin}${returnPath}` }));
+  const back = `${window.location.origin}${returnPath}`;
+  // First-time sign-ins and errors are sent back here too; otherwise Neon may land them on the home page.
+  const error = await failureOf(async () => (await neon()).signIn.social({ provider, callbackURL: back, newUserCallbackURL: back, errorCallbackURL: `${back}?error=oauth` }));
   if (error) fail(error, "That sign-in could not be started. Please try again.");
 }
 
