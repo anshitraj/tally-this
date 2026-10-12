@@ -3,7 +3,19 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { counterpartyFrom, parseBankStatement, unifyParties } from "./bankStatement";
-import { buildTallyVoucherXml, LEDGER_OPTIONS, suggestLedger, suggestLedgerDetail, validateTallyVoucherXml } from "./tallyVoucherXml";
+
+test("bank input with sub-paise values is rejected instead of rounded silently", () => {
+  const result = parseBankStatement("Date,Narration,Debit,Credit,Balance\n2026-05-01,Test,1.005,,100.00", "test.csv");
+  assert.notEqual(result.status, "parsed");
+});
+
+test("marketplace negative source amounts survive into the working evidence", () => {
+  const pack = normalizeMarketplaceCsv("Invoice Number,Invoice Date,Taxable Value,CGST,SGST,Gross Amount,Cess,HSN,GST Rate,Place of Supply,Transaction Type\nCN-1,01/05/2026,-100,-9,-9,-123,-5,610910,18,Karnataka,credit_note", "amazon", "negative.csv");
+  assert.equal(pack.sales[0].taxableValue, -100);
+  assert.equal(pack.sales[0].grossAmount, -123);
+  assert.equal(pack.sales[0].cess, -5);
+});
+import { buildTallyVoucherXml, LEDGER_OPTIONS, resolveLedger, suggestLedger, suggestLedgerDetail, validateTallyVoucherXml } from "./tallyVoucherXml";
 import { compareBankWithTally, parseTallyLedgerCsv } from "./statementCompare";
 import { buildGstDraftJson, mergeEcommercePacks, normalizeMarketplaceCsv, salesToCsv } from "./ecommerceGst";
 import { comparePortalTcs, readPortalTcs, reviewDocumentSummary, reviewMarketplaceSales } from "./ecommerceReview";
@@ -16,10 +28,83 @@ import * as XLSX from "xlsx";
 import { NOT_A_STATEMENT, UnreadableFileError, notAStatementMessage, sheetToCsvText } from "./fileDetect";
 import { detectBankFromStatement } from "./bankDirectory";
 import { buildBankToTallyWorkbook } from "./bankToTallyWorkbook";
-import { parseCompanyNames, parseImportResponse, parseLedgers } from "./tallyPush";
+import { parseCompanyNames, parseImportResponse, parseLedgers, sendVouchersToTally } from "./tallyPush";
 import { buildEcommerceWorkbook } from "./ecommerceWorkbook";
+import { mergeLedgerPreferences } from "./ledgerPreferences";
+
+test("posting stops on ledger failures and requires actual Tally acknowledgements", async () => {
+  const calls: string[] = [];
+  const blocked = await sendVouchersToTally({ mastersXml: "masters", vouchersXml: "vouchers", expected: 2 }, async xml => { calls.push(xml); return "<RESPONSE><CREATED>0</CREATED><ERRORS>1</ERRORS><LINEERROR>Group does not exist</LINEERROR></RESPONSE>"; });
+  assert.equal(blocked.ok, false);
+  assert.deepEqual(calls, ["masters"]);
+  await assert.rejects(sendVouchersToTally({ vouchersXml: "vouchers", expected: 2 }, async () => "Unknown Request"), /acknowledgement/);
+  const accepted = await sendVouchersToTally({ mastersXml: "masters", vouchersXml: "vouchers", expected: 2 }, async xml => xml === "masters" ? "<RESPONSE><CREATED>0</CREATED><ERRORS>1</ERRORS><LINEERROR>Ledger already exists</LINEERROR></RESPONSE>" : "<RESPONSE><CREATED>2</CREATED><ERRORS>0</ERRORS></RESPONSE>");
+  assert.equal(accepted.ok, true);
+});
 import ExcelJS from "exceljs";
 import { aiDecision, historyCutoff, historyMonths, outsideWindowMessage, planIsActive, privacyAvailable, truthy } from "./privacyPolicy";
+
+test("later ledger choices keep prior approved parties and exact keys", () => {
+  assert.deepEqual(mergeLedgerPreferences([[{ counterparty: "Acme", ledgerName: "Office Expenses" }], [{ counterparty: "ACME", ledgerName: "Purchase" }, { counterparty: "Beta", ledgerName: "Sales" }], [{ counterparty: 5, ledgerName: "Cash" }]]), [{ counterparty: "Acme", ledgerName: "Office Expenses" }, { counterparty: "Beta", ledgerName: "Sales" }]);
+  assert.equal(resolveLedger({ narration: "Payment to ALPHABETA", description: "Payment to ALPHABETA", counterparty: "ALPHABETA", credit: null }, [{ counterparty: "ALPHA", ledgerName: "Professional Fees" }]).name, "Suspense");
+});
+
+test("bank XML rejects sub-paise amounts, same-ledger postings and XML control characters", () => {
+  const row = { date: "2026-05-01", narration: "Test", description: "Test", reference: null, debit: 2, credit: null, rowNumber: 1, counterparty: null, ledgerName: "Suspense" } as any;
+  for (const change of [{ debit: 1.005 }, { ledgerName: "Bank" }, { narration: "Test\u0001text" }]) assert.equal(buildTallyVoucherXml({ companyName: "Test", bankLedger: "Bank", transactions: [{ ...row, ...change }] }).ok, false);
+});
+
+test("linked credit notes preserve source signs, reduce totals and reverse voucher lines", () => {
+  const original = normalizeMarketplaceCsv("Invoice Number,Invoice Date,Taxable Value,CGST,SGST,Gross Amount,HSN,GST Rate,Place of Supply\nINV-1,01/05/2026,100,9,9,118,610910,18,Karnataka", "amazon", "sales.csv").sales[0];
+  const note = { ...original, invoiceNumber: "CN-1", originalInvoiceNumber: "INV-1", invoiceDate: "2026-05-02", taxableValue: -50, cgst: -4.5, sgst: -4.5, grossAmount: -59, transactionType: "credit_note", sourceRow: 3 };
+  const reviewed = reviewMarketplaceSales([original, note], "amazon");
+  assert.equal(reviewed.ok, true);
+  if (!reviewed.ok) return;
+  assert.equal(reviewed.pack.summary.errors, 0);
+  assert.equal(reviewed.pack.summary.taxableValue, 50);
+  assert.equal(reviewed.pack.summary.gst, 9);
+  assert.equal(reviewed.pack.summary.gross, 59);
+  assert.equal(reviewed.pack.tabs.hsn[0].taxableValue, 50);
+  assert.equal(reviewed.pack.sales[1].grossAmount, -59);
+  const xml = buildEcommerceSalesXml({ clientName: "Example", sales: reviewed.pack.sales });
+  assert.equal(xml.ok, true);
+  if (xml.ok) { assert.equal(xml.voucherCount, 2); assert.match(xml.xml, /VCHTYPE="Credit Note"/); assert.match(xml.xml, /<REFERENCE>INV-1<\/REFERENCE>/); }
+  const draft = buildGstDraftJson(reviewed.pack);
+  if (!draft.ok) throw new Error("Draft should retain linked credit notes");
+  assert.equal(draft.json.creditNotes[0].total, -59);
+  const workbook = buildEcommerceWorkbook({ clientName: "Example", sales: reviewed.pack.sales });
+  assert.equal(workbook.getWorksheet("Summary")!.getCell("B10").value, 59);
+  assert.equal(workbook.getWorksheet("HSN summary")!.getCell("C2").value, 50);
+  assert.equal(workbook.getWorksheet("Credit notes")!.getCell("G2").value, -59);
+  for (const invalid of [{ originalInvoiceNumber: "MISSING" }, { gstRate: 12 }, { taxableValue: -200, cgst: -18, sgst: -18, grossAmount: -236 }]) {
+    const rejected = reviewMarketplaceSales([original, { ...note, ...invalid }], "amazon");
+    assert.equal(rejected.ok, true);
+    if (rejected.ok) { assert.ok(rejected.pack.summary.errors > 0); assert.equal(buildEcommerceSalesXml({ clientName: "Example", sales: rejected.pack.sales }).ok, false); }
+  }
+});
+
+test("unreadable marketplace amounts stop the entire multi-file pack", () => {
+  const valid = normalizeMarketplaceCsv("Invoice Number,Invoice Date,Taxable Value\nINV-1,01/05/2026,100", "amazon", "valid.csv");
+  const invalid = normalizeMarketplaceCsv("Invoice Number,Invoice Date,Taxable Value\nINV-2,01/05/2026,unreadable", "amazon", "invalid.csv");
+  assert.notEqual(valid.status, "failed");
+  assert.equal(invalid.status, "failed");
+  assert.match(invalid.message, /unreadable|precision/);
+  assert.equal(mergeEcommercePacks([valid, invalid]).status, "failed");
+});
+
+test("a workbook with two populated financial sheets never silently drops one", () => {
+  const book = XLSX.utils.book_new();
+  for (const name of ["Bank one", "Bank two"]) XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([["Date", "Narration", "Debit"], ["2026-05-01", name, 100]]), name);
+  const buffer = XLSX.write(book, { type: "buffer", bookType: "xlsx" });
+  assert.throws(() => sheetToCsvText({ originalname: "two-banks.xlsx", mimetype: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer }), /multiple|more than one/i);
+});
+
+test("an Excel reading limit never returns a truncated financial table", () => {
+  const book = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([["Date", "Narration", "Debit"], ["2026-05-01", "A", 100], ["2026-05-02", "B", 200]]), "Bank");
+  const buffer = XLSX.write(book, { type: "buffer", bookType: "xlsx" });
+  assert.throws(() => sheetToCsvText({ originalname: "limited.xlsx", mimetype: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer }, 2), /incomplete|limit/);
+});
 
 function repoFile(name: string) {
   let dir = process.cwd();

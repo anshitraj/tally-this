@@ -8,7 +8,7 @@ Repotic's public [home page](https://www.repotic.in/) presents two products: ban
 
 For a real client today, I would use the workflow already proven with that client's statement and target TallyPrime company. On current evidence, I would trial Repotic first for e-commerce GSTR-1 because its public site advertises portal-oriented output, while TallyThis's GST JSON remains a proprietary draft and its broader marketplace layouts are unverified. TallyThis now offers editable HSN/document corrections and uploaded TCS comparison, but those local features have synthetic tests only. For a bank that TallyPrime already accepts directly, I would also try [TallyPrime's own statement import](https://help.tallysolutions.com/bank-statement/). TallyThis's balance proof, exception review and Excel working copy are useful, but I would not rely on its XML for live books until the exact bank format and repeat import have passed an accountant's test.
 
-The TallyThis bank screen now makes review the next action when rows, ledgers or unproved totals need attention. A failed printed closing balance or incomplete row sequence stops the Tally download. This reduces accidental use of an unreviewed export; it does not establish import compatibility.
+Update on 12 October: the bank screen opens a conversion preview with direct Excel/XML downloads. Ledger review is optional and unapproved choices use Suspense. Uncertain source values or unproved totals still need source checks before XML; failed printed closing or row-sequence checks require a better statement. Balance checks now require exact paise and every row, not a one-paise tolerance or an unproved first row. This does not establish real Tally import compatibility.
 
 ## Bank statement → Tally
 
@@ -35,8 +35,10 @@ When GST issues exist, the TallyThis screen leads with review, recalculates sect
 
 1. Test actual failing bank statements (redacted) and add one fixture for each format. Verify the detected bank, all rows, totals, balances, password path and XML import in TallyPrime.
 2. Validate the GST JSON schema and a sample output against the current official GST offline utility and portal; the current proprietary draft must not be uploaded as if it were accepted. Verify B2B/B2C, Table 12 HSN, Table 13 documents, Table 14, GSTIN and period behavior.
-3. Test the uploaded portal TCS comparison on redacted real portal files, including amendments, negative adjustments, period and taxpayer checks. Resolve mismatches before export.
+3. Test the uploaded portal TCS comparison on redacted real portal files, including amendments, negative adjustments, period and taxpayer checks. Resolve mismatches before final filing outputs.
 4. Import marketplace Sales vouchers in a TallyPrime test company. Add linked credit notes, fees and settlement accounting, then verify duplicate/repeat import behavior.
 5. Add dedicated marketplace templates and test them with licensed sample exports. Do not infer broad platform support from the generic parser.
 
 TallyThis also has Bank ↔ Tally and Invoice ↔ Bank review flows beyond Repotic's public bank converter description. Those do not fill the e-commerce gaps above. All workflows remain upload-based; the optional local Tally gateway is separate from a hosted direct integration.
+
+On 12 October, linked credit notes were added for one original invoice row present in the same upload, with sign/date/tax/value checks, net summaries and reversed XML lines. Unlinked and multi-line/cross-period cases remain unsupported. The latest local evidence and outstanding acceptance gates are recorded in [the prioritised delivery review](COMPETITOR_REVIEW.md#prioritised-delivery--12-october-2026).

@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Copy, MessageSquare, MoreVertical } from "lucide-react";
-import { Choice, inr } from "@/components/jobs/jobUi";
+import { Choice, downloadText, inr, toCsv } from "@/components/jobs/jobUi";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -148,9 +148,9 @@ export function BankStatementTable<T extends StatementRow>({
         <div className="rounded-xl border border-sky-200 bg-sky-50/60 p-4 text-sm">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="font-semibold">Questions for the client</h3>
-            <button type="button" onClick={copyQueries} className="inline-flex items-center gap-1.5 text-sm font-semibold text-[var(--fv-accent-dark)] hover:underline">
+            <div className="flex flex-wrap gap-3"><button type="button" onClick={copyQueries} className="inline-flex items-center gap-1.5 text-sm font-semibold text-[var(--fv-accent-dark)] hover:underline">
               <Copy className="h-3.5 w-3.5" />{copied ? "Copied" : "Copy all"}
-            </button>
+            </button><button type="button" className="text-sm font-medium text-[var(--fv-accent-dark)] hover:underline" onClick={() => downloadText("TallyThis_Client_Questions.csv", toCsv(["Date", "Narration", "Paid", "Received", "Question", "Client answer"], queried.map(row => [dmy(row.date), row.narration, row.debit ?? "", row.credit ?? "", queries[row.rowNumber], ""])), "text/csv")}>Download questions</button></div>
           </div>
           <ol className="mt-3 space-y-2">
             {queried.map(row => (

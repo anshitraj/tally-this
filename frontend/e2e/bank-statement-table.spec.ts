@@ -81,6 +81,10 @@ test("statement table: bank view, per-row voucher and ledger, client query, send
   await page.getByRole("button", { name: "Save query" }).click();
   await expect(page.getByRole("button", { name: "Client queries (1)" })).toBeVisible();
   await expect(page.getByText("1 question for the client")).toBeVisible();
+  await page.getByRole("button", { name: "Client queries (1)", exact: true }).click();
+  const questionDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download questions", exact: true }).click();
+  expect((await questionDownload).suggestedFilename()).toBe("TallyThis_Client_Questions.csv");
 
   const download = page.waitForEvent("download");
   await page.getByRole("button", { name: "Download Excel" }).click();

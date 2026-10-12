@@ -92,3 +92,15 @@ Implemented on the feature branch: bank-format preview by default; direct Excel 
 
 Browser evidence covers conversion-only exports on desktop/mobile, full export despite filtered preview, explicit AI opt-in, unconfirmed suggestion isolation, bank correction, row choices, queries, posting and source-check gates. Backend fixtures validate workbook values, XML balance/structure and Suspense posting; production import acceptance remains a separate gate.
 
+## Prioritised delivery — 12 October 2026
+
+The user prioritised reliable statement conversion/imports, complete marketplace GST outputs, and reusable ledger choices/client queries. This is the current evidence, not a declaration that all three are finished:
+
+| Priority | Implemented and locally tested | Still required |
+| --- | --- | --- |
+| Statement conversion and imports | Exact integer-paise running/closing checks and totals; sub-paise/unreadable amounts stop; multi-table or truncated Excel sheets stop instead of silently losing rows; incomplete first-row proof stays unverified; XML rejects same-bank ledger lines, unsupported precision and control characters. Direct posting stops on unexplained master failures or missing acknowledgements. A real-engine preflight/read-back runner exists. | Real bank-format corpus, loaded disposable Tally company, successful actual import/read-back, repeat-import/partial-failure proof and deployed authorization tests. The official educational engine answered, but no company was loaded. See [acceptance record](TALLY_IMPORT_ACCEPTANCE.md). |
+| Marketplace GST | Signed source values are retained; unreadable amounts stop a multi-file batch. Supported credit notes link to one original invoice row in the same upload, check buyer/state/HSN/rate, dates, signs and cumulative limits, reduce net/HSN totals, and reverse Sales/GST ledger lines in Credit Note XML. Excel and draft JSON retain credit-note evidence. | Multi-line/cross-period originals, amendments, seller/operator identity and period gates, actual platform templates, fees/settlements and verified portal JSON/Tally acceptance. Unlinked returns and unsupported adjustments still stop XML. |
+| Ledger reuse and client questions | Exact-party preference matching; newer choices merge with previous parties rather than replacing the entire profile. Client questions download separately with an answer column. CSV strings that could become spreadsheet formulas are escaped. | Deployed persistence/client-isolation checks, field-level review history, secure client-response links and connector retry acceptance. |
+
+No real samples were available from the user. Automated financial tests remain synthetic. The current [official GST return downloads](https://www.gst.gov.in/download/returns) were also inspected: the page displayed Returns Offline Tool V3.2.4 and linked its official package, containing separate B2B/B2CS/CDNR/CDNUR and B2B/B2C HSN CSV templates. The public example values are illustrative, not independently verified books. Downloading those templates does not prove that TallyThis's proprietary JSON is accepted by the utility or portal; no filing was performed.
+

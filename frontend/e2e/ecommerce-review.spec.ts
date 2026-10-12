@@ -87,7 +87,7 @@ test("a clean upload opens GST sections and exports only when the accountant ask
   await page.locator('input[type="file"]').first().setInputFiles({ name: "amazon.csv", mimeType: "text/csv", buffer: Buffer.from("invoice,taxable\nINV-1,100") });
   await expect(page.getByRole("tab", { name: "GST report", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByLabel("GST section")).toHaveValue("B2C");
-  await expect(page.getByLabel("GST section").locator("option")).toHaveText(["B2B", "B2C", "HSN", "TCS", "Documents", "Table 14"]);
+  await expect(page.getByLabel("GST section").locator("option")).toHaveText(["B2B", "B2C", "HSN", "TCS", "Documents", "Credit notes", "Table 14"]);
   await expect(page.getByRole("group", { name: "Choose upload mode" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /Download/ })).toHaveCount(0);
   expect(exportRequests).toHaveLength(0);
@@ -122,4 +122,21 @@ test("excluded marketplace documents are explained without overflowing the mobil
   await expect(page.getByText("sales rows read", { exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: "../tmp/ecommerce-exclusions-390.png", fullPage: true });
+});
+
+test("linked credit notes show their source amounts and original invoice on mobile", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await setup(page);
+  const original = { ...sale, invoiceNumber: "INV-1", hsn: "610910", issues: [] };
+  const note = { ...original, invoiceNumber: "CN-1", originalInvoiceNumber: "INV-1", transactionType: "credit_note", taxableValue: -50, cgst: -4.5, sgst: -4.5, grossAmount: -59, sourceRow: 3 };
+  const result = pack(original);
+  await page.route("**/api/jobs/ecommerce/normalize", route => route.fulfill({ json: { ...result, sales: [original, note], summary: { ...result.summary, documents: 2, taxableValue: 50, gst: 9, gross: 59 }, tabs: { ...result.tabs, creditNotes: [note] } } }));
+  await page.goto("/app/jobs/ecommerce-gst");
+  await page.locator('input[type="file"]').first().setInputFiles({ name: "credits.csv", mimeType: "text/csv", buffer: Buffer.from("Invoice Number,Taxable Value\nCN-1,-50") });
+  await page.getByLabel("GST section").selectOption("Credit notes");
+  await expect(page.getByRole("cell", { name: "CN-1", exact: true })).toBeVisible();
+  await expect(page.getByRole("cell", { name: "INV-1", exact: true })).toBeVisible();
+  await expect(page.getByText("Net taxable value", { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: "../tmp/gst-credit-notes-mobile.png", fullPage: true });
 });

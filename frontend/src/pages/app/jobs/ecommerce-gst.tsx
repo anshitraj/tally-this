@@ -43,6 +43,7 @@ interface Sale {
   sourceRow: number;
   sourceFile: string;
   issues: string[];
+  originalInvoiceNumber?: string | null;
 }
 
 interface Pack {
@@ -55,7 +56,7 @@ interface Pack {
   files?: string[];
   sales: Sale[];
   summary: { documents: number; taxableValue: number; gst: number; cess?: number; gross: number; refunds: number; tcs: number; b2b: number; b2c: number; errors: number; excludedSalesRows?: number };
-  tabs: { b2b: Sale[]; b2c: Sale[]; hsn: Array<{ hsn: string; gstRate: number | null; taxableValue: number; count: number; supply: "B2B" | "B2C" }>; tcs: Sale[]; table14: Sale[]; errors: Sale[] };
+  tabs: { creditNotes?: Sale[]; b2b: Sale[]; b2c: Sale[]; hsn: Array<{ hsn: string; gstRate: number | null; taxableValue: number; count: number; supply: "B2B" | "B2C" }>; tcs: Sale[]; table14: Sale[]; errors: Sale[] };
   documents?: Array<{ platform: string; issued: number; cancelled: number; source: "uploaded reports" | "accountant correction" }>;
 }
 
@@ -81,7 +82,7 @@ const PLATFORMS: Array<{ value: Platform; label: string }> = [
   { value: "limeroad", label: "LimeRoad" },
   { value: "generic", label: "Other" },
 ];
-const TABS = ["B2B", "B2C", "HSN", "TCS", "Documents", "Table 14"] as const;
+const TABS = ["B2B", "B2C", "HSN", "TCS", "Documents", "Credit notes", "Table 14"] as const;
 
 function titleCase(text: string) {
   return text.split(" + ").map(part => part === "generic" ? "Marketplace" : part.charAt(0).toUpperCase() + part.slice(1)).join(" + ");
@@ -309,7 +310,7 @@ export default function EcommerceGstPage() {
               <BigStat value={summary.errors} label={summary.errors === 1 ? "needs review" : "need review"} tone={summary.errors > 0 ? "attention" : "good"} />
             </div>
             <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-sm">
-              <Mini label="Taxable value" value={inr(summary.taxableValue)} />
+              <Mini label={pack.tabs.creditNotes?.some(note => note.issues.length === 0) ? "Net taxable value" : "Taxable value"} value={inr(summary.taxableValue)} />
               <Mini label={summary.cess ? "GST + cess" : "GST"} value={inr(summary.gst + (summary.cess ?? 0))} />
               <Mini label="TCS" value={inr(summary.tcs)} />
             </div>
@@ -358,8 +359,9 @@ export default function EcommerceGstPage() {
                   <h3 className="font-semibold">Correct {reviewSale.invoiceNumber || reviewSale.orderId || `row ${reviewSale.sourceRow}`}</h3>
                   <p className="mt-1 text-xs text-muted-foreground">From {reviewSale.sourceFile}, row {reviewSale.sourceRow}. Check every change against the marketplace report.</p>
                   <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                    {([ ["invoiceNumber", "Invoice number"], ["invoiceDate", "Invoice date (YYYY-MM-DD)"], ["gstin", "Buyer GSTIN"], ["placeOfSupply", "Place of supply"], ["hsn", "HSN"], ["transactionType", "Document type"] ] as const).map(([key, label]) => <label key={key} className="text-xs font-medium">{label}<input className="fv-input mt-1 w-full" value={reviewSale[key] ?? ""} onChange={event => setReviewSale(current => current ? { ...current, [key]: key === "transactionType" ? event.target.value || "sale" : event.target.value || null } : current)} /></label>)}
-                    {([ ["gstRate", "GST rate %"], ["taxableValue", "Taxable value"], ["cgst", "CGST"], ["sgst", "SGST"], ["igst", "IGST"], ["cess", "Cess"], ["grossAmount", "Invoice total"], ["tcsAmount", "TCS"], ["refundAmount", "Refund amount"] ] as const).map(([key, label]) => <label key={key} className="text-xs font-medium">{label}<input className="fv-input mt-1 w-full" type="number" min={key === "tcsAmount" ? undefined : "0"} step="0.01" value={reviewSale[key] ?? ""} onChange={event => setReviewSale(current => current ? { ...current, [key]: key === "gstRate" && !event.target.value ? null : Number(event.target.value) } : current)} /></label>)}
+                    {([ ["invoiceNumber", "Invoice / credit note number"], ["invoiceDate", "Invoice date (YYYY-MM-DD)"], ["gstin", "Buyer GSTIN"], ["placeOfSupply", "Place of supply"], ["hsn", "HSN"], ["transactionType", "Document type"] ] as const).map(([key, label]) => <label key={key} className="text-xs font-medium">{label}<input className="fv-input mt-1 w-full" value={reviewSale[key] ?? ""} onChange={event => setReviewSale(current => current ? { ...current, [key]: key === "transactionType" ? event.target.value || "sale" : event.target.value || null } : current)} /></label>)}
+                    {/credit[\s_-]*note/i.test(reviewSale.transactionType) && <label className="text-xs font-medium">Original invoice number<input className="fv-input mt-1 w-full" value={reviewSale.originalInvoiceNumber ?? ""} onChange={event => setReviewSale(current => current ? { ...current, originalInvoiceNumber: event.target.value || null } : current)} /><span className="mt-1 block text-muted-foreground">Include the original invoice report in this upload. Only single-row originals are supported.</span></label>}
+                    {([ ["gstRate", "GST rate %"], ["taxableValue", "Taxable value"], ["cgst", "CGST"], ["sgst", "SGST"], ["igst", "IGST"], ["cess", "Cess"], ["grossAmount", "Invoice total"], ["tcsAmount", "TCS"], ["refundAmount", "Refund amount"] ] as const).map(([key, label]) => <label key={key} className="text-xs font-medium">{label}<input className="fv-input mt-1 w-full" type="number" min={key === "gstRate" ? "0" : undefined} step="0.01" value={reviewSale[key] ?? ""} onChange={event => setReviewSale(current => current ? { ...current, [key]: key === "gstRate" && !event.target.value ? null : Number(event.target.value) } : current)} /></label>)}
                   </div>
                   <div className="mt-4 flex flex-wrap gap-2"><button type="button" className="fv-button-primary" disabled={savingReview} onClick={() => void saveReview(pack.sales.map(sale => sale.sourceFile === reviewSale.sourceFile && sale.sourceRow === reviewSale.sourceRow ? reviewSale : sale))}>{savingReview ? "Checking…" : "Save correction"}</button><button type="button" className="fv-button-secondary" onClick={() => setReviewSale(null)}>Cancel</button></div>
                 </div>
@@ -406,7 +408,7 @@ export default function EcommerceGstPage() {
               </label>
               {exportFormat === "gst" && <p className="mt-3 text-xs text-muted-foreground">This GST JSON is a review draft. GST portal acceptance has not been verified.</p>}
               {exportFormat === "tally" && <div className="mt-4 space-y-3">
-                <p className="text-xs text-muted-foreground">Uses existing Sales, Marketplace Customers and Output GST ledgers. Cancelled documents are left out; returns, adjustments and unresolved sales stop this export.</p>
+                <p className="text-xs text-muted-foreground">Uses existing Sales, Marketplace Customers and Output GST ledgers. Linked credit notes reverse their original invoice amounts. Cancelled documents are left out; unlinked returns, adjustments and unresolved rows stop this export.</p>
                 {b2bGstins.map(gstin => <label key={gstin} className="block text-xs">Buyer {gstin}<input className="fv-input mt-1 w-full" value={partyLedgers[gstin] ?? ""} onChange={event => setPartyLedgers(current => ({ ...current, [gstin]: event.target.value }))} placeholder="Existing Tally party ledger" /></label>)}
                 <p className="text-xs text-muted-foreground">Check the Sales Register and GST reports in a test Tally company. Settlement and fee vouchers are not included. Potential risk — needs CA review.</p>
               </div>}
@@ -470,6 +472,7 @@ function Mini({ label, value }: { label: string; value: string }) {
 }
 
 function GstSectionSummary({ pack, section, comparison }: { pack: Pack; section: Exclude<(typeof TABS)[number], "Documents">; comparison: TcsComparison | null }) {
+  if (section === "Credit notes") return <ReportTable columns={["Credit note", "Original invoice", "Date", "Source taxable", "Source GST", "Source total", "Treatment"]} rows={(pack.tabs.creditNotes ?? []).map(note => [note.invoiceNumber ?? "Missing", note.originalInvoiceNumber ?? "Needs linking", note.invoiceDate ?? "Missing", inr(note.taxableValue), inr(note.cgst + note.sgst + note.igst), inr(note.grossAmount), note.issues.length ? "Needs review" : "Deducted from net totals"])} empty="No credit notes were detected in these reports." />;
   if (section === "HSN") return <ReportTable columns={["Supply", "HSN", "GST rate", "Sales rows", "Taxable value"]} rows={pack.tabs.hsn.map(row => [row.supply, row.hsn, row.gstRate == null ? "Needs review" : `${row.gstRate}%`, row.count, inr(row.taxableValue)])} empty="No HSN summary is available." />;
   if (section === "TCS") {
     if (comparison) return <ReportTable columns={["State", "Marketplace TCS", "Uploaded portal TCS", "Difference"]} rows={comparison.rows.map(row => [row.state, inr(row.uploaded), inr(row.portal), inr(row.difference)])} empty="No TCS amounts were found." />;
@@ -488,6 +491,7 @@ function GstSectionSummary({ pack, section, comparison }: { pack: Pack; section:
     groups.set(key, row);
   });
   return <div className="space-y-3">
+    {(pack.tabs.creditNotes?.length ?? 0) > 0 && <p className="text-xs text-muted-foreground">Invoice sections show original sales. Linked credit notes are shown separately and deducted from the summary and HSN totals.</p>}
     {section === "Table 14" && <p className="text-xs text-muted-foreground">Draft operator-related entries. Operator GSTIN and supply classification still need CA review.</p>}
     <ReportTable columns={[...(section === "B2B" ? ["Buyer GSTIN"] : []), "Place of supply", "GST rate", "Sales rows", "Taxable value", "GST + cess", "Invoice total"]} rows={[...groups.values()].map(row => [...(section === "B2B" ? [row.buyer] : []), row.state, row.rate == null ? "Needs review" : `${row.rate}%`, row.count, inr(row.taxable), inr(row.tax), inr(row.gross)])} empty={`No ${section} sales are included in these reports.`} />
   </div>;

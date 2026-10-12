@@ -25,7 +25,7 @@ export function buildEcommerceSalesXml(input: unknown) {
   const config = parsed.data;
   const reviewed = reviewMarketplaceSales(config.sales, "marketplace");
   if (!reviewed.ok) return reviewed;
-  const sales = reviewed.pack.sales.filter(sale => marketplaceDocumentKind(sale) === "sale");
+  const sales = reviewed.pack.sales.filter(sale => ["sale", "credit_note"].includes(marketplaceDocumentKind(sale)));
   if (!sales.length) return { ok: false as const, errors: ["No active sales are available for Sales vouchers."] };
   const saleIssues = reviewed.pack.sales.filter(sale => marketplaceDocumentKind(sale) !== "cancelled" && sale.issues.length);
   if (saleIssues.length) return { ok: false as const, errors: [`${saleIssues.length} sale rows need review before Sales vouchers can be created.`, ...saleIssues.slice(0, 3).map(sale => `Row ${sale.sourceRow}: ${sale.issues[0]}`)] };
@@ -41,12 +41,16 @@ export function buildEcommerceSalesXml(input: unknown) {
       continue;
     }
     const party = sale.gstin ? config.partyLedgers[sale.gstin] : config.debtorLedger;
-    const entries = [entry(party, -sale.grossAmount), entry(config.salesLedger, sale.taxableValue)];
-    if (sale.cgst) entries.push(entry(config.cgstLedger, sale.cgst));
-    if (sale.sgst) entries.push(entry(config.sgstLedger, sale.sgst));
-    if (sale.igst) entries.push(entry(config.igstLedger, sale.igst));
-    if (sale.cess) entries.push(entry(config.cessLedger, sale.cess));
-    vouchers.push(`<TALLYMESSAGE xmlns:UDF="TallyUDF"><VOUCHER VCHTYPE="Sales" ACTION="Create"><DATE>${sale.invoiceDate.replace(/-/g, "")}</DATE><VOUCHERTYPENAME>Sales</VOUCHERTYPENAME><VOUCHERNUMBER>${escape(sale.invoiceNumber)}</VOUCHERNUMBER><REFERENCE>${escape(sale.orderId ?? "")}</REFERENCE><PARTYLEDGERNAME>${escape(party)}</PARTYLEDGERNAME><NARRATION>${escape(`${sale.platform} sale ${sale.invoiceNumber}`)}</NARRATION>${entries.join("")}</VOUCHER></TALLYMESSAGE>`);
+    const credit = marketplaceDocumentKind(sale) === "credit_note";
+    const sign = credit ? -1 : 1;
+    const entries = [entry(party, -sign * Math.abs(sale.grossAmount)), entry(config.salesLedger, sign * Math.abs(sale.taxableValue))];
+    if (sale.cgst) entries.push(entry(config.cgstLedger, sign * Math.abs(sale.cgst)));
+    if (sale.sgst) entries.push(entry(config.sgstLedger, sign * Math.abs(sale.sgst)));
+    if (sale.igst) entries.push(entry(config.igstLedger, sign * Math.abs(sale.igst)));
+    if (sale.cess) entries.push(entry(config.cessLedger, sign * Math.abs(sale.cess)));
+    const type = credit ? "Credit Note" : "Sales";
+    const reference = credit ? sale.originalInvoiceNumber ?? "" : sale.orderId ?? "";
+    vouchers.push(`<TALLYMESSAGE xmlns:UDF="TallyUDF"><VOUCHER VCHTYPE="${type}" ACTION="Create"><DATE>${sale.invoiceDate.replace(/-/g, "")}</DATE><VOUCHERTYPENAME>${type}</VOUCHERTYPENAME><VOUCHERNUMBER>${escape(sale.invoiceNumber)}</VOUCHERNUMBER><REFERENCE>${escape(reference)}</REFERENCE><PARTYLEDGERNAME>${escape(party)}</PARTYLEDGERNAME><NARRATION>${escape(`${sale.platform} ${type.toLowerCase()} ${sale.invoiceNumber}${credit ? ` against ${reference}` : ""}`)}</NARRATION>${entries.join("")}</VOUCHER></TALLYMESSAGE>`);
   }
   if (errors.length || vouchers.length !== sales.length) return { ok: false as const, errors: errors.length ? errors : ["Sales voucher count does not match the active sales rows."] };
   const xml = `<?xml version="1.0" encoding="UTF-8"?><ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER><BODY><IMPORTDATA><REQUESTDESC><REPORTNAME>Vouchers</REPORTNAME><STATICVARIABLES><SVCURRENTCOMPANY>${escape(config.clientName)}</SVCURRENTCOMPANY></STATICVARIABLES></REQUESTDESC><REQUESTDATA>${vouchers.join("")}</REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>`;

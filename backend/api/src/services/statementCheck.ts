@@ -4,6 +4,7 @@
  * balance printed on the statement. Used for both table-read and AI-read statements.
  */
 import type { NormalizedBankTxn } from "./bankStatement";
+import { paise } from "./money";
 
 export interface StatementCheck {
   rows: number;
@@ -19,10 +20,6 @@ export interface StatementCheck {
   serialComplete: boolean | null;
   /** Every comparable row passed and nothing printed on the statement contradicts the result. */
   verified: boolean;
-}
-
-function round2(value: number) {
-  return Math.round(value * 100) / 100;
 }
 
 /**
@@ -44,8 +41,11 @@ export function checkRunningBalance(
     }
     if (previous == null || txn.balance == null) return;
     checked += 1;
-    const expected = round2(previous + (txn.credit ?? 0) - (txn.debit ?? 0));
-    if (Math.abs(expected - txn.balance) <= 0.011) {
+    const before = paise(previous);
+    const after = paise(txn.balance);
+    const credit = paise(txn.credit ?? 0);
+    const debit = paise(txn.debit ?? 0);
+    if (before != null && after != null && credit != null && debit != null && before + credit - debit === after) {
       txn.confidence = Math.max(txn.confidence, 0.99);
     } else {
       txn.confidence = Math.min(txn.confidence, 0.6);
@@ -54,7 +54,7 @@ export function checkRunningBalance(
   });
   const closingBalance = transactions[transactions.length - 1]?.balance ?? null;
   const printedClosing = options.printedClosing ?? null;
-  const closingMatches = printedClosing == null || closingBalance == null ? null : Math.abs(printedClosing - closingBalance) <= 0.011;
+  const closingMatches = printedClosing == null || closingBalance == null ? null : paise(printedClosing) != null && paise(printedClosing) === paise(closingBalance);
   const serialComplete = options.serialComplete ?? null;
   const failed = failedRows.length;
   return {
@@ -70,7 +70,7 @@ export function checkRunningBalance(
     serialComplete,
     verified: transactions.length > 0
       && failed === 0
-      && checked >= transactions.length - 1
+      && checked === transactions.length
       && closingMatches !== false
       && serialComplete !== false
       && transactions.every(txn => txn.debit != null || txn.credit != null),

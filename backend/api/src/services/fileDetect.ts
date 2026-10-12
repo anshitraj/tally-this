@@ -29,28 +29,32 @@ export function isDocumentFile(file: UploadedFile) {
   return ext === "pdf" || IMAGE_EXT.has(ext) || (file.mimetype ?? "").startsWith("image/");
 }
 
-/** CSV or Excel to CSV text. Picks the sheet with the most table rows. */
-export function sheetToCsvText(file: UploadedFile): string {
+/** CSV or a single populated Excel table. Never silently omit another financial sheet. */
+export function sheetToCsvText(file: UploadedFile, maxRows: number = WORKBOOK_LIMITS.sheetRows): string {
   const ext = extensionOf(file.originalname);
   if (ext !== "xlsx" && ext !== "xls" && ext !== "xlsm") return file.buffer.toString("utf8").replace(/^\uFEFF/, "");
   let workbook: XLSX.WorkBook;
   try {
-    workbook = XLSX.read(file.buffer, { type: "buffer", cellDates: false, ...WORKBOOK_LIMITS });
+    workbook = XLSX.read(file.buffer, { type: "buffer", cellDates: false, ...WORKBOOK_LIMITS, sheetRows: maxRows });
   } catch {
     throw new UnreadableFileError();
   }
   let best = "";
   let bestRows = -1;
+  const populatedTables: string[] = [];
   for (const name of workbook.SheetNames) {
     const sheet = workbook.Sheets[name];
     if (!sheet) continue;
+    if (sheet["!fullref"] && sheet["!fullref"] !== sheet["!ref"]) throw new UnreadableFileError("This Excel sheet exceeds the reading limit and would be incomplete. Save a smaller period as CSV and try again.");
     const csv = XLSX.utils.sheet_to_csv(sheet, { blankrows: false });
     const rows = scanCsvTable(csv)?.rows.length ?? 0;
+    if (rows > 0) populatedTables.push(name);
     if (rows > bestRows) {
       best = csv;
       bestRows = rows;
     }
   }
+  if (populatedTables.length > 1) throw new UnreadableFileError("This workbook has multiple populated financial tables. Save each sheet as CSV and upload those files separately so no rows are missed.");
   return best;
 }
 

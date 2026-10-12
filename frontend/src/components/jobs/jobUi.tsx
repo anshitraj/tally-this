@@ -66,7 +66,8 @@ export function downloadText(filename: string, content: string, type = "text/pla
 
 export function toCsv(headers: string[], rows: Array<Array<unknown>>) {
   const quote = (value: unknown) => {
-    const text = value == null ? "" : String(value);
+    const raw = value == null ? "" : String(value);
+    const text = typeof value === "string" && /^[\s\u0000-\u001f]*[=+\-@]/.test(raw) ? `'${raw}` : raw;
     return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
   };
   return [headers.map(quote).join(","), ...rows.map(row => row.map(quote).join(","))].join("\n");

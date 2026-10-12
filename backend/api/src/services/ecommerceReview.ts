@@ -2,6 +2,9 @@
 import { z } from "zod";
 import { normalizeAmount, parseCsvLine } from "./bankStatement";
 import { buildEcommercePack, type MarketplaceSale } from "./ecommerceGst";
+import { paise, sumMoney } from "./money";
+
+const sourceMoney = z.number().finite().min(-1e10).max(1e10).refine(value => paise(value) != null, "Amount must be exact to the paise.");
 
 export const reviewedSaleSchema = z.object({
   platform: z.string().trim().min(1).max(80),
@@ -11,20 +14,21 @@ export const reviewedSaleSchema = z.object({
   gstin: z.string().max(30).nullable(),
   buyerState: z.string().max(100).nullable(),
   placeOfSupply: z.string().max(100).nullable(),
-  taxableValue: z.number().finite().nonnegative().max(1e10),
-  cgst: z.number().finite().nonnegative().max(1e10),
-  sgst: z.number().finite().nonnegative().max(1e10),
-  igst: z.number().finite().nonnegative().max(1e10),
-  cess: z.number().finite().nonnegative().max(1e10),
-  grossAmount: z.number().finite().nonnegative().max(1e10),
-  refundAmount: z.number().finite().nonnegative().max(1e10),
-  marketplaceFees: z.number().finite().nonnegative().max(1e10),
-  tcsAmount: z.number().finite().min(-1e10).max(1e10),
+  taxableValue: sourceMoney,
+  cgst: sourceMoney,
+  sgst: sourceMoney,
+  igst: sourceMoney,
+  cess: sourceMoney,
+  grossAmount: sourceMoney,
+  refundAmount: sourceMoney,
+  marketplaceFees: sourceMoney,
+  tcsAmount: sourceMoney,
   hsn: z.string().max(30).nullable(),
   gstRate: z.number().finite().min(0).max(100).nullable(),
   transactionType: z.string().max(80),
   sourceFile: z.string().max(255),
   sourceRow: z.number().int().positive().max(1_000_000),
+  originalInvoiceNumber: z.string().trim().max(120).nullable().optional(),
 });
 export const reviewedSalesSchema = z.array(reviewedSaleSchema).min(1).max(20000);
 
@@ -91,14 +95,14 @@ export function comparePortalTcs(sales: MarketplaceSale[], portal: TcsRow[]) {
     const key = stateKey(sale.placeOfSupply);
     if (!key) return { ok: false as const, message: `Sale row ${sale.sourceRow} has TCS but no recognized place of supply.` };
     const current = totals.get(key) ?? { uploaded: 0, portal: 0 };
-    current.uploaded += sale.tcsAmount;
+    current.uploaded = sumMoney([current.uploaded, sale.tcsAmount]);
     totals.set(key, current);
   }
   for (const row of portal) {
     const key = stateKey(row.state);
     if (!key) return { ok: false as const, message: `Portal TCS state ${row.state} was not recognized.` };
     const current = totals.get(key) ?? { uploaded: 0, portal: 0 };
-    current.portal += row.amount;
+    current.portal = sumMoney([current.portal, row.amount]);
     totals.set(key, current);
   }
   const rows = [...totals].sort(([a], [b]) => a.localeCompare(b)).map(([code, totals]) => {
