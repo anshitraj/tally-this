@@ -325,7 +325,7 @@ export function counterpartyFrom(narration: string) {
 }
 
 /**
- * Banks cut names to fit a column ("Brijesh Brij", "Brijesh Brije"). A name that is the start
+ * Banks cut names to fit a column ("Rakesh Rak", "Rakesh Rake"). A name that is the start
  * of a longer one, and most of its length, is the same party; both take the longer name.
  */
 export function unifyParties(transactions: NormalizedBankTxn[]) {

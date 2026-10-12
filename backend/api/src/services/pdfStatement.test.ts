@@ -43,7 +43,7 @@ function kotakLines(secondBalance = "3,10,822.68"): Line[] {
     { y: 90, cells: [{ text: "01 Apr 2025 - 31 Mar 2026", x: 40 }] },
     { y: 130, cells: [{ text: "#", x: 40 }, { text: "Date", x: 72 }, { text: "Description", x: 125 }, { text: "Chq/Ref. No.", x: 280 }, { text: "Withdrawal (Dr.)", x: 345 }, { text: "Deposit (Cr.)", x: 430 }, { text: "Balance", x: 505 }] },
     { y: 150, cells: [{ text: "Opening Balance", x: 125 }, right("4,70,822.68", B)] },
-    { y: 170, cells: [{ text: "1", x: 40 }, { text: "19 Apr 2025", x: 72 }, { text: "UPI/AMJAD PARVEZ/1880856/Payment", x: 125 }, { text: "UPI-5109632", x: 280 }, right("50,000.00", D), right("5,20,822.68", B)] },
+    { y: 170, cells: [{ text: "1", x: 40 }, { text: "19 Apr 2025", x: 72 }, { text: "UPI/ROHAN SHARMA/1000000/Payment", x: 125 }, { text: "UPI-5109632", x: 280 }, right("50,000.00", D), right("5,20,822.68", B)] },
     { y: 179, cells: [{ text: "from Ph", x: 125 }] },
     { y: 200, cells: [{ text: "2", x: 40 }, { text: "05 Aug 2025", x: 72 }, { text: "FD MATURITY :5150/24-08-", x: 125 }, { text: "MB-998444", x: 280 }, right("2,10,000.00", W), right(secondBalance, B)] },
     { y: 209, cells: [{ text: "25/BHARAT G", x: 125 }] },
@@ -65,7 +65,7 @@ test("reads amounts from the column they sit under and proves every row", async 
     ["2025-08-05", 210000, null, 310822.68],
     ["2026-03-31", null, 1815, 312637.68],
   ]);
-  assert.equal(summary.transactions[0].narration, "UPI/AMJAD PARVEZ/1880856/Payment from Ph");
+  assert.equal(summary.transactions[0].narration, "UPI/ROHAN SHARMA/1000000/Payment from Ph");
   assert.equal(summary.transactions[1].narration, "FD MATURITY :5150/24-08-25/BHARAT G", "a line broken after a hyphen joins without a space");
   assert.equal(summary.transactions[0].reference, "UPI-5109632");
   assert.equal(read.check!.openingBalance, 470822.68);
@@ -123,7 +123,7 @@ test("newest-first statements with both columns printed and character-wrapped na
     { y: 40, cells: [{ text: "Account Statement", x: 40 }] },
     { y: 60, cells: [{ text: "Statement Period: 01 Apr 2025 - 31 Mar 2026", x: 40 }, { text: "Branch IFSC Code: INDB0000756", x: 320 }] },
     { y: 130, cells: [{ text: "Date", x: 50 }, { text: "Particulars", x: 125 }, { text: "Chq No/Ref No", x: 256 }, { text: "Withdrawal", x: 346 }, { text: "Deposit", x: 437 }, { text: "Balance", x: 495 }] },
-    { y: 150, cells: [{ text: "31 Mar 2026", x: 50 }, { text: "158802222334:Int.Pd:01-0", x: 125 }, { text: "S225591", x: 256 }, right("0.00", 395), right("8.00", 468), right("1286.08", 527)] },
+    { y: 150, cells: [{ text: "31 Mar 2026", x: 50 }, { text: "100000002222:Int.Pd:01-0", x: 125 }, { text: "S225591", x: 256 }, right("0.00", 395), right("8.00", 468), right("1286.08", 527)] },
     { y: 162, cells: [{ text: "1-2026 to 31-03-2026", x: 125 }] },
     { y: 180, cells: [{ text: "03 Jan 2026", x: 50 }, { text: "VISA POS TXN AT IN/Swig", x: 125 }, { text: "S99647101", x: 256 }, right("818.00", 395), right("0.00", 468), right("1278.08", 527)] },
     { y: 192, cells: [{ text: "gy 560103", x: 125 }] },
@@ -135,7 +135,7 @@ test("newest-first statements with both columns printed and character-wrapped na
   assert.equal(summary.bankName, "IndusInd Bank");
   assert.deepEqual(summary.transactions.map(txn => txn.date), ["2025-12-31", "2026-01-03", "2026-03-31"], "returned oldest first");
   assert.equal(summary.transactions[1].narration, "VISA POS TXN AT IN/Swiggy 560103");
-  assert.equal(summary.transactions[2].narration, "158802222334:Int.Pd:01-01-2026 to 31-03-2026");
+  assert.equal(summary.transactions[2].narration, "100000002222:Int.Pd:01-01-2026 to 31-03-2026");
   assert.equal(summary.transactions[1].debit, 818);
   assert.equal(summary.transactions[2].credit, 8);
   assert.equal(read.check!.verified, true);

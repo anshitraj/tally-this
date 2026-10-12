@@ -585,11 +585,11 @@ test("invoice number in the narration plus exact amount is a match", () => {
 });
 
 test("bank interest credited is income, loan interest debited is an expense", () => {
-  assert.equal(suggestLedger("158802222334:Int.Pd:01-01-2026 to 31-03-2026", [], "in"), "Interest Received");
+  assert.equal(suggestLedger("100000002222:Int.Pd:01-01-2026 to 31-03-2026", [], "in"), "Interest Received");
   assert.equal(suggestLedger("CREDIT INTEREST - Saving", [], "in"), "Interest Received");
   assert.equal(suggestLedger("LOAN INT DEBIT 4455", [], "out"), "Interest Paid");
   assert.equal(suggestLedger("FD MATURITY PROCEEDS :5150212235/24-08-25", [], "in"), "Fixed Deposits");
-  assert.equal(suggestLedger("Term Deposit-8882000002165143-BHARAT", [], "out"), "Fixed Deposits");
+  assert.equal(suggestLedger("Term Deposit-8000000000000001-ASHOK", [], "out"), "Fixed Deposits");
   assert.equal(suggestLedger("PG KOTAK MAHINDRA LIFE", [], "out"), "Insurance Premium");
 });
 
@@ -681,13 +681,13 @@ test("quarterly interest rows are one party", () => {
 
 test("party names come out of real Indian narration formats", () => {
   const cases: Array<[string, string | null]> = [
-    ["UPI/AMJAD PARVEZ/188085643285/Payment from Ph", "AMJAD PARVEZ"],
+    ["UPI/ROHAN SHARMA/100000000003/Payment from Ph", "ROHAN SHARMA"],
     ["UPI/ANKIT KUMAR CHO/386145065356/Sent using Payt", "ANKIT KUMAR CHO"],
-    ["UPI 690674808367 navjitkaur02@ybl NAVJEET KAUR", "NAVJEET KAUR"],
-    ["UPI 643191763720 nareshkumargirdhar0001@ybl NARESH", "NARESH"],
+    ["UPI 100000000001 priyasharma2@ybl PRIYA SHARMA", "PRIYA SHARMA"],
+    ["UPI 100000000004 mohankumar0001@ybl MOHAN", "MOHAN"],
     ["UPI 529395980588 zeptoonline@ybl Zepto", "Zepto"],
-    ["N/INDBH03048748656/KKBK/BHARAT GIRIDHAR", "BHARAT GIRIDHAR"],
-    ["IMP-528618976442-8802222334-BHARAT GIRIDHAR", "BHARAT GIRIDHAR"],
+    ["N/INDBH00000000000/KKBK/ASHOK VERMA", "ASHOK VERMA"],
+    ["IMP-100000000005-9000000001-ASHOK VERMA", "ASHOK VERMA"],
     ["Purchase-519417077479-130725 17:19:43-SWIGGY Bangalore IN", "Swiggy"],
     ["Purchase-521812004761-060825 17:43:00-PAY*Swiggy BANGALORE IN", "Swiggy"],
     ["UPI 608748525465 swiggy1online.gpay@okpayaxis Swig", "Swiggy"],
@@ -701,7 +701,7 @@ test("party names come out of real Indian narration formats", () => {
     ["Razorpay Settlement/RZP-9988", "Razorpay Settlement"],
     ["NEFT-Google Workspace/GSuite", "Google Workspace"],
     ["PG KOTAK MAHINDRA LIFE", "KOTAK MAHINDRA LIFE"],
-    ["Term Deposit-8882000002165143-BHARAT GIRIDHAR", "Fixed deposit"],
+    ["Term Deposit-8000000000000001-ASHOK VERMA", "Fixed deposit"],
     ["CREDIT INTEREST - Saving", "Bank interest"],
     ["ATM WDL/ATM-Koramangala", "Cash withdrawal"],
     ["UPI 566081058767 zeptomarketplac357841.rzp@hdfcban", "Zepto"],
@@ -711,9 +711,9 @@ test("party names come out of real Indian narration formats", () => {
 
 test("names the bank cut short are treated as one party", () => {
   const row = (counterparty: string) => ({ counterparty } as unknown as Parameters<typeof unifyParties>[0][number]);
-  const rows = ["Brijesh Brij", "Brijesh Brije", "Vodafone Ide", "VODAFONE IDEA LIMITE", "Google", "Google India Se"].map(row);
+  const rows = ["Rakesh Rak", "Rakesh Rake", "Vodafone Ide", "VODAFONE IDEA LIMITE", "Google", "Google India Se"].map(row);
   unifyParties(rows);
-  assert.deepEqual(rows.map(item => item.counterparty), ["Brijesh Brije", "Brijesh Brije", "VODAFONE IDEA LIMITE", "VODAFONE IDEA LIMITE", "Google", "Google India Se"]);
+  assert.deepEqual(rows.map(item => item.counterparty), ["Rakesh Rake", "Rakesh Rake", "VODAFONE IDEA LIMITE", "VODAFONE IDEA LIMITE", "Google", "Google India Se"]);
 });
 
 test("privacy mode needs a paid, active plan", () => {

@@ -835,7 +835,7 @@ export default function SmartNextStepPanel() {
                       <label className="block">
                         <div className="mb-1.5 text-sm font-semibold text-foreground">Report name (workspace folder)</div>
                         <div className="mb-2 text-[11px] text-muted-foreground">
-                          Saved as a named workspace under Reconciliation. Pick anything: "May Bank-Tally", "Webcoin Q1 Review", etc.
+                          Saved as a named workspace under Reconciliation. Pick anything: "May Bank-Tally", "Acme Q1 Review", etc.
                         </div>
                         <input
                           type="text"
