@@ -26,12 +26,15 @@ import {
   toCsv,
   type StatementCheck,
 } from "@/components/jobs/jobUi";
+import { BankStatementTable, type RowLedger, type VoucherType } from "@/components/jobs/BankStatementTable";
+import { SendToTally, type TallyChoices, type TallySendResult } from "@/components/jobs/SendToTally";
 import { getActiveClient } from "@/lib/activeClient";
 import { getUser } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
 interface BankTxn {
   date: string;
+  valueDate?: string | null;
   narration: string;
   reference: string | null;
   debit: number | null;
@@ -46,7 +49,8 @@ interface LedgerGroup {
   key: string;
   label: string;
   ledger: string;
-  source: "remembered" | "rule" | "ai" | "none";
+  /** "hint" and "ai" are suggestions the reviewer confirms; "rule" and "remembered" are taken as chosen. */
+  source: "remembered" | "rule" | "hint" | "ai" | "none";
   count: number;
   total: number;
   direction: "in" | "out" | "both";
@@ -66,6 +70,8 @@ interface NormalizeResponse {
   bankOptions?: string[];
   accountNumberMasked?: string | null;
   periodLabel?: string | null;
+  openingBalance?: number | null;
+  closingBalance?: number | null;
   transactions?: BankTxn[];
   debitTotal?: number;
   creditTotal?: number;
@@ -112,7 +118,17 @@ export default function BankToTallyPage() {
   const [generated, setGenerated] = useState<{ count: number; fileName: string } | null>(null);
   const [createLedgers, setCreateLedgers] = useState<"yes" | "no">("yes");
   const [suggesting, setSuggesting] = useState(false);
+  // Choices made on single rows in the statement table.
+  const [rowLedgers, setRowLedgers] = useState<Record<number, string>>({});
+  const [rowVouchers, setRowVouchers] = useState<Record<number, VoucherType>>({});
+  const [queries, setQueries] = useState<Record<number, string>>({});
+  const [statementOpen, setStatementOpen] = useState(false);
+  const [tallyOpen, setTallyOpen] = useState(false);
+  // Ledger names from the connected Tally company, offered alongside the standard list.
+  const [tallyLedgerNames, setTallyLedgerNames] = useState<string[]>([]);
   const reviewRef = useRef<HTMLDivElement>(null);
+  const statementRef = useRef<HTMLDivElement>(null);
+  const tallyRef = useRef<HTMLDivElement>(null);
   const [consentMessage, setConsentMessage] = useState("");
   // Kept only in memory so a scan can be retried after the person agrees to AI.
   const passwordRef = useRef<string | undefined>(undefined);
@@ -120,6 +136,12 @@ export default function BankToTallyPage() {
   useEffect(() => {
     if (reviewOpen) reviewRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [reviewOpen]);
+  useEffect(() => {
+    if (statementOpen) statementRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [statementOpen]);
+  useEffect(() => {
+    if (tallyOpen) tallyRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [tallyOpen]);
 
   const runFile = async (picked: File, pdfPassword?: string, allowAi = false) => {
     setFile(picked);
@@ -155,6 +177,11 @@ export default function BankToTallyPage() {
     setSkipped(new Set());
     setCheckedRows(new Set());
     setFlipped(new Set());
+    setRowLedgers({});
+    setRowVouchers({});
+    setQueries({});
+    setStatementOpen(false);
+    setTallyOpen(false);
     setTotalsConfirmed(false);
     setReviewOpen(false);
     setBankLedger(data.bankName ?? "Bank Account");
@@ -214,13 +241,12 @@ export default function BankToTallyPage() {
     [result?.transactions, flipped],
   );
   const activeTxns = txns.filter(txn => !skipped.has(txn.rowNumber));
-  const activeParties = new Set(activeTxns.map(groupKeyOf));
   const totals = activeTxns.reduce(
     (sum, txn) => ({ debit: sum.debit + (txn.debit ?? 0), credit: sum.credit + (txn.credit ?? 0) }),
     { debit: 0, credit: 0 },
   );
   const groups = result?.ledgerGroups ?? [];
-  const options = result?.ledgerOptions ?? [];
+  const options = useMemo(() => [...new Set([...(result?.ledgerOptions ?? []), ...tallyLedgerNames])], [result?.ledgerOptions, tallyLedgerNames]);
   // Direction follows the reviewer's flips, so the quick choices offer the right side.
   const directions = useMemo(() => {
     const map = new Map<string, LedgerGroup["direction"]>();
@@ -232,12 +258,41 @@ export default function BankToTallyPage() {
     }
     return map;
   }, [txns]);
+  const groupByKey = useMemo(() => new Map((result?.ledgerGroups ?? []).map(group => [group.key, group])), [result?.ledgerGroups]);
+
+  // The ledger a row will post to: its own choice from the statement table, else its party's.
+  const ledgerOf = (txn: BankTxn): RowLedger => {
+    const key = groupKeyOf(txn);
+    const group = groupByKey.get(key);
+    const partyLedger = group ? ledgers[group.key] ?? group.ledger : "Suspense";
+    const own = rowLedgers[txn.rowNumber];
+    return {
+      ledger: own ?? partyLedger,
+      confirmed: own != null || (group ? confirmed.has(group.key) : false),
+      ownChoice: own != null && own !== partyLedger,
+      party: group?.label ?? key,
+    };
+  };
+
+  // Cash moving in or out of the bank is Contra; otherwise money in is a Receipt and money out a Payment.
+  const voucherOf = (txn: BankTxn): VoucherType => {
+    const cash = ledgerOf(txn).ledger.toLowerCase() === "cash";
+    const direction: VoucherType = txn.credit != null && txn.credit > 0 ? "Receipt" : "Payment";
+    const chosen = rowVouchers[txn.rowNumber];
+    if (chosen === "Contra") return cash ? "Contra" : direction;
+    if (chosen) return direction;
+    return cash ? "Contra" : direction;
+  };
+
   const failedRows = new Set(result?.check?.failedRows ?? []);
-  const flaggedRows = activeTxns.filter(txn => txn.confidence < 0.9 || failedRows.has(txn.rowNumber));
-  const activeGroups = groups.filter(group => activeParties.has(group.key));
-  const groupsToReview = activeGroups.filter(group => !confirmed.has(group.key));
+  const needsCheck = (txn: BankTxn) => txn.confidence < 0.9 || failedRows.has(txn.rowNumber);
+  const flaggedRows = activeTxns.filter(needsCheck);
+  // A party needs a decision unless every one of its rows already has its own ledger.
+  const partiesFollowingGroup = new Set(activeTxns.filter(txn => rowLedgers[txn.rowNumber] == null).map(groupKeyOf));
+  const groupsToReview = groups.filter(group => partiesFollowingGroup.has(group.key) && !confirmed.has(group.key));
   const rowsToReview = flaggedRows.filter(txn => !checkedRows.has(txn.rowNumber) && !skipped.has(txn.rowNumber));
-  const suspenseLeft = activeGroups.filter(group => (ledgers[group.key] ?? group.ledger) === "Suspense").length;
+  const suspenseLeft = new Set(activeTxns.filter(txn => ledgerOf(txn).ledger === "Suspense").map(groupKeyOf)).size;
+  const queryCount = Object.keys(queries).length;
   const statementEdited = flipped.size > 0 || skipped.size > 0;
   const proofFailure = result?.check?.closingMatches === false || result?.check?.serialComplete === false;
   const needsTotalsCheck = Boolean(result && !proofFailure && (result.check?.verified !== true || statementEdited) && !totalsConfirmed);
@@ -252,8 +307,51 @@ export default function BankToTallyPage() {
     setConfirmed(current => new Set(current).add(key));
   };
 
+  const setRowLedger = (txn: BankTxn, ledger: string, scope: "row" | "party") => {
+    if (scope === "row") {
+      setRowLedgers(current => ({ ...current, [txn.rowNumber]: ledger }));
+      return;
+    }
+    const key = groupKeyOf(txn);
+    pick(key, ledger);
+    // Rows of this party with their own ledger now follow the party again.
+    const partyRows = new Set(txns.filter(row => groupKeyOf(row) === key).map(row => row.rowNumber));
+    setRowLedgers(current => Object.fromEntries(Object.entries(current).filter(([rowNumber]) => !partyRows.has(Number(rowNumber)))));
+  };
+
+  const setRowVoucher = (txn: BankTxn, voucher: VoucherType) => {
+    setRowVouchers(current => ({ ...current, [txn.rowNumber]: voucher }));
+    // A Contra entry is between the bank and cash.
+    if (voucher === "Contra" && ledgerOf(txn).ledger.toLowerCase() !== "cash") setRowLedgers(current => ({ ...current, [txn.rowNumber]: "Cash" }));
+  };
+
+  const setLeftOut = (txn: BankTxn, leftOut: boolean) => {
+    setSkipped(current => {
+      const next = new Set(current);
+      if (leftOut) next.add(txn.rowNumber);
+      else next.delete(txn.rowNumber);
+      return next;
+    });
+    setTotalsConfirmed(false);
+  };
+
+  const setQuery = (txn: BankTxn, question: string | null) => {
+    setQueries(current => {
+      const next = { ...current };
+      if (question) next[txn.rowNumber] = question;
+      else delete next[txn.rowNumber];
+      return next;
+    });
+  };
+
   const flipRow = (txn: BankTxn) => {
-    setFlipped(current => new Set(current).add(txn.rowNumber));
+    // Flipping twice puts the row back the way the bank printed it.
+    setFlipped(current => {
+      const next = new Set(current);
+      if (next.has(txn.rowNumber)) next.delete(txn.rowNumber);
+      else next.add(txn.rowNumber);
+      return next;
+    });
     setTotalsConfirmed(false);
     // A customer becomes a supplier (and back) when money changes direction.
     const key = groupKeyOf(txn);
@@ -268,10 +366,42 @@ export default function BankToTallyPage() {
   const acceptSuggestions = () => {
     setConfirmed(current => {
       const next = new Set(current);
-      groups.filter(group => group.source === "ai").forEach(group => next.add(group.key));
+      groups.filter(group => group.source === "ai" || group.source === "hint").forEach(group => next.add(group.key));
       return next;
     });
   };
+
+  // Rows, party ledgers and per-row choices, exactly as the Tally file and Send to Tally use them.
+  const tallyRequest = () => {
+    const client = getActiveClient();
+    const mappings = groups.map(group => ({ counterparty: group.key, ledgerName: ledgers[group.key] ?? group.ledger }));
+    return {
+      client,
+      mappings,
+      body: {
+        runId: result?.runId ?? undefined,
+        clientId: client?.id ?? undefined,
+        clientName: client?.name || getUser()?.company || "Client",
+        bankLedger,
+        transactions: activeTxns.map(txn => ({ ...txn, ledgerName: rowLedgers[txn.rowNumber] ?? null, voucherType: voucherOf(txn) })),
+        mappings,
+        createLedgers: createLedgers === "yes",
+      },
+    };
+  };
+
+  const rememberLedgers = (client: ReturnType<typeof getActiveClient>, mappings: Array<{ counterparty: string; ledgerName: string }>) => {
+    const remember = mappings.filter(mapping => mapping.ledgerName !== "Suspense");
+    if (client?.id && remember.length > 0 && !result?.privacy) {
+      void postJson("/api/jobs/ledger-mappings", { clientId: client.id, clientName: client.name, mappings: remember });
+    }
+  };
+
+  const blockedReason = proofFailure
+    ? "The statement totals or row sequence do not agree. Upload another bank export first."
+    : !displayBankName ? "Choose the statement bank first."
+    : hasReview ? `Finish the ${reviewItems} ${reviewItems === 1 ? "item" : "items"} under review first.`
+    : null;
 
   const generate = async () => {
     if (!result) return;
@@ -279,17 +409,8 @@ export default function BankToTallyPage() {
     if (!displayBankName) { setError("Choose the statement bank before creating the Tally file."); setBankPickerOpen(true); return; }
     if (hasReview) { setError("Finish reviewing the items below before creating the Tally file."); setReviewOpen(true); return; }
     setGenerating(true);
-    const client = getActiveClient();
-    const mappings = groups.map(group => ({ counterparty: group.key, ledgerName: ledgers[group.key] ?? group.ledger }));
-    const response = await postJson<{ xml?: string; fileName?: string; voucherCount?: number }>("/api/jobs/bank-to-tally/xml", {
-      runId: result.runId ?? undefined,
-      clientId: client?.id ?? undefined,
-      clientName: client?.name || getUser()?.company || "Client",
-      bankLedger,
-      transactions: txns.filter(txn => !skipped.has(txn.rowNumber)),
-      mappings,
-      createLedgers: createLedgers === "yes",
-    });
+    const { client, mappings, body } = tallyRequest();
+    const response = await postJson<{ xml?: string; fileName?: string; voucherCount?: number }>("/api/jobs/bank-to-tally/xml", body);
     setGenerating(false);
     if (!response.ok || !response.data.xml) {
       setError(response.data.errors?.join(" ") || response.data.message || "The Tally file could not be created.");
@@ -299,21 +420,36 @@ export default function BankToTallyPage() {
     const fileName = response.data.fileName || "tally-vouchers.xml";
     downloadText(fileName, response.data.xml, "application/xml");
     setGenerated({ count: response.data.voucherCount ?? 0, fileName });
-    const remember = mappings.filter(mapping => mapping.ledgerName !== "Suspense");
-    if (client?.id && remember.length > 0 && !result.privacy) {
-      void postJson("/api/jobs/ledger-mappings", { clientId: client.id, clientName: client.name, mappings: remember });
-    }
+    rememberLedgers(client, mappings);
+  };
+
+  const sendToTally = async (tallyCompany: string, choices: TallyChoices): Promise<TallySendResult> => {
+    const { client, mappings, body } = tallyRequest();
+    const response = await postJson<TallySendResult>("/api/jobs/bank-to-tally/send", {
+      ...body,
+      bankLedger: choices.bankLedger || body.bankLedger,
+      suspenseLedger: choices.suspenseLedger || undefined,
+      tallyCompany,
+    });
+    if ((response.data.created ?? 0) > 0) rememberLedgers(client, mappings);
+    return { ...response.data, ok: response.ok };
   };
 
   const exportCsv = () => {
     downloadText(
       "bank-transactions.csv",
       toCsv(
-        ["Date", "Narration", "Reference", "Paid", "Received", "Statement balance", "Ledger choice", "Review"],
+        ["Date", "Value date", "Narration", "Reference", "Paid", "Received", "Statement balance", "Voucher", "Ledger choice", "Review", "Client query"],
         activeTxns.map(txn => {
-          const group = groups.find(item => item.key === groupKeyOf(txn));
-          const needsReview = txn.confidence < 0.9 || failedRows.has(txn.rowNumber);
-          return [txn.date, txn.narration, txn.reference ?? "", txn.debit ?? "", txn.credit ?? "", txn.balance ?? "", group ? ledgers[group.key] ?? group.ledger : "Suspense", flipped.has(txn.rowNumber) ? "Changed in review" : needsReview ? checkedRows.has(txn.rowNumber) ? "Checked" : "Needs review" : "Ready"];
+          const { ledger, confirmed: ledgerConfirmed } = ledgerOf(txn);
+          const flagged = needsCheck(txn);
+          // Same labels as the Excel download.
+          const review = flagged && !checkedRows.has(txn.rowNumber) ? "Check with statement"
+            : !ledgerConfirmed ? ledger === "Suspense" ? "Choose ledger" : "Confirm ledger"
+            : flipped.has(txn.rowNumber) ? "Changed in review"
+            : ledger === "Suspense" ? "Goes to Suspense"
+            : flagged ? "Checked" : "Ready";
+          return [txn.date, txn.valueDate ?? "", txn.narration, txn.reference ?? "", txn.debit ?? "", txn.credit ?? "", txn.balance ?? "", voucherOf(txn), ledger, review, queries[txn.rowNumber] ?? ""];
         }),
       ),
       "text/csv",
@@ -329,19 +465,26 @@ export default function BankToTallyPage() {
       bankName: displayBankName || "Bank not identified",
       accountNumberMasked: result.accountNumberMasked ?? null,
       periodLabel: result.periodLabel ?? null,
+      openingBalance: result.check?.openingBalance ?? result.openingBalance ?? null,
+      closingBalance: result.check?.closingBalance ?? result.check?.printedClosing ?? result.closingBalance ?? null,
+      balanceCheck: proofFailure ? "failed" : needsTotalsCheck ? "needs_check" : totalsConfirmed ? "checked_by_reviewer" : "passed",
       rows: txns.map(txn => {
-        const group = groups.find(item => item.key === groupKeyOf(txn));
+        const { ledger, confirmed: ledgerConfirmed } = ledgerOf(txn);
         return {
           rowNumber: txn.rowNumber,
           date: txn.date,
+          valueDate: txn.valueDate ?? null,
           narration: txn.narration,
           reference: txn.reference,
           debit: txn.debit,
           credit: txn.credit,
           balance: txn.balance,
           counterparty: txn.counterparty,
-          ledgerChoice: group ? ledgers[group.key] ?? group.ledger : "Suspense",
-          needsReview: txn.confidence < 0.9 || failedRows.has(txn.rowNumber),
+          ledgerChoice: ledger,
+          ledgerConfirmed,
+          voucherType: voucherOf(txn),
+          query: queries[txn.rowNumber] ?? null,
+          needsReview: needsCheck(txn),
           reviewed: checkedRows.has(txn.rowNumber),
           edited: flipped.has(txn.rowNumber),
           excluded: skipped.has(txn.rowNumber),
@@ -422,9 +565,12 @@ export default function BankToTallyPage() {
                 ) : hasReview ? (
                   <button type="button" className="fv-button-primary h-11 px-6" onClick={() => setReviewOpen(true)}>Review {reviewItems} {reviewItems === 1 ? "item" : "items"}</button>
                 ) : (
-                  <button type="button" className="fv-button-primary h-11 px-6" onClick={generate} disabled={generating}>
-                    {generating ? "Creating file…" : generated ? "Download Tally File again" : "Generate Tally File"}
-                  </button>
+                  <>
+                    <button type="button" className="fv-button-primary h-11 px-6" onClick={generate} disabled={generating}>
+                      {generating ? "Creating file…" : generated ? "Download Tally File again" : "Generate Tally File"}
+                    </button>
+                    <button type="button" className="fv-button-secondary h-11" onClick={() => setTallyOpen(true)}>Send to Tally</button>
+                  </>
                 )}
                 <button type="button" className="fv-button-secondary h-11" onClick={exportExcel} disabled={exportingExcel}>
                   {exportingExcel ? "Creating Excel…" : "Download Excel"}
@@ -471,7 +617,11 @@ export default function BankToTallyPage() {
               <BigStat value={activeTxns.length} label={skipped.size > 0 ? "transactions included" : "transactions detected"} />
               <BigStat value={attentionItems} label={attentionItems === 1 ? "item needs attention" : "items need attention"} tone={attentionItems > 0 ? "attention" : "good"} />
             </div>
-            <div className="mt-4 text-sm text-muted-foreground">Money in {inr(totals.credit)} · Money out {inr(totals.debit)}</div>
+            <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+              <span className="text-muted-foreground">Money in {inr(totals.credit)} · Money out {inr(totals.debit)}</span>
+              <button type="button" className="font-medium text-[var(--fv-accent-dark)] hover:underline" onClick={() => setStatementOpen(true)}>View all {txns.length} transactions</button>
+              {queryCount > 0 && <span className="text-sky-800">{queryCount} {queryCount === 1 ? "question" : "questions"} for the client</span>}
+            </div>
             {statementEdited
               ? <p className="mt-4 text-sm text-amber-800">Transactions were changed or left out. The original running-balance check does not verify the edited export.</p>
               : <StatementProof check={result.check} />}
@@ -508,7 +658,7 @@ export default function BankToTallyPage() {
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <h2 className="font-semibold">Choose a ledger for {groupsToReview.length} {groupsToReview.length === 1 ? "party" : "parties"}</h2>
                         {suggesting && <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"><Sparkles className="h-3.5 w-3.5 animate-pulse" />Finding ledgers…</span>}
-                        {!suggesting && groupsToReview.some(group => group.source === "ai") && (
+                        {!suggesting && groupsToReview.some(group => group.source === "ai" || group.source === "hint") && (
                           <button type="button" className="text-sm font-semibold text-[var(--fv-accent-dark)] hover:underline" onClick={acceptSuggestions}>Accept all suggestions</button>
                         )}
                       </div>
@@ -562,8 +712,55 @@ export default function BankToTallyPage() {
             </div>
           )}
 
+          {tallyOpen && (
+            <div ref={tallyRef} className="scroll-mt-4">
+              <ResultCard>
+                <SendToTally
+                  entries={activeTxns.length}
+                  blockedReason={blockedReason}
+                  bankHint={[displayBankName.split(/\s+/)[0] ?? "", result.accountNumberMasked ?? ""].filter(Boolean)}
+                  defaultBankLedger={bankLedger}
+                  onLedgers={setTallyLedgerNames}
+                  onSend={sendToTally}
+                />
+              </ResultCard>
+            </div>
+          )}
+
+          {statementOpen && (
+            <div ref={statementRef} className="scroll-mt-4">
+              <ResultCard
+                eyebrow={
+                  <span className="flex items-center justify-between gap-3">
+                    <span>All transactions</span>
+                    <button type="button" className="normal-case tracking-normal text-[var(--fv-accent-dark)] hover:underline" onClick={() => setStatementOpen(false)}>Hide</button>
+                  </span>
+                }
+              >
+                <BankStatementTable
+                  rows={txns}
+                  openingBalance={result.check?.openingBalance ?? result.openingBalance ?? null}
+                  closingBalance={result.check?.closingBalance ?? result.check?.printedClosing ?? result.closingBalance ?? null}
+                  ledgerOptions={options}
+                  ledgerOf={ledgerOf}
+                  voucherOf={voucherOf}
+                  isLeftOut={txn => skipped.has(txn.rowNumber)}
+                  needsCheck={txn => needsCheck(txn) && !checkedRows.has(txn.rowNumber)}
+                  queries={queries}
+                  onLedger={setRowLedger}
+                  onConfirm={txn => pick(groupKeyOf(txn), ledgerOf(txn).ledger)}
+                  onVoucher={setRowVoucher}
+                  onFlip={txn => { flipRow(txn); setCheckedRows(current => new Set(current).add(txn.rowNumber)); }}
+                  onLeaveOut={setLeftOut}
+                  onQuery={setQuery}
+                />
+              </ResultCard>
+            </div>
+          )}
+
           <MoreOptions>
             <button type="button" className="text-sm font-medium text-[var(--fv-accent-dark)] hover:underline" onClick={reset}>Upload another statement</button>
+            {!tallyOpen && <button type="button" className="block text-sm font-medium text-[var(--fv-accent-dark)] hover:underline" onClick={() => setTallyOpen(true)}>Send straight to Tally</button>}
             <div>
               <div className="text-sm font-semibold">Bank ledger name in Tally</div>
               <p className="mb-2 text-xs text-muted-foreground">Pick the name your Tally company uses for this bank account.</p>
@@ -607,13 +804,14 @@ function LedgerRow({
   onPick: (ledger: string) => void;
   compact?: boolean;
 }) {
-  const quick = [...new Set([...(group.source === "ai" ? [group.ledger] : []), ...QUICK[group.direction]])].slice(0, 3);
+  const suggested = group.source === "ai" || group.source === "hint";
+  const quick = [...new Set([...(suggested ? [group.ledger] : []), ...QUICK[group.direction]])].slice(0, 3);
   return (
     <div className={cn("flex flex-col gap-3 p-3", !compact && "sm:flex-row sm:items-center sm:justify-between")}>
       <div className="min-w-0 text-sm">
         <div className="flex flex-wrap items-center gap-2">
           <span className="truncate font-medium">{group.label}</span>
-          {group.source === "ai" && <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-800">Suggested</span>}
+          {suggested && <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-800">Suggested</span>}
           {group.source === "remembered" && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">Used last time</span>}
         </div>
         <div className="text-xs text-muted-foreground">

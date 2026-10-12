@@ -92,6 +92,9 @@ The canonical high-level architecture is documented in [`ARCHITECTURE.md`](./ARC
 - Reports offers a saved-records Excel CA workbook as well as the PDF review pack. The Excel workbook includes reconciliation, unmatched transactions, invoices, review flags, ledger totals, and journal entries where those optional tables exist; each sheet has a row limit noted in the workbook summary.
 - Platform/security posture APIs for company profile, users, documents, GST records, audit logs, and security status.
 - Local Tally connector for customer-run Tally gateways. It pulls Tally Day Book XML through the Python worker, refreshes tax-audit Tally tables, creates ledger entries for reconciliation, and reruns rule-based matching.
+- Bank → Tally has an all-transactions table (Tally view and bank-statement view with value date and Chq/Ref), per-row voucher type (Receipt, Payment, or Contra for cash) and ledger, a row menu (money in/out, leave out, client query), and client questions that copy as a list and export to a "Client queries" Excel sheet.
+- Bank → Tally ledger suggestions follow [docs/BANK_LEDGER_RULES.md](docs/BANK_LEDGER_RULES.md): sure rules are taken as chosen, uncertain ones (payment-app credits, refunds into expenses, card bills) are shown as suggestions the CA confirms.
+- Bank → Tally "Send to Tally" loads the Tally company's own ledgers (bank, Suspense and party ledgers) for mapping, then posts the reviewed vouchers to TallyPrime's local XML server at `TALLY_URL` (default `http://localhost:9000`; set on the API, never from the browser), after creating missing ledgers, and reports Tally's own created/error counts. It only reaches a Tally on the API host's computer or network and has not yet been verified against a live TallyPrime import; sending twice creates duplicate vouchers.
 
 ## What Is Mocked Or Prototype-Only
 

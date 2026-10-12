@@ -11,7 +11,8 @@ import { sql } from "drizzle-orm";
 import { requirePermission, auditAction } from "../middleware/authz";
 import { resolveBooksCompanyId } from "../services/companyScope";
 import { parseBankStatement, unifyParties, type BankStatementSummary, type NormalizedBankTxn } from "../services/bankStatement";
-import { buildTallyVoucherXml, LEDGER_OPTIONS, suggestLedger, type LedgerMapping } from "../services/tallyVoucherXml";
+import { buildTallyVoucherXml, LEDGER_OPTIONS, suggestLedger, type LedgerMapping, type TallyBankTxn, type TallyXmlInput } from "../services/tallyVoucherXml";
+import { sendVouchersToTally, tallyLedgers, tallyStatus } from "../services/tallyPush";
 import { applyDecision, compareBankWithTally, parseTallyLedgerCsv, type ReviewStatus } from "../services/statementCompare";
 import { buildGstDraftJson, mergeEcommercePacks, normalizeMarketplaceCsv, salesToCsv, type EcommercePack, type MarketplacePlatform } from "../services/ecommerceGst";
 import { compareInvoicesWithBank, parseInvoiceCsv, type InvoiceRow } from "../services/invoiceVerify";
@@ -211,21 +212,89 @@ router.post("/jobs/bank-statement/normalize", requirePermission("uploads.create"
   });
 });
 
+const VOUCHER_TYPES = new Set(["Receipt", "Payment", "Contra"]);
+
+/** The reviewed rows and ledger choices sent by the Bank → Tally page, with per-row choices cleaned. */
+function bankTallyInput(req: Request): TallyXmlInput {
+  const rows = Array.isArray(req.body?.transactions) ? req.body.transactions as TallyBankTxn[] : [];
+  return {
+    companyName: textBody(req.body?.clientName) || "Client",
+    bankLedger: textBody(req.body?.bankLedger) || "Bank Account",
+    transactions: rows.map(txn => ({
+      ...txn,
+      ledgerName: typeof txn.ledgerName === "string" && txn.ledgerName.trim() ? txn.ledgerName.trim().slice(0, 200) : null,
+      voucherType: VOUCHER_TYPES.has(String(txn.voucherType)) ? txn.voucherType : null,
+    })),
+    mappings: Array.isArray(req.body?.mappings) ? req.body.mappings as LedgerMapping[] : [],
+    createLedgers: req.body?.createLedgers !== false,
+    bankGroup: req.body?.bankGroup === "Current Assets" ? "Current Assets" : "Bank Accounts",
+  };
+}
+
+// Is TallyPrime answering on this computer, and which companies are open?
+router.get("/jobs/tally/status", requirePermission("uploads.read"), async (req, res): Promise<void> => {
+  const companyId = await resolveBooksCompanyId(req, res);
+  if (companyId == null) return;
+  res.json({ ok: true, ...(await tallyStatus()) });
+});
+
+// The ledgers already in a Tally company, for mapping rows, the bank and Suspense to real names.
+router.get("/jobs/tally/ledgers", requirePermission("uploads.read"), async (req, res): Promise<void> => {
+  const companyId = await resolveBooksCompanyId(req, res);
+  if (companyId == null) return;
+  const company = typeof req.query.company === "string" ? req.query.company.trim().slice(0, 200) : "";
+  if (!company) {
+    res.status(400).json({ ok: false, message: "Choose the Tally company first." });
+    return;
+  }
+  try {
+    res.json({ ok: true, ledgers: await tallyLedgers(company) });
+  } catch {
+    res.status(502).json({ ok: false, message: "Tally did not return the ledger list. Check that the company is open in Tally." });
+  }
+});
+
+// Sends the reviewed vouchers straight into the open Tally company.
+router.post("/jobs/bank-to-tally/send", requirePermission("uploads.create"), async (req, res): Promise<void> => {
+  const companyId = await resolveBooksCompanyId(req, res);
+  if (companyId == null) return;
+  const gate = await privacyGate(req, res);
+  if (!gate) return;
+  const input = bankTallyInput(req);
+  const tallyCompany = textBody(req.body?.tallyCompany).trim().slice(0, 200);
+  const suspenseLedger = textBody(req.body?.suspenseLedger).trim().slice(0, 200) || undefined;
+  const built = buildTallyVoucherXml({ ...input, createLedgers: false, tallyCompany, suspenseLedger });
+  if (!built.ok || !built.xml || !built.voucherCount) {
+    res.status(422).json({ ok: false, errors: built.errors, message: "Nothing was sent to Tally because the entries did not pass the checks." });
+    return;
+  }
+  let sent: Awaited<ReturnType<typeof sendVouchersToTally>>;
+  try {
+    sent = await sendVouchersToTally({ mastersXml: input.createLedgers ? built.mastersXml : undefined, vouchersXml: built.xml, expected: built.voucherCount });
+  } catch {
+    res.status(502).json({ ok: false, message: "Tally did not confirm the import. Open Day Book in Tally to see whether the entries arrived before sending again. Sending twice creates duplicate entries." });
+    return;
+  }
+  const runId = gate.privacy ? "" : textBody(req.body?.runId);
+  if (runId && !runId.startsWith("local-")) {
+    await saveRunArtifact(runId, { artifactType: "tally_push", title: `Sent to Tally${tallyCompany ? ` — ${tallyCompany}` : ""}`, jsonData: { ...sent, tallyCompany }, companyId });
+  }
+  if (!gate.privacy) await auditAction(req, "job.tally_push", "workflow_run", null, { runId, companyId, tallyCompany, expected: sent.expected, created: sent.created });
+  res.json({
+    ...sent,
+    tallyCompany,
+    message: sent.ok
+      ? `${sent.created} ${sent.created === 1 ? "entry" : "entries"} created in Tally.`
+      : `${sent.created} of ${sent.expected} entries were created in Tally. Check Tally's messages below and the Day Book before sending again. Sending again creates duplicates of the entries already created.`,
+  });
+});
+
 router.post("/jobs/bank-to-tally/xml", requirePermission("uploads.create"), async (req, res): Promise<void> => {
   const companyId = await resolveBooksCompanyId(req, res);
   if (companyId == null) return;
   const gate = await privacyGate(req, res);
   if (!gate) return;
-  const transactions = Array.isArray(req.body?.transactions) ? req.body.transactions as NormalizedBankTxn[] : [];
-  const mappings = Array.isArray(req.body?.mappings) ? req.body.mappings as LedgerMapping[] : [];
-  const result = buildTallyVoucherXml({
-    companyName: textBody(req.body?.clientName) || "Client",
-    bankLedger: textBody(req.body?.bankLedger) || "Bank Account",
-    transactions,
-    mappings,
-    createLedgers: req.body?.createLedgers !== false,
-    bankGroup: req.body?.bankGroup === "Current Assets" ? "Current Assets" : "Bank Accounts",
-  });
+  const result = buildTallyVoucherXml(bankTallyInput(req));
   if (!result.ok || !result.xml) {
     res.status(422).json({ ok: false, errors: result.errors, message: "Tally XML was not created because validation failed." });
     return;

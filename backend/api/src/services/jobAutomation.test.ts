@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { counterpartyFrom, parseBankStatement, unifyParties } from "./bankStatement";
-import { buildTallyVoucherXml, LEDGER_OPTIONS, suggestLedger, validateTallyVoucherXml } from "./tallyVoucherXml";
+import { buildTallyVoucherXml, LEDGER_OPTIONS, suggestLedger, suggestLedgerDetail, validateTallyVoucherXml } from "./tallyVoucherXml";
 import { compareBankWithTally, parseTallyLedgerCsv } from "./statementCompare";
 import { buildGstDraftJson, mergeEcommercePacks, normalizeMarketplaceCsv, salesToCsv } from "./ecommerceGst";
 import { comparePortalTcs, readPortalTcs, reviewDocumentSummary, reviewMarketplaceSales } from "./ecommerceReview";
@@ -13,9 +13,10 @@ import { compareInvoicesWithBank, parseInvoiceCsv } from "./invoiceVerify";
 import { recognizeStatement } from "./statementOcr";
 import { createLoginThrottle, throttleMessage } from "./loginThrottle";
 import * as XLSX from "xlsx";
-import { UnreadableFileError, sheetToCsvText } from "./fileDetect";
+import { NOT_A_STATEMENT, UnreadableFileError, notAStatementMessage, sheetToCsvText } from "./fileDetect";
 import { detectBankFromStatement } from "./bankDirectory";
 import { buildBankToTallyWorkbook } from "./bankToTallyWorkbook";
+import { parseCompanyNames, parseImportResponse, parseLedgers } from "./tallyPush";
 import { buildEcommerceWorkbook } from "./ecommerceWorkbook";
 import ExcelJS from "exceljs";
 import { aiDecision, historyCutoff, historyMonths, outsideWindowMessage, planIsActive, privacyAvailable, truthy } from "./privacyPolicy";
@@ -77,16 +78,20 @@ test("an impossible transaction date stops the statement export", () => {
   assert.match(summary.message, /invalid date/);
 });
 
-test("Excel working copy keeps reviewed ledger choices and separates left-out rows", async () => {
+test("Excel statement keeps reviewed ledger choices and marks left-out rows", async () => {
   const source = parseBankStatement(bankCsv, "statement.csv").transactions.slice(0, 2);
   const workbook = buildBankToTallyWorkbook({
     clientName: "Example Client",
     bankName: "HDFC Bank",
     accountNumberMasked: "1234",
     periodLabel: "May 2026",
+    openingBalance: 1000,
+    closingBalance: 900,
+    balanceCheck: "passed",
     rows: source.map((txn, index) => ({
       rowNumber: txn.rowNumber,
       date: txn.date,
+      valueDate: txn.valueDate,
       narration: txn.narration,
       reference: txn.reference,
       debit: txn.debit,
@@ -94,6 +99,7 @@ test("Excel working copy keeps reviewed ledger choices and separates left-out ro
       balance: txn.balance,
       counterparty: txn.counterparty,
       ledgerChoice: index === 0 ? "Office Expenses" : "Suspense",
+      ledgerConfirmed: true,
       needsReview: index === 0,
       reviewed: index === 0,
       edited: false,
@@ -102,17 +108,71 @@ test("Excel working copy keeps reviewed ledger choices and separates left-out ro
   });
   const loaded = new ExcelJS.Workbook();
   await loaded.xlsx.load(await workbook.xlsx.writeBuffer());
-  assert.equal(loaded.getWorksheet("Summary")?.getCell("B4").value, "HDFC Bank");
-  assert.equal(loaded.getWorksheet("Summary")?.getCell("B7").value, 1);
-  assert.equal(loaded.getWorksheet("Transactions")?.getCell("G2").value, "Office Expenses");
-  assert.equal(loaded.getWorksheet("Transactions")?.getCell("H2").value, "Checked");
-  assert.equal(loaded.getWorksheet("Transactions")?.getCell("D2").value, source[0].debit);
-  assert.equal(loaded.getWorksheet("Left out")?.getCell("G2").value, "Suspense");
+  assert.equal(loaded.worksheets[0].name, "Statement");
+  const statement = loaded.getWorksheet("Statement")!;
+  assert.equal(statement.getCell("C2").value, 1000);
+  assert.equal(statement.getCell("C4").value, "Ready for Tally");
+  assert.equal(statement.getCell("E7").value, source[0].debit);
+  assert.equal(statement.getCell("H7").value, source[0].credit != null ? "Receipt" : "Payment");
+  assert.equal(statement.getCell("I7").value, "Office Expenses");
+  assert.equal(statement.getCell("K7").value, "Checked");
+  assert.equal(statement.getCell("I8").value, "");
+  assert.equal(statement.getCell("K8").value, "Left out of Tally file");
+  assert.equal(statement.getCell("C9").value, "Total");
+  const summary = loaded.getWorksheet("Summary")!;
+  assert.equal(summary.getCell("B6").value, "HDFC Bank");
+  assert.equal(summary.getCell("B9").value, 1);
+  assert.equal(summary.getCell("B10").value, 1);
+
+  const party = { rowNumber: 1, date: "2026-05-01", valueDate: null, narration: "UPI/ACME SUPPLIES", reference: null, debit: 500, credit: null, balance: null, counterparty: "ACME SUPPLIES", needsReview: false, reviewed: false, edited: false, excluded: false };
   const partyCopy = buildBankToTallyWorkbook({
-    clientName: "Example Client", bankName: "HDFC Bank", accountNumberMasked: null, periodLabel: null,
-    rows: [{ rowNumber: 1, date: "2026-05-01", narration: "UPI/ACME SUPPLIES", reference: null, debit: 500, credit: null, balance: null, counterparty: "ACME SUPPLIES", ledgerChoice: "Sundry Creditors", needsReview: false, reviewed: false, edited: false, excluded: false }],
+    clientName: "Example Client", bankName: "HDFC Bank", accountNumberMasked: null, periodLabel: null, openingBalance: null, closingBalance: null, balanceCheck: "passed",
+    rows: [{ ...party, ledgerChoice: "Sundry Creditors", ledgerConfirmed: true }],
   });
-  assert.equal(partyCopy.getWorksheet("Transactions")?.getCell("G2").value, "Acme Supplies");
+  assert.equal(partyCopy.getWorksheet("Statement")?.getCell("I7").value, "Acme Supplies");
+  assert.equal(partyCopy.getWorksheet("Statement")?.getCell("J7").value, "Sundry Creditors");
+});
+
+test("Excel shows the same open items as the review screen", () => {
+  const base = { valueDate: null, reference: null, credit: null, balance: null, needsReview: false, reviewed: false, edited: false, excluded: false };
+  const workbook = buildBankToTallyWorkbook({
+    clientName: "Example Client", bankName: "DBS Bank India", accountNumberMasked: "4321", periodLabel: null, openingBalance: 100, closingBalance: 40, balanceCheck: "passed",
+    rows: [
+      { ...base, rowNumber: 1, date: "2026-05-01", narration: "UPI 1 vendorone@ybl VENDOR ONE", debit: 10, counterparty: "VENDOR ONE", ledgerChoice: "Sundry Creditors", ledgerConfirmed: false },
+      { ...base, rowNumber: 2, date: "2026-05-02", narration: "UPI 2 vendorone@ybl VENDOR ONE", debit: 20, counterparty: "VENDOR ONE", ledgerChoice: "Sundry Creditors", ledgerConfirmed: false },
+      { ...base, rowNumber: 3, date: "2026-05-03", narration: "UPI 3 vendortwo@ybl VENDOR TWO", debit: 30.1, counterparty: "VENDOR TWO", ledgerChoice: "Suspense", ledgerConfirmed: false },
+      { ...base, rowNumber: 4, date: "2026-05-04", narration: "UPI 4 google@icici Google India", debit: 0.2, counterparty: "Google India", ledgerChoice: "Software Expenses", ledgerConfirmed: true },
+    ],
+  });
+  const statement = workbook.getWorksheet("Statement")!;
+  assert.equal(statement.getCell("C4").value, "Not ready for Tally: 2 items need attention");
+  assert.equal(statement.getCell("K7").value, "Confirm ledger");
+  assert.equal(statement.getCell("K9").value, "Choose ledger");
+  assert.equal(statement.getCell("K10").value, "Ready");
+  const summary = workbook.getWorksheet("Summary")!;
+  const value = (label: string) => summary.getRows(1, summary.rowCount)?.find(row => row.getCell(1).value === label)?.getCell(2).value;
+  assert.equal(value("Party ledgers to choose or confirm"), 2);
+  assert.equal(value("Parties going to Suspense"), 1);
+  assert.equal(value("Money paid"), 60.3);
+  assert.equal(value("Questions for the client"), 0);
+  assert.equal(workbook.getWorksheet("Client queries"), undefined);
+});
+
+test("Excel carries row voucher choices and the client's questions", () => {
+  const base = { valueDate: null, reference: null, balance: null, needsReview: false, reviewed: false, edited: false, excluded: false, ledgerConfirmed: true };
+  const workbook = buildBankToTallyWorkbook({
+    clientName: "Example Client", bankName: "HDFC Bank", accountNumberMasked: null, periodLabel: null, openingBalance: null, closingBalance: null, balanceCheck: "passed",
+    rows: [
+      { ...base, rowNumber: 1, date: "2026-05-01", narration: "ATM WDL", debit: 2000, credit: null, counterparty: null, ledgerChoice: "Cash" },
+      { ...base, rowNumber: 2, date: "2026-05-02", narration: "UPI ACME JEWELLERS", debit: 100000, credit: null, counterparty: "ACME JEWELLERS", ledgerChoice: "Suspense", query: "What was this jewellery purchase for?" },
+    ],
+  });
+  const statement = workbook.getWorksheet("Statement")!;
+  assert.equal(statement.getCell("H7").value, "Contra");
+  assert.equal(statement.getCell("H8").value, "Payment");
+  const queries = workbook.getWorksheet("Client queries")!;
+  assert.equal(queries.getCell("B2").value, "UPI ACME JEWELLERS");
+  assert.equal(queries.getCell("E2").value, "What was this jewellery purchase for?");
 });
 
 test("tally xml balances and rejects empty input", () => {
@@ -525,12 +585,88 @@ test("invoice number in the narration plus exact amount is a match", () => {
 });
 
 test("bank interest credited is income, loan interest debited is an expense", () => {
-  assert.equal(suggestLedger("158802222334:Int.Pd:01-01-2026 to 31-03-2026", [], "in"), "Interest Received");
+  assert.equal(suggestLedger("100000002222:Int.Pd:01-01-2026 to 31-03-2026", [], "in"), "Interest Received");
   assert.equal(suggestLedger("CREDIT INTEREST - Saving", [], "in"), "Interest Received");
   assert.equal(suggestLedger("LOAN INT DEBIT 4455", [], "out"), "Interest Paid");
   assert.equal(suggestLedger("FD MATURITY PROCEEDS :5150212235/24-08-25", [], "in"), "Fixed Deposits");
-  assert.equal(suggestLedger("Term Deposit-8882000002165143-BHARAT", [], "out"), "Fixed Deposits");
+  assert.equal(suggestLedger("Term Deposit-8000000000000001-ASHOK", [], "out"), "Fixed Deposits");
   assert.equal(suggestLedger("PG KOTAK MAHINDRA LIFE", [], "out"), "Insurance Premium");
+});
+
+test("per-row ledger and voucher choices reach the Tally XML, and Contra needs cash", () => {
+  const base = { valueDate: null, description: "", reference: null, balance: null, accountName: null, accountNumberMasked: null, bankName: null, confidence: 1, sourceFile: "", sourcePage: null, sourceQuote: "" };
+  const rows = [
+    { ...base, rowNumber: 1, date: "2026-05-01", narration: "ATM WDL MAIN ROAD", counterparty: null, debit: 2000, credit: null },
+    { ...base, rowNumber: 2, date: "2026-05-02", narration: "UPI 1 zepto@ybl Zepto", counterparty: "Zepto", debit: 71, credit: null, ledgerName: "Office Expenses" },
+    { ...base, rowNumber: 3, date: "2026-05-03", narration: "CASH DEPOSIT BY SELF", counterparty: null, debit: null, credit: 5000, voucherType: "Contra" as const },
+  ];
+  const built = buildTallyVoucherXml({ companyName: "Example", bankLedger: "HDFC Bank", transactions: rows, mappings: [{ counterparty: "Zepto", ledgerName: "Suspense" }] });
+  assert.equal(built.ok, true, built.errors.join(" "));
+  const vouchers = (built.xml ?? "").split("<VOUCHER ").slice(1);
+  assert.match(vouchers[0], /VCHTYPE="Contra"[\s\S]*<LEDGERNAME>Cash<\/LEDGERNAME>/);
+  assert.match(vouchers[1], /VCHTYPE="Payment"[\s\S]*<LEDGERNAME>Office Expenses<\/LEDGERNAME>/);
+  assert.match(vouchers[2], /VCHTYPE="Contra"[\s\S]*<LEDGERNAME>Cash<\/LEDGERNAME>/);
+  assert.equal(validateTallyVoucherXml(built.xml ?? "", 3).ok, true);
+  assert.match(built.mastersXml ?? "", /<REPORTNAME>All Masters<\/REPORTNAME>/);
+
+  const badContra = buildTallyVoucherXml({ companyName: "Example", bankLedger: "HDFC Bank", transactions: [{ ...rows[1], voucherType: "Contra" }] });
+  assert.equal(badContra.ok, false);
+  assert.match(badContra.errors.join(" "), /Contra entry needs Cash/);
+  const wrongWay = buildTallyVoucherXml({ companyName: "Example", bankLedger: "HDFC Bank", transactions: [{ ...rows[1], voucherType: "Receipt" }] });
+  assert.equal(wrongWay.ok, false);
+  const targeted = buildTallyVoucherXml({ companyName: "Example", bankLedger: "HDFC Bank", transactions: [rows[1]], tallyCompany: "Example Traders & Co" });
+  assert.match(targeted.xml ?? "", /<SVCURRENTCOMPANY>Example Traders &amp; Co<\/SVCURRENTCOMPANY>/);
+});
+
+test("Tally's import answer and company list are read correctly", () => {
+  const answer = parseImportResponse("<RESPONSE><CREATED>58</CREATED><ALTERED>0</ALTERED><IGNORED>0</IGNORED><ERRORS>2</ERRORS><EXCEPTIONS>0</EXCEPTIONS><LINEERROR>Ledger &apos;Vendor One&apos; does not exist!</LINEERROR></RESPONSE>");
+  assert.deepEqual(answer, { created: 58, altered: 0, ignored: 0, errors: 2, exceptions: 0, messages: ["Ledger 'Vendor One' does not exist!"] });
+  assert.deepEqual(parseCompanyNames('<ENVELOPE><COLLECTION><COMPANY NAME="Example Traders" RESERVEDNAME=""><NAME TYPE="String">Example Traders</NAME></COMPANY><COMPANY NAME="ABC &amp; Sons"></COMPANY></COLLECTION></ENVELOPE>'), ["Example Traders", "ABC & Sons"]);
+  assert.deepEqual(
+    parseLedgers('<ENVELOPE><COLLECTION><LEDGER NAME="Suspense A/c" RESERVEDNAME=""><PARENT TYPE="String">Suspense A/c</PARENT></LEDGER><LEDGER NAME="DBS Bank 4321"><PARENT TYPE="String">Bank Accounts</PARENT></LEDGER><LEDGER NAME="Vendor One &amp; Co"><PARENT TYPE="String">Sundry Debtors</PARENT></LEDGER></COLLECTION></ENVELOPE>'),
+    [{ name: "DBS Bank 4321", parent: "Bank Accounts" }, { name: "Suspense A/c", parent: "Suspense A/c" }, { name: "Vendor One & Co", parent: "Sundry Debtors" }],
+  );
+});
+
+test("Send to Tally can post Suspense rows to the company's own Suspense ledger", () => {
+  const base = { valueDate: null, description: "", reference: null, balance: null, accountName: null, accountNumberMasked: null, bankName: null, confidence: 1, sourceFile: "", sourcePage: null, sourceQuote: "" };
+  const built = buildTallyVoucherXml({
+    companyName: "Example", bankLedger: "DBS Bank 4321", suspenseLedger: "Suspense A/c",
+    transactions: [{ ...base, rowNumber: 1, date: "2026-05-01", narration: "UPI ACME JEWELLERS", counterparty: "ACME JEWELLERS", debit: 100, credit: null }],
+  });
+  assert.equal(built.ok, true);
+  assert.match(built.xml ?? "", /<LEDGERNAME>Suspense A\/c<\/LEDGERNAME>/);
+  assert.doesNotMatch(built.xml ?? "", /<LEDGERNAME>Suspense<\/LEDGERNAME>/);
+});
+
+test("Google Pay rows are split by handle and only confident rules skip review", () => {
+  const rows: Array<[string, "in" | "out", string, string, boolean]> = [
+    ["UPI 814031432615 goog-payments@axisbank GOOGLE IND", "in", "Google payments", "Cashback Received", false],
+    ["UPI 526177489666 gpayvoucher@icici Google India Se", "out", "Google Pay voucher", "Suspense", false],
+    ["UPI 571629103449 gpayrecharge@icici Google India S", "out", "Google Pay recharge", "Telephone & Internet", false],
+    ["UPI 530237378635 playstore@axisbank GOOGLE INDIA D", "out", "Google Play", "Software Expenses", false],
+    ["UPI 608767315055 gpay-creditcard@okpayaxis Google", "out", "Google Pay card bill", "Credit Card Payable", false],
+    ["NEFT GOOGLE WORKSPACE INV 8812", "out", "", "Software Expenses", true],
+    ["REFUND ADOBE SOFTWARE ORDER 5521", "in", "", "Software Expenses", false],
+  ];
+  for (const [narration, direction, party, ledger, sure] of rows) {
+    if (party) assert.equal(counterpartyFrom(narration), party, narration);
+    assert.deepEqual(suggestLedgerDetail(narration, direction), { ledger, sure }, narration);
+  }
+  assert.equal(suggestLedger("EPFO CHALLAN TRRN 123456", [], "out"), "PF Payable");
+  assert.equal(suggestLedger("ESIC CONTRIBUTION MAY 26", [], "out"), "ESI Payable");
+  assert.equal(suggestLedger("MAHA PTAX PAYMENT", [], "out"), "Professional Tax Payable");
+  assert.equal(suggestLedger("UPI SELF TRANSFER TO HDFC", [], "out"), "Suspense");
+  assert.equal(suggestLedger("CASH DEP CDM MUMBAI", [], "in"), "Cash");
+  assert.equal(suggestLedger("NEFT AWS INDIA AMAZON WEB SERVICES", [], "out"), "Software Expenses");
+});
+
+test("paying through a gateway or marketplace handle is not a settlement", () => {
+  assert.equal(suggestLedger("RAZORPAY SETTLEMENT 88213", [], "in"), "Payment Gateway Settlements");
+  assert.equal(suggestLedger("AMAZON SELLER SERVICES SETTLEMENT", [], "in"), "Marketplace Settlements");
+  assert.equal(suggestLedger("UPI 572776661341 vil.payu@hdfcbank VODAFONEIDEA LI", [], "out"), "Telephone & Internet");
+  assert.equal(suggestLedger("UPI 571352036309 flipkartgiftcard.payu@hdfcbank WW", [], "out"), "Suspense");
+  assert.equal(suggestLedger("UPI 77120 jiomart.payu@hdfcbank JIOMART", [], "out"), "Suspense");
 });
 
 test("quarterly interest rows are one party", () => {
@@ -545,14 +681,19 @@ test("quarterly interest rows are one party", () => {
 
 test("party names come out of real Indian narration formats", () => {
   const cases: Array<[string, string | null]> = [
-    ["UPI/AMJAD PARVEZ/188085643285/Payment from Ph", "AMJAD PARVEZ"],
+    ["UPI/ROHAN SHARMA/100000000003/Payment from Ph", "ROHAN SHARMA"],
     ["UPI/ANKIT KUMAR CHO/386145065356/Sent using Payt", "ANKIT KUMAR CHO"],
-    ["UPI 690674808367 navjitkaur02@ybl NAVJEET KAUR", "NAVJEET KAUR"],
-    ["UPI 643191763720 nareshkumargirdhar0001@ybl NARESH", "NARESH"],
+    ["UPI 100000000001 priyasharma2@ybl PRIYA SHARMA", "PRIYA SHARMA"],
+    ["UPI 100000000004 mohankumar0001@ybl MOHAN", "MOHAN"],
     ["UPI 529395980588 zeptoonline@ybl Zepto", "Zepto"],
-    ["N/INDBH03048748656/KKBK/BHARAT GIRIDHAR", "BHARAT GIRIDHAR"],
-    ["IMP-528618976442-8802222334-BHARAT GIRIDHAR", "BHARAT GIRIDHAR"],
-    ["Purchase-519417077479-130725 17:19:43-SWIGGY Bangalore IN", "SWIGGY Bangalore"],
+    ["N/INDBH00000000000/KKBK/ASHOK VERMA", "ASHOK VERMA"],
+    ["IMP-100000000005-9000000001-ASHOK VERMA", "ASHOK VERMA"],
+    ["Purchase-519417077479-130725 17:19:43-SWIGGY Bangalore IN", "Swiggy"],
+    ["Purchase-521812004761-060825 17:43:00-PAY*Swiggy BANGALORE IN", "Swiggy"],
+    ["UPI 608748525465 swiggy1online.gpay@okpayaxis Swig", "Swiggy"],
+    ["UPI 572776661341 vil.payu@hdfcbank VODAFONEIDEA LI", "Vodafone Idea"],
+    ["UPI 535972109358 viprevf@hsbc VODAFONE IDEA LIMITE", "Vodafone Idea"],
+    ["UPI 571352036309 flipkartgiftcard.payu@hdfcbank WW", "Flipkart"],
     ["VISA POS TXN AT IN/BOOKMYSHOW COM 124305400", "BOOKMYSHOW"],
     ["VISA POS TXN AT IN/BOOKMYSHOW 022560889", "BOOKMYSHOW"],
     ["PCD/5335/ENCALM LOUNGE/DELHI060725/11:40", "ENCALM LOUNGE"],
@@ -560,19 +701,19 @@ test("party names come out of real Indian narration formats", () => {
     ["Razorpay Settlement/RZP-9988", "Razorpay Settlement"],
     ["NEFT-Google Workspace/GSuite", "Google Workspace"],
     ["PG KOTAK MAHINDRA LIFE", "KOTAK MAHINDRA LIFE"],
-    ["Term Deposit-8882000002165143-BHARAT GIRIDHAR", "Fixed deposit"],
+    ["Term Deposit-8000000000000001-ASHOK VERMA", "Fixed deposit"],
     ["CREDIT INTEREST - Saving", "Bank interest"],
     ["ATM WDL/ATM-Koramangala", "Cash withdrawal"],
-    ["UPI 566081058767 zeptomarketplac357841.rzp@hdfcban", "zeptomarketplac rzp"],
+    ["UPI 566081058767 zeptomarketplac357841.rzp@hdfcban", "Zepto"],
   ];
   for (const [narration, party] of cases) assert.equal(counterpartyFrom(narration), party, narration);
 });
 
 test("names the bank cut short are treated as one party", () => {
   const row = (counterparty: string) => ({ counterparty } as unknown as Parameters<typeof unifyParties>[0][number]);
-  const rows = ["Brijesh Brij", "Brijesh Brije", "Vodafone Ide", "VODAFONE IDEA LIMITE", "Google", "Google India Se"].map(row);
+  const rows = ["Rakesh Rak", "Rakesh Rake", "Vodafone Ide", "VODAFONE IDEA LIMITE", "Google", "Google India Se"].map(row);
   unifyParties(rows);
-  assert.deepEqual(rows.map(item => item.counterparty), ["Brijesh Brije", "Brijesh Brije", "VODAFONE IDEA LIMITE", "VODAFONE IDEA LIMITE", "Google", "Google India Se"]);
+  assert.deepEqual(rows.map(item => item.counterparty), ["Rakesh Rake", "Rakesh Rake", "VODAFONE IDEA LIMITE", "VODAFONE IDEA LIMITE", "Google", "Google India Se"]);
 });
 
 test("privacy mode needs a paid, active plan", () => {
@@ -649,4 +790,13 @@ test("Excel files are read as .xlsx and as the older .xls, and a damaged one giv
   }
   assert.throws(() => sheetToCsvText({ originalname: "broken.xlsx", mimetype: "", buffer: Buffer.from("PK\u0003\u0004 not a workbook") }), UnreadableFileError);
   assert.equal(sheetToCsvText({ originalname: "plain.csv", mimetype: "text/csv", buffer: Buffer.from("a,b\n1,2") }), "a,b\n1,2", "CSV is passed through");
+});
+
+test("a file that is not a bank statement says so, and names what it looks like", () => {
+  const csv = (name: string, text: string) => ({ originalname: name, mimetype: "text/csv", buffer: Buffer.from(text) });
+  assert.equal(notAStatementMessage({ originalname: "notes.pdf", mimetype: "application/pdf", buffer: Buffer.from("") }), NOT_A_STATEMENT, "a PDF of something else");
+  assert.equal(notAStatementMessage(csv("random.csv", "Name,Team,Notes\nAsha,Ops,Hello")), NOT_A_STATEMENT);
+  assert.match(notAStatementMessage(csv("tally.csv", "Date,Particulars,Vch Type,Vch No.,Debit,Credit\n01/05/2026,ACME,Payment,1,500,")), /Tally export.*Bank ↔ Tally/);
+  assert.match(notAStatementMessage(csv("amazon_sales.csv", "Order ID,ASIN,Taxable Value,Place of Supply\n1,B0X,100,KA")), /marketplace sales report.*E-commerce GST/);
+  assert.match(NOT_A_STATEMENT, /something else/);
 });

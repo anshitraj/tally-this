@@ -7,9 +7,10 @@
 import { z } from "zod";
 import { runAIJsonTask } from "../server/ai/providerRouter";
 import type { NormalizedBankTxn } from "./bankStatement";
-import { LEDGER_OPTIONS, partyKey, suggestLedger, type LedgerMapping } from "./tallyVoucherXml";
+import { LEDGER_OPTIONS, partyKey, suggestLedgerDetail, type LedgerMapping } from "./tallyVoucherXml";
 
-export type LedgerSource = "remembered" | "rule" | "ai" | "none";
+/** "hint" is a rule's likely ledger that still needs the reviewer's confirmation, like an AI pick. */
+export type LedgerSource = "remembered" | "rule" | "hint" | "ai" | "none";
 
 export interface LedgerGroup {
   key: string;
@@ -40,12 +41,12 @@ export function groupLedgers(transactions: NormalizedBankTxn[], remembered: Ledg
       continue;
     }
     const memory = remembered.find(mapping => mapping.counterparty && mapping.counterparty.toLowerCase() === key.toLowerCase());
-    const rule = suggestLedger(txn.narration, [], direction);
+    const rule = suggestLedgerDetail(txn.narration, direction);
     groups.set(key, {
       key,
       label: key,
-      ledger: memory?.ledgerName ?? rule,
-      source: memory ? "remembered" : rule !== "Suspense" ? "rule" : "none",
+      ledger: memory?.ledgerName ?? rule.ledger,
+      source: memory ? "remembered" : rule.ledger === "Suspense" ? "none" : rule.sure ? "rule" : "hint",
       count: 1,
       total: amount,
       direction,
@@ -91,6 +92,9 @@ export async function aiLedgerPicks(
       "Each party comes from an Indian bank statement narration.",
       "For each party choose exactly one ledger from ledgerChoices.",
       "Use Sundry Debtors for customers who pay us and Sundry Creditors for vendors we pay when no expense ledger fits.",
+      "Payment apps (Google Pay, PhonePe, Paytm, a .rzp@ or .payu@ handle) print their own name; judge by the merchant and handle, not the app name.",
+      "Money received from a payment app, not from a customer, is usually cashback (Cashback Received). Money received back from a merchant we paid is a refund and goes to that purchase's ledger.",
+      "A credit card bill payment is Credit Card Payable, never an expense.",
       "Transfers between the account holder's own accounts, and anything unclear, are Suspense.",
       "Return the key exactly as given.",
     ].join(" "),

@@ -250,7 +250,47 @@ function segmentScore(segment: string) {
  * The other party in an Indian bank narration, so rows from the same party group together.
  * Handles "UPI/NAME/REF/NOTE", "UPI REF vpa@bank NAME", "N/REF/BANK/NAME", "IMP-REF-PHONE-NAME".
  */
+/**
+ * Google Pay collects through handles that say what the money was for, while the name beside
+ * them ("Google India Se") is the same for all of them. The handle names the party instead, so
+ * cashback, recharges, vouchers and card bills are not lumped into one "Google" party.
+ */
+const PAYMENT_APP_PARTIES: Array<[RegExp, string]> = [
+  [/goog-payments@/i, "Google payments"],
+  [/gpayrecharge@/i, "Google Pay recharge"],
+  [/gpayvoucher@/i, "Google Pay voucher"],
+  [/gpay-?creditcard@/i, "Google Pay card bill"],
+  [/playstore@/i, "Google Play"],
+];
+
+/**
+ * Well-known merchants appear under many spellings ("PAY*Swiggy BANGALORE", "swiggy1online.gpay@",
+ * "Swig"). One name per merchant means one ledger decision per merchant.
+ */
+const KNOWN_MERCHANTS: Array<[RegExp, string]> = [
+  [/swiggy|instamart/i, "Swiggy"],
+  [/zomato/i, "Zomato"],
+  [/zepto/i, "Zepto"],
+  [/blinkit|grofers/i, "Blinkit"],
+  [/bigbasket|bbnow/i, "BigBasket"],
+  [/\buber\b|uber ?india|ubertrip/i, "Uber"],
+  [/olacabs|ola ?cabs|ola ?money/i, "Ola"],
+  [/rapido/i, "Rapido"],
+  [/irctc/i, "IRCTC"],
+  [/makemytrip/i, "MakeMyTrip"],
+  [/flipkart/i, "Flipkart"],
+  [/myntra/i, "Myntra"],
+  [/nykaa/i, "Nykaa"],
+  [/vodafone|\bvil\.|viprevf/i, "Vodafone Idea"],
+  [/airtel/i, "Airtel"],
+  [/reliance ?jio|myjio|jio ?prepaid/i, "Jio"],
+  [/bsnl/i, "BSNL"],
+  [/netflix/i, "Netflix"],
+];
+
 export function counterpartyFrom(narration: string) {
+  for (const [pattern, party] of PAYMENT_APP_PARTIES) if (pattern.test(narration)) return party;
+  for (const [pattern, party] of KNOWN_MERCHANTS) if (pattern.test(narration)) return party;
   if (/\batm\b|cash wdl|cash withdrawal/i.test(narration)) return "Cash withdrawal";
   // Quarterly interest lines differ only by dates; they belong together.
   if (/\bint\.?\s*(pd|paid|cr|credit)\b|credit interest|interest (paid|credit)|\bsb\s*int\b/i.test(narration)) return "Bank interest";
@@ -285,7 +325,7 @@ export function counterpartyFrom(narration: string) {
 }
 
 /**
- * Banks cut names to fit a column ("Brijesh Brij", "Brijesh Brije"). A name that is the start
+ * Banks cut names to fit a column ("Rakesh Rak", "Rakesh Rake"). A name that is the start
  * of a longer one, and most of its length, is the same party; both take the longer name.
  */
 export function unifyParties(transactions: NormalizedBankTxn[]) {

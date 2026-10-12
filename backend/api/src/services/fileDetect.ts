@@ -83,6 +83,28 @@ export function detectMarketplace(fileName: string, text: string): MarketplacePl
   return "generic";
 }
 
+/** What to say when a file that should be a bank statement is not one. */
+export const NOT_A_STATEMENT =
+  "This doesn't look like a bank statement. It looks like something else, so there is nothing to convert. Upload your bank statement as a PDF, Excel or CSV.";
+
+/**
+ * Names what the file looks like when it is another kind of file TallyThis knows, and points to the
+ * right job; otherwise says plainly that it looks like something else.
+ */
+export function notAStatementMessage(file: UploadedFile): string {
+  if (isDocumentFile(file)) return NOT_A_STATEMENT;
+  let kind: FileKind = "unknown";
+  try {
+    kind = detectFileKind(file).kind;
+  } catch {
+    // An unreadable file is simply "something else".
+  }
+  if (kind === "tally_export") return "This looks like a Tally export, not a bank statement. To compare it with your bank, use Bank ↔ Tally and add the bank statement too.";
+  if (kind === "marketplace_report") return "This looks like a marketplace sales report, not a bank statement. Use E-commerce GST for it.";
+  if (kind === "invoice_register") return "This looks like an invoice list, not a bank statement. Use Invoice ↔ Bank and add the bank statement too.";
+  return NOT_A_STATEMENT;
+}
+
 export type FileKind = "bank_statement" | "tally_export" | "marketplace_report" | "invoice_register" | "invoice_document" | "unknown";
 
 /** Classifies a file so the home page can send it to the right job without questions. */
