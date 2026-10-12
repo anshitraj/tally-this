@@ -3,6 +3,7 @@ import { AlertTriangle, CheckCircle2, ChevronDown, FileText, Loader2, Lock, Shie
 import { getActiveClient, setActiveClient, type ActiveClient } from "@/lib/activeClient";
 import { isPrivacyOn, loadPlan, upgradeMailto, usePrivacy } from "@/lib/privacy";
 import { IncognitoIcon } from "@/components/app/IncognitoIcon";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -141,14 +142,11 @@ export async function postDownload(path: string, payload: unknown): Promise<{ ok
 // ── Layout ──────────────────────────────────────────────────────────────────
 
 export function JobShell({ title, outcome, children, modeLocked = false }: { title: string; outcome: string; children: ReactNode; modeLocked?: boolean }) {
-  const { active } = useClients();
   return (
     <div className="fv-job-shell mx-auto w-full px-4 py-6 sm:py-10">
       <div className="fv-job-header">
-        <div className="fv-job-client">{active ? `FOR ${active.name.toUpperCase()}` : "YOUR ACCOUNTING WORKSPACE"}</div>
-        <h1 className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">{title}</h1>
-        <p className="mt-1.5 text-sm text-muted-foreground sm:text-base">{outcome}</p>
-        <div className="fv-job-flow" aria-label="Upload, review, export"><span><i>01</i> Upload</span><span><i>02</i> Review</span><span><i>03</i> Export</span></div>
+        <h1 className="text-balance text-2xl font-semibold">{title}</h1>
+        <p className="mt-1 text-pretty text-sm text-muted-foreground">{outcome}</p>
       </div>
       <PrivacySwitch locked={modeLocked} />
       {children}
@@ -160,6 +158,12 @@ export function JobShell({ title, outcome, children, modeLocked = false }: { tit
 export function PrivacySwitch({ locked = false }: { locked?: boolean }) {
   const privacy = usePrivacy();
   const [showInfo, setShowInfo] = useState(false);
+  if (locked) return (
+    <section aria-label="Upload mode" data-testid="job-mode-summary" className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+      <span className="inline-flex items-center gap-1.5">{privacy.on ? <IncognitoIcon className="size-4" /> : <ShieldCheck className="size-4" />}{privacy.on ? "Incognito · not saved" : "Normal · saved history"}<Lock className="size-3" aria-hidden="true" /><span className="sr-only">Mode fixed for this job</span></span>
+      {privacy.on && <span>Download before leaving.</span>}
+    </section>
+  );
   return (
     <section className="fv-upload-mode" aria-label="Upload mode">
       <div className="fv-mode-tabs" role="group" aria-label="Choose upload mode">
@@ -186,10 +190,9 @@ export function PrivacySwitch({ locked = false }: { locked?: boolean }) {
       </div>
       <p className="fv-mode-description" aria-live="polite">
         {privacy.on
-          ? "Same accuracy checks. Files and results aren’t saved to your workspace. Download before leaving."
-          : "Accuracy checks with saved history. Review anything flagged before exporting."}
+          ? "Results aren’t saved. Download before leaving."
+          : "Results are saved to your history."}
       </p>
-      {locked && <p className="fv-mode-description">Mode is fixed for this job. Start a new upload to change it.</p>}
       {privacy.status === "loading" && <p className="fv-mode-description">Checking Premium access…</p>}
       {privacy.status === "error" && (
         <p className="fv-mode-description">Premium access couldn’t be checked. <button type="button" className="underline" onClick={() => void loadPlan(true)}>Try again</button>{privacy.on && " Incognito uploads remain blocked until access is verified."}</p>
@@ -385,10 +388,10 @@ export function ProgressBar({ percent, step }: { percent: number; step: string }
 
 export function ResultCard({ eyebrow, children, actions }: { eyebrow?: ReactNode; children: ReactNode; actions?: ReactNode }) {
   return (
-    <section className="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
-      {eyebrow && <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{eyebrow}</div>}
+    <section className="rounded-xl border border-border bg-card p-4 sm:p-5">
+      {eyebrow && <div className="mb-3 text-xs font-medium text-muted-foreground">{eyebrow}</div>}
       {children}
-      {actions && <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">{actions}</div>}
+      {actions && <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">{actions}</div>}
     </section>
   );
 }
@@ -397,7 +400,7 @@ export function BigStat({ value, label, tone = "neutral" }: { value: ReactNode; 
   return (
     <div className="min-w-0">
       <div className={cn(
-        "text-3xl font-bold tracking-tight sm:text-4xl",
+        "text-2xl font-semibold tabular-nums",
         tone === "good" && "text-emerald-700",
         tone === "attention" && "text-amber-600",
       )}>{value}</div>
@@ -425,13 +428,13 @@ export function Notice({ tone = "info", children, onClose }: { tone?: "info" | "
 export function MoreOptions({ label = "More options", children }: { label?: string; children: ReactNode }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="mt-4">
-      <button type="button" onClick={() => setOpen(value => !value)} className="inline-flex items-center gap-1 text-sm font-medium text-muted-foreground hover:text-foreground">
+    <Collapsible open={open} onOpenChange={setOpen} className="mt-4">
+      <CollapsibleTrigger asChild><button type="button" className="inline-flex items-center gap-1 text-sm font-medium text-muted-foreground hover:text-foreground">
         {label}
         <ChevronDown className={cn("h-4 w-4 transition", open && "rotate-180")} />
-      </button>
-      {open && <div className="mt-3 space-y-4 rounded-2xl border border-border bg-muted/30 p-4">{children}</div>}
-    </div>
+      </button></CollapsibleTrigger>
+      <CollapsibleContent className="mt-3 space-y-4 rounded-xl border border-border bg-muted/30 p-4">{children}</CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -589,11 +592,11 @@ export function StatementProof({ check }: { check: StatementCheck | null | undef
   if (!check || check.rows === 0) return null;
   if (check.verified) {
     return (
-      <div className="mt-4 flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-900">
-        <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
+      <div className="mt-3 flex items-start gap-2 text-sm text-muted-foreground">
+        <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" />
         <div>
-          <div className="font-semibold">Running-balance checks passed</div>
-          <div className="text-xs text-emerald-800">
+          <div className="font-medium text-foreground">Running-balance checks passed</div>
+          <div className="text-xs">
             {check.passed} of {check.rows} transaction amounts match the running balance
             {check.openingBalance != null && <> · opening {inr(check.openingBalance)}</>}
             {check.closingBalance != null && <> · closing {inr(check.closingBalance)}</>}

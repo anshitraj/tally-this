@@ -55,7 +55,7 @@ test("accountant corrects HSN, compares uploaded TCS and downloads the draft on 
   await page.locator('input[type="file"]').first().setInputFiles({ name: "amazon.csv", mimeType: "text/csv", buffer: Buffer.from("invoice,taxable\nINV-1,100") });
   await expect(page.getByRole("tab", { name: "GST report", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("tab", { name: "GST report", exact: true })).toBeInViewport();
-  await expect.poll(async () => (await page.getByRole("tab", { name: "GST report", exact: true }).boundingBox())?.y ?? Infinity).toBeLessThan(140);
+  await expect(page.getByRole("button", { name: /Review 1 item/ })).toBeInViewport();
   await expect(page.getByRole("button", { name: "Download Excel", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /Review 1 item/ })).toBeVisible();
   await page.getByRole("button", { name: /Review 1 item/ }).click();
@@ -86,14 +86,15 @@ test("a clean upload opens GST sections and exports only when the accountant ask
   await page.goto("/app/jobs/ecommerce-gst");
   await page.locator('input[type="file"]').first().setInputFiles({ name: "amazon.csv", mimeType: "text/csv", buffer: Buffer.from("invoice,taxable\nINV-1,100") });
   await expect(page.getByRole("tab", { name: "GST report", exact: true })).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByRole("tab", { name: "B2C", exact: true })).toBeVisible();
-  await expect(page.getByRole("tab", { name: "Documents", exact: true })).toBeVisible();
+  await expect(page.getByLabel("GST section")).toHaveValue("B2C");
+  await expect(page.getByLabel("GST section").locator("option")).toHaveText(["B2B", "B2C", "HSN", "TCS", "Documents", "Table 14"]);
+  await expect(page.getByRole("group", { name: "Choose upload mode" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /Download/ })).toHaveCount(0);
   expect(exportRequests).toHaveLength(0);
   await page.screenshot({ path: "../tmp/gst-report-desktop.png", fullPage: true });
-  await page.getByRole("tab", { name: "HSN", exact: true }).click();
+  await page.getByLabel("GST section").selectOption("HSN");
   await expect(page.getByRole("cell", { name: "610910", exact: true })).toBeVisible();
-  await page.getByRole("tab", { name: "Documents", exact: true }).click();
+  await page.getByLabel("GST section").selectOption("Documents");
   await expect(page.getByText("Documents issued", { exact: true })).toBeVisible();
   await page.getByLabel("Issued", { exact: true }).fill("2");
   await page.getByRole("button", { name: "Save document summary" }).click();

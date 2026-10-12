@@ -304,22 +304,22 @@ export default function EcommerceGstPage() {
               </>
               : undefined}
           >
-            <div className="grid grid-cols-2 gap-6">
+            <div className="grid grid-cols-2 gap-4">
               <BigStat value={summary.documents} label="sales rows read" tone="good" />
               <BigStat value={summary.errors} label={summary.errors === 1 ? "needs review" : "need review"} tone={summary.errors > 0 ? "attention" : "good"} />
             </div>
-            <div className="mt-5 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+            <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-sm">
               <Mini label="Taxable value" value={inr(summary.taxableValue)} />
               <Mini label={summary.cess ? "GST + cess" : "GST"} value={inr(summary.gst + (summary.cess ?? 0))} />
               <Mini label="TCS" value={inr(summary.tcs)} />
-              <Mini label="B2B · B2C" value={`${summary.b2b} · ${summary.b2c}`} />
             </div>
           </ResultCard>
           <input ref={portalInput} type="file" accept=".csv,.xlsx,.xls" className="hidden" aria-label="GST portal TCS summary" onChange={event => { const file = event.currentTarget.files?.[0]; if (file) void compareTcsFile(file); event.currentTarget.value = ""; }} />
 
-          {pack.privacy && !downloaded && <Notice tone="success">Incognito: this file and result aren’t saved to your workspace. Download your reports before leaving.</Notice>}
-          {needsPortalTcs && <Notice tone="info">TCS comes from marketplace reports only. Upload a GST portal TCS summary to compare before CA review.</Notice>}
-          {tcsComparison && <Notice tone={tcsComparison.mismatches ? "warn" : "success"}>{tcsComparison.message} {tcsComparison.mismatches ? "Potential risk — needs CA review." : "Check the uploaded portal file and return period before filing."}</Notice>}
+          {needsPortalTcs && resultView === "report" && <p className="text-xs text-muted-foreground">Portal TCS has not been compared.</p>}
+          {tcsComparison && (tcsComparison.mismatches
+            ? <Notice tone="warn">{tcsComparison.message} Potential risk — needs CA review.</Notice>
+            : <p className="text-xs text-muted-foreground">{tcsComparison.message} Check the uploaded file and return period before filing.</p>)}
           {error && <Notice tone="error" onClose={() => setError("")}>{error}</Notice>}
           {Boolean(summary.excludedSalesRows) && <Notice tone="warn">Sales totals exclude {summary.excludedSalesRows} cancelled, return or adjustment {summary.excludedSalesRows === 1 ? "row" : "rows"}. Check their treatment before filing. Potential risk — needs CA review.</Notice>}
           {exportNote && <Notice tone="info" onClose={() => setExportNote("")}>{exportNote}</Notice>}
@@ -381,18 +381,15 @@ export default function EcommerceGstPage() {
           )}
 
           {resultView === "report" && (
-            <ResultCard eyebrow="GST report">
-              <p className="mb-4 text-sm text-muted-foreground">Your uploaded reports, grouped into readable GST sections. Review the figures here before choosing an export.</p>
-              <Tabs value={tab} onValueChange={value => { setTab(value as typeof tab); setRowLimit(200); }}>
-                <TabsList className="grid h-auto w-full grid-cols-3 gap-1 sm:grid-cols-6" aria-label="GST sections">
-                  {TABS.map(section => <TabsTrigger key={section} value={section}>{section}</TabsTrigger>)}
-                </TabsList>
-                <TabsContent value={tab} className="pt-3">
-                  {tab === "Documents"
-                    ? <DocumentSummaryEditor value={documentEdits} onChange={setDocumentEdits} onSave={() => void saveReview(pack.sales, annualTurnoverAbove5Cr, documentEdits)} busy={savingReview} />
-                    : <GstSectionSummary pack={pack} section={tab} comparison={tcsComparison} />}
-                </TabsContent>
-              </Tabs>
+            <ResultCard>
+              <label className="mb-4 flex flex-wrap items-center gap-3 text-sm font-medium">GST section
+                <select className="fv-input h-10 w-full sm:w-56" value={tab} onChange={event => { setTab(event.target.value as typeof tab); setRowLimit(200); }}>
+                  {TABS.map(section => <option key={section} value={section}>{section}</option>)}
+                </select>
+              </label>
+              {tab === "Documents"
+                ? <DocumentSummaryEditor value={documentEdits} onChange={setDocumentEdits} onSave={() => void saveReview(pack.sales, annualTurnoverAbove5Cr, documentEdits)} busy={savingReview} />
+                : <GstSectionSummary pack={pack} section={tab} comparison={tcsComparison} />}
             </ResultCard>
           )}
 
@@ -465,9 +462,9 @@ export default function EcommerceGstPage() {
 
 function Mini({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl bg-muted/50 px-3 py-2">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="font-semibold">{value}</div>
+    <div className="inline-flex items-baseline gap-1.5">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <span className="text-sm font-medium tabular-nums">{value}</span>
     </div>
   );
 }
@@ -478,7 +475,7 @@ function GstSectionSummary({ pack, section, comparison }: { pack: Pack; section:
     if (comparison) return <ReportTable columns={["State", "Marketplace TCS", "Uploaded portal TCS", "Difference"]} rows={comparison.rows.map(row => [row.state, inr(row.uploaded), inr(row.portal), inr(row.difference)])} empty="No TCS amounts were found." />;
     const byState = new Map<string, number>();
     pack.tabs.tcs.forEach(sale => { const state = sale.placeOfSupply || "Not provided"; byState.set(state, (byState.get(state) ?? 0) + sale.tcsAmount); });
-    return <div className="space-y-3"><p className="text-xs text-muted-foreground">Amounts from uploaded reports. Compare a portal summary to check differences.</p><ReportTable columns={["Place of supply", "TCS from reports"]} rows={[...byState].map(([state, amount]) => [state, inr(amount)])} empty="No TCS amounts were found in these reports." /></div>;
+    return <ReportTable columns={["Place of supply", "TCS from reports"]} rows={[...byState].map(([state, amount]) => [state, inr(amount)])} empty="No TCS amounts were found in these reports." />;
   }
   const sales = section === "B2B" ? pack.tabs.b2b : section === "B2C" ? pack.tabs.b2c : pack.tabs.table14;
   const groups = new Map<string, { buyer: string; state: string; rate: number | null; count: number; taxable: number; tax: number; gross: number }>();
@@ -491,7 +488,7 @@ function GstSectionSummary({ pack, section, comparison }: { pack: Pack; section:
     groups.set(key, row);
   });
   return <div className="space-y-3">
-    <p className="text-xs text-muted-foreground">{section === "Table 14" ? "Draft operator-related entries. Operator GSTIN and supply classification still need CA review." : `${sales.length} sales rows grouped by ${section === "B2B" ? "buyer GSTIN, " : ""}place of supply and GST rate. This is a review summary.`}</p>
+    {section === "Table 14" && <p className="text-xs text-muted-foreground">Draft operator-related entries. Operator GSTIN and supply classification still need CA review.</p>}
     <ReportTable columns={[...(section === "B2B" ? ["Buyer GSTIN"] : []), "Place of supply", "GST rate", "Sales rows", "Taxable value", "GST + cess", "Invoice total"]} rows={[...groups.values()].map(row => [...(section === "B2B" ? [row.buyer] : []), row.state, row.rate == null ? "Needs review" : `${row.rate}%`, row.count, inr(row.taxable), inr(row.tax), inr(row.gross)])} empty={`No ${section} sales are included in these reports.`} />
   </div>;
 }
@@ -499,7 +496,7 @@ function GstSectionSummary({ pack, section, comparison }: { pack: Pack; section:
 function ReportTable({ columns, rows, empty }: { columns: string[]; rows: Array<Array<string | number>>; empty: string }) {
   if (!rows.length) return <p className="rounded-xl bg-muted/40 p-4 text-sm text-muted-foreground">{empty}</p>;
   return <div className="max-h-96 overflow-auto rounded-xl border border-border">
-    <table className="w-full text-left text-xs">
+    <table className="w-full text-left text-xs tabular-nums">
       <thead className="sticky top-0 bg-muted text-muted-foreground"><tr>{columns.map(column => <th key={column} className="whitespace-nowrap px-3 py-3">{column}</th>)}</tr></thead>
       <tbody>{rows.map((row, index) => <tr key={index} className="border-t border-border">{row.map((cell, col) => <td key={col} className="whitespace-nowrap px-3 py-3">{cell}</td>)}</tr>)}</tbody>
     </table>

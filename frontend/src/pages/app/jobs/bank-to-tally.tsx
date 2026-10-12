@@ -559,7 +559,7 @@ export default function BankToTallyPage() {
             <TabsTrigger value="export">Export</TabsTrigger>
           </TabsList>
           <TabsContent value={resultView} className="space-y-4 pt-2">
-          <p className="text-sm text-muted-foreground">{resultView === "statement" ? "Review the bank, totals and ledger choices here. Open Export when you’re ready." : "Choose an output after reviewing the statement. Excel is a working copy; Tally exports keep the review checks."}</p>
+          {resultView === "export" && <p className="text-xs text-muted-foreground">Excel is a working copy. Tally exports keep the review checks.</p>}
           <ResultCard
             eyebrow={
               <span className="flex flex-wrap items-center gap-2">
@@ -591,7 +591,7 @@ export default function BankToTallyPage() {
               </>
             }
           >
-            <div className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-border pb-5">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <BankIdentity name={displayBankName} />
               {!bankPickerOpen && <button type="button" className="text-sm font-medium text-[var(--fv-accent-dark)] hover:underline" onClick={() => setBankPickerOpen(true)}>Change bank</button>}
             </div>
@@ -626,7 +626,7 @@ export default function BankToTallyPage() {
                 <p className="mt-2 text-xs text-muted-foreground">Use the name printed on your statement. You can set a different Tally ledger under More options.</p>
               </div>
             )}
-            <div className="grid grid-cols-2 gap-6">
+            <div className="grid grid-cols-2 gap-4">
               <BigStat value={activeTxns.length} label={skipped.size > 0 ? "transactions included" : "transactions detected"} />
               <BigStat value={attentionItems} label={attentionItems === 1 ? "item needs attention" : "items need attention"} tone={attentionItems > 0 ? "attention" : "good"} />
             </div>
@@ -647,9 +647,6 @@ export default function BankToTallyPage() {
             )}
           </ResultCard>
 
-          {result.privacy && !generated && (
-            <Notice tone="success">Incognito: this file and result aren’t saved to your workspace. Download before leaving this page.</Notice>
-          )}
           {error && <Notice tone="error" onClose={() => setError("")}>{error}</Notice>}
           {generated && (
             <Notice tone="success">
