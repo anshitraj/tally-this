@@ -588,9 +588,13 @@ export interface StatementCheck {
 }
 
 /** One line a CA can trust: did every row agree with the bank's own running balance? */
+export function hasCompleteBalanceProof(check: StatementCheck | null | undefined) {
+  return Boolean(check?.verified && check.rows > 0 && check.checked === check.rows && check.passed === check.rows && check.failed === 0);
+}
+
 export function StatementProof({ check }: { check: StatementCheck | null | undefined }) {
   if (!check || check.rows === 0) return null;
-  if (check.verified) {
+  if (hasCompleteBalanceProof(check)) {
     return (
       <div className="mt-3 flex items-start gap-2 text-sm text-muted-foreground">
         <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" />

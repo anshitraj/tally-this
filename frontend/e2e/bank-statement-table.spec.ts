@@ -32,6 +32,10 @@ async function setup(page: Page, payloads: Record<string, unknown>) {
       payloads.excel = JSON.parse(route.request().postData() ?? "{}");
       await route.fulfill({ status: 200, body: Buffer.from("synthetic workbook"), contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
     } else if (path.endsWith("tally/status")) await route.fulfill({ json: { ok: true, running: true, companies: ["Example Traders"], message: "Connected to Tally." } });
+    else if (path.endsWith("bank-to-tally/xml")) {
+      payloads.xml = route.request().postDataJSON();
+      await route.fulfill({ json: { ok: true, xml: "<ENVELOPE />", fileName: "statement.xml", voucherCount: 3 } });
+    }
     else if (path.endsWith("tally/ledgers")) await route.fulfill({ json: { ok: true, ledgers: [{ name: "DBS Bank 4321", parent: "Bank Accounts" }, { name: "HDFC Bank", parent: "Bank Accounts" }, { name: "Suspense A/c", parent: "Suspense A/c" }, { name: "Acme Jewellers Pvt Ltd", parent: "Sundry Creditors" }] } });
     else if (path.endsWith("bank-to-tally/send")) {
       payloads.send = JSON.parse(route.request().postData() ?? "{}");
@@ -47,9 +51,14 @@ async function setup(page: Page, payloads: Record<string, unknown>) {
 test("statement table: bank view, per-row voucher and ledger, client query, send to Tally", async ({ page }) => {
   const payloads: Record<string, any> = {};
   await setup(page, payloads);
-  await page.getByRole("button", { name: "View all 3 transactions" }).click();
+  await expect(page.getByText("All transactions", { exact: true })).toBeVisible();
 
-  // Tally view: the ATM row is a Contra to Cash by default.
+  await expect(page.getByRole("tab", { name: "Bank statement", exact: true })).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("tab", { name: "Review", exact: true }).click();
+  await page.getByLabel("Use confirmed ledger choices in exports").check();
+  await page.getByRole("tab", { name: "Statement", exact: true }).click();
+  await page.getByRole("tab", { name: "Tally view", exact: true }).click();
+  // Opted-in Tally view: the confirmed Cash choice makes the ATM row a Contra.
   await expect(page.getByLabel(/Voucher type for 09\/04\/2025/)).toHaveValue("Contra");
   await expect(page.getByLabel(/Ledger for 09\/04\/2025/)).toHaveValue("Cash");
   if (shots) await page.locator("section").filter({ hasText: "All transactions" }).screenshot({ path: `${shots}/table-tally-view.png` });
@@ -63,7 +72,7 @@ test("statement table: bank view, per-row voucher and ledger, client query, send
 
   // One row gets its own ledger; that party no longer needs a decision.
   await page.getByLabel(/Ledger for 13\/10\/2025/).selectOption("Office Expenses");
-  await expect(page.getByRole("button", { name: "Generate Tally File" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Download Tally XML" })).toBeVisible();
 
   // Raise a query with the client from the row menu.
   await page.getByRole("button", { name: /Actions for 13\/10\/2025/ }).click();
@@ -81,12 +90,19 @@ test("statement table: bank view, per-row voucher and ledger, client query, send
   expect(rows.find(row => row.rowNumber === 3)).toMatchObject({ ledgerChoice: "Office Expenses", ledgerConfirmed: true, query: "What was this payment for?" });
 
   // Send straight to Tally.
-  await page.getByRole("button", { name: "Send to Tally" }).click();
+  await page.getByRole("tab", { name: "Export", exact: true }).click();
+  await page.getByRole("button", { name: "More options", exact: true }).click();
+  await page.getByRole("button", { name: "Send straight to Tally", exact: true }).click();
   await page.getByRole("button", { name: "Connect to Tally" }).click();
   await expect(page.getByLabel("Bank ledger in Tally")).toHaveValue("DBS Bank 4321");
   await expect(page.getByLabel("Suspense ledger in Tally")).toHaveValue("Suspense A/c");
   // The Tally company's own ledgers join the row ledger lists.
+  await page.getByRole("tab", { name: "Statement", exact: true }).click();
+  await page.getByRole("tab", { name: "Tally view", exact: true }).click();
   await page.getByLabel(/Ledger for 13\/10\/2025/).selectOption("Acme Jewellers Pvt Ltd");
+  await page.getByRole("tab", { name: "Export", exact: true }).click();
+  await page.getByRole("button", { name: "Connect to Tally" }).click();
+  await expect(page.getByLabel("Bank ledger in Tally")).toHaveValue("DBS Bank 4321");
   if (shots) await page.locator("section").filter({ hasText: "Send straight to Tally" }).screenshot({ path: `${shots}/send-ledgers.png` });
   await page.getByRole("button", { name: "Send 3 entries to Example Traders" }).click();
   await expect(page.getByText("3 entries created in Tally.")).toBeVisible();
@@ -98,10 +114,76 @@ test("statement table: bank view, per-row voucher and ledger, client query, send
   if (shots) await page.screenshot({ path: `${shots}/send-to-tally.png`, fullPage: true });
 });
 
+for (const width of [1280, 390]) {
+  test(`conversion-only preview downloads XML and Excel without ledger review at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const payloads: Record<string, any> = {};
+    const suggestions: string[] = [];
+    page.on("request", request => { if (request.url().endsWith("ledger-suggestions")) suggestions.push(request.url()); });
+    await setup(page, payloads);
+    await expect(page.getByRole("tab", { name: "Statement", exact: true })).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("tab", { name: "Bank statement", exact: true })).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByText("items need attention", { exact: true })).toHaveCount(0);
+    await expect(page.getByLabel("Use AI review (optional)")).not.toBeChecked();
+    await expect(page.getByRole("columnheader", { name: "Balance", exact: true })).toBeVisible();
+    await expect(page.getByText("Opening ₹5,000", { exact: false })).toBeVisible();
+    await expect(page.getByText("Closing ₹3,000", { exact: false })).toBeVisible();
+    expect(suggestions).toHaveLength(0);
+    await expect(page.locator('img[src*="brands/dbs.svg"]')).toBeVisible();
+    await expect.poll(() => page.locator('img[src*="brands/dbs.svg"]').evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
+    await page.locator(".fv-app-main").evaluate(el => { el.scrollTop = 0; });
+    await page.screenshot({ path: `../tmp/bank-simple-preview-${width}.png`, fullPage: true });
+
+    await page.getByLabel("Search transactions").fill("ACME");
+    await expect(page.getByRole("status")).toContainText("1 of 3 transactions match");
+    const table = page.getByRole("table");
+    await expect(table).toContainText("ACME JEWELLERS");
+    await expect(table).not.toContainText("RAVI SHARMA");
+    const xml = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Download Tally XML", exact: true }).click();
+    expect((await xml).suggestedFilename()).toBe("statement.xml");
+    expect(payloads.xml.transactions).toHaveLength(3);
+    expect(payloads.xml.transactions.every((row: { ledgerName: string }) => row.ledgerName === "Suspense")).toBe(true);
+    expect(payloads.xml.transactions[1]).toMatchObject({ rowNumber: 2, debit: 2000, credit: null, voucherType: "Payment" });
+    expect(payloads.xml.mappings.every((row: { ledgerName: string }) => row.ledgerName === "Suspense")).toBe(true);
+    const excel = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Download Excel", exact: true }).click();
+    await excel;
+    expect(payloads.excel.rows).toHaveLength(3);
+    expect(payloads.excel.rows.map((row: { ledgerChoice: string }) => row.ledgerChoice)).toEqual(["Suspense", "Suspense", "Suspense"]);
+    await page.getByLabel("Search transactions").fill("");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: `../tmp/bank-simple-conversion-${width}.png`, fullPage: true });
+  });
+}
+
+test("AI review is opt-in and unconfirmed suggestions never enter XML", async ({ page }) => {
+  const payloads: Record<string, any> = {};
+  const suggestions: string[] = [];
+  page.on("request", request => { if (request.url().endsWith("ledger-suggestions")) suggestions.push(request.url()); });
+  await setup(page, payloads);
+  await page.route("**/api/jobs/ledger-suggestions", route => route.fulfill({ json: { ok: true, picks: [{ key: "ACME JEWELLERS", ledger: "Office Expenses" }, { key: "RAVI SHARMA", ledger: "Invented ledger" }] } }));
+  expect(suggestions).toHaveLength(0);
+  await page.getByLabel("Use AI review (optional)").check();
+  await expect(page.getByRole("tab", { name: "Review", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByText("Suggestions are ready in Review.", { exact: false })).toBeVisible();
+  expect(suggestions).toHaveLength(1);
+  await expect(page.getByLabel("Ledger for ACME JEWELLERS", { exact: true })).toHaveValue("Office Expenses");
+  const xml = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download Tally XML", exact: true }).click();
+  await xml;
+  expect(payloads.xml.transactions.every((row: { ledgerName: string }) => row.ledgerName === "Suspense")).toBe(true);
+  await page.getByLabel("Ledger for ACME JEWELLERS", { exact: true }).selectOption("Office Expenses");
+  const approvedXml = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download Tally XML", exact: true }).click();
+  await approvedXml;
+  expect(payloads.xml.transactions[2]).toMatchObject({ ledgerName: "Office Expenses", debit: 300, voucherType: "Payment" });
+});
+
 test("statement table stays inside the page on a phone", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 900 });
   await setup(page, {});
-  await page.getByRole("button", { name: "View all 3 transactions" }).click();
+  await expect(page.getByText("All transactions", { exact: true })).toBeVisible();
   await expect(page.getByRole("tab", { name: "Bank statement" })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   if (shots) await page.screenshot({ path: `${shots}/table-mobile.png`, fullPage: true });

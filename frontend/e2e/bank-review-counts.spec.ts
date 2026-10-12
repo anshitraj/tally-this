@@ -45,14 +45,17 @@ for (const width of [1280, 390]) {
   test(`60 checked amounts and 24 ledger choices remain distinct at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await upload(page, statement());
+    await expect(page.getByText("items need attention", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Download Excel", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Download Tally XML", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "More options", exact: true }).click();
+    await expect(page.getByText("60 of 60 transaction amounts match the running balance", { exact: false })).toBeVisible();
+    await page.screenshot({ path: `../tmp/bank-conversion-${width}.png`, fullPage: true });
+    await page.getByRole("tab", { name: "Review", exact: true }).click();
     const attentionStat = page.getByText("items need attention", { exact: true }).locator("..");
     await expect(attentionStat).toContainText("24");
     await expect(page.getByText("24 party ledgers need choosing or confirming.", { exact: false })).toBeVisible();
-    await expect(page.getByText("60 of 60 transaction amounts match the running balance", { exact: false })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Review 24 items", exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Generate Tally File", exact: true })).toHaveCount(0);
     await page.screenshot({ path: `../tmp/bank-review-counts-${width}.png`, fullPage: true });
-    await page.getByRole("button", { name: "Review 24 items", exact: true }).click();
     await page.getByRole("combobox", { name: "Ledger for Party 1", exact: true }).first().selectOption("Sales");
     await expect(page.getByText("23 party ledgers need choosing or confirming.", { exact: false })).toBeVisible();
     await expect(attentionStat).toContainText("23");
@@ -65,9 +68,11 @@ test("a genuine row issue is counted separately and edits invalidate the origina
   // An explicit failed balance check must flag the row even when parser confidence is high.
   result.transactions[0].confidence = 0.99;
   await upload(page, result);
+  await page.getByRole("button", { name: "Download Tally XML", exact: true }).click();
+  await expect(page.getByText("Check the uncertain statement values before creating XML.", { exact: false })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Review", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByText("items need attention", { exact: true }).locator("..")).toContainText("26");
   await expect(page.getByText("24 party ledgers need choosing or confirming.", { exact: false })).toBeVisible();
-  await page.getByRole("button", { name: "Review 26 items", exact: true }).click();
   await page.getByRole("button", { name: "It's money out", exact: true }).click();
   await expect(page.getByText("The original running-balance check does not verify the edited export.", { exact: false })).toBeVisible();
   await expect(page.getByText("items need attention", { exact: true }).locator("..")).toContainText("25");

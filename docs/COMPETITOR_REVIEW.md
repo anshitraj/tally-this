@@ -73,3 +73,22 @@ Observed client behavior does not expose a hosted service's private server code,
 
 No REA package, agent configuration or competitor session was installed or changed during this assessment. Its [setup documentation](https://github.com/morluto/rea/blob/main/docs/installation.md) describes client registration changes and distinguishes repository-main capabilities from the published package. Verify the chosen package and browser workflow before a scoped trial; the native decompiler setup is unnecessary for a website-only investigation.
 
+## Conversion-first UX review — 12 October 2026
+
+Evidence: the user's two Repotic screenshots show a simple upload page with three-step help, followed by a statement table with balances, Default/Bank views, Raise Query and Download. They prove the visible workflow, not parser accuracy or every paid feature. TallyThis previously opened the table, but forced ledger decisions into the primary conversion action. That interruption was a real usability gap.
+
+Public vendor documentation reviewed in this pass:
+
+| Product | Relevant workflow | TallyThis decision |
+| --- | --- | --- |
+| Repotic, user screenshots and [public website](https://www.repotic.in/) | Upload → readable statement → download; review tools beside the table | Keep the bank-format preview and direct Excel/XML buttons. Put ledger review in its own tab. |
+| [LedgerConnect bank converter](https://ledgerconnect.in/bank-pdf-converter), [pricing](https://ledgerconnect.in/pricing) | One workspace for ledger choices, Excel/XML/connector outputs, search, client queries and reusable preferences | Add preview search and optional AI ledger suggestions. Keep the existing query worksheet, confirmed ledger preferences and connector under the appropriate workflow. Date-range exports and secure client response links remain candidates, not implemented claims. |
+| [ClearGST reconciliation guide](https://docs.cleartax.in/product-help-and-support/clear-finance-cloud/gst-compliance/gstr-1-vs-sr-recon) | Select/upload datasets, reconcile and handle differences | Keep reconciliation as its own job. GST validation belongs in GST workflows, not in a bank conversion screen. |
+| [Vyapar reconciliation page](https://vyaparapp.in/free/small-business-accounting-software/bank-reconciliation) | The page mixes reconciliation marketing with a notice that the reconciliation app is no longer provided | Do not treat marketing text as evidence of a currently available integration. |
+
+These are vendor descriptions and supplied screenshots; no new competitor account or paid session was tested. Prices or feature names alone do not establish demand or correctness. Prioritise tasks that save repeated entry or client follow-up: statement conversion, remembered ledger choices, bulk corrections, exception reconciliation and query exports. Keep practice management and unrelated dashboards out of the conversion screen.
+
+Implemented on the feature branch: bank-format preview by default; direct Excel and Tally XML downloads; separate Review; unchecked AI review; narration/date/amount search; three-step help; official DBS identity logo. Conversion-only XML uses Suspense and Receipt/Payment vouchers. Enabling reviewed choices uses only confirmed ledgers; unconfirmed AI suggestions remain in Suspense. Excel, XML, CSV and direct posting share these output choices. Uncertain source values still stop XML until checked, and conflicting closing/sequence checks require a better statement. Excel remains a working copy. Search never limits the download. These changes do not certify real bank-format coverage or TallyPrime import acceptance.
+
+Browser evidence covers conversion-only exports on desktop/mobile, full export despite filtered preview, explicit AI opt-in, unconfirmed suggestion isolation, bank correction, row choices, queries, posting and source-check gates. Backend fixtures validate workbook values, XML balance/structure and Suspense posting; production import acceptance remains a separate gate.
+

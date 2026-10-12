@@ -3,6 +3,7 @@ import { Copy, MessageSquare, MoreVertical } from "lucide-react";
 import { Choice, inr } from "@/components/jobs/jobUi";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export type VoucherType = "Receipt" | "Payment" | "Contra";
 
@@ -82,14 +83,19 @@ export function BankStatementTable<T extends StatementRow>({
   onLeaveOut: (row: T, leftOut: boolean) => void;
   onQuery: (row: T, question: string | null) => void;
 }) {
-  const [view, setView] = useState<View>("default");
+  const [view, setView] = useState<View>("bank");
+  const [search, setSearch] = useState("");
   const [shown, setShown] = useState(PAGE);
   const [asking, setAsking] = useState<number | null>(null);
   const [draft, setDraft] = useState("");
   const [queriesOpen, setQueriesOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const queried = useMemo(() => rows.filter(row => queries[row.rowNumber]), [rows, queries]);
-  const visible = rows.slice(0, shown);
+  const filtered = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return term ? rows.filter(row => [row.narration, row.reference, row.date, row.valueDate, dmy(row.date), dmy(row.valueDate), row.debit, row.credit, row.balance, money(row.debit), money(row.credit), money(row.balance)].some(value => String(value ?? "").toLowerCase().includes(term))) : rows;
+  }, [rows, search]);
+  const visible = filtered.slice(0, shown);
   const hasReferences = rows.some(row => row.reference);
   const columns = view === "bank" ? (hasReferences ? 8 : 7) : 6;
 
@@ -110,22 +116,19 @@ export function BankStatementTable<T extends StatementRow>({
   };
 
   return (
-    <div className="space-y-4">
+    <Tabs value={view} onValueChange={value => setView(value as View)} className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="inline-flex rounded-lg border border-border bg-muted/40 p-0.5 text-sm" role="tablist" aria-label="Statement view">
+        <TabsList className="inline-flex h-auto rounded-lg border border-border bg-muted/40 p-0.5 text-sm" aria-label="Statement view">
           {([["default", "Tally view"], ["bank", "Bank statement"]] as const).map(([value, label]) => (
-            <button
+            <TabsTrigger
               key={value}
-              type="button"
-              role="tab"
-              aria-selected={view === value}
-              onClick={() => setView(value)}
+              value={value}
               className={cn("rounded-md px-3 py-1.5 font-medium transition", view === value ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
             >
               {label}
-            </button>
+            </TabsTrigger>
           ))}
-        </div>
+        </TabsList>
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <span className="rounded-lg border border-border bg-card px-2.5 py-1.5">Opening <span className="font-semibold">{inr(openingBalance)}</span></span>
           <span className="rounded-lg border border-border bg-card px-2.5 py-1.5">Closing <span className="font-semibold">{inr(closingBalance)}</span></span>
@@ -137,6 +140,10 @@ export function BankStatementTable<T extends StatementRow>({
         </div>
       </div>
 
+      <input type="search" className="fv-input h-10 w-full sm:max-w-sm" aria-label="Search transactions" placeholder="Search narration, date or amount" value={search} onChange={event => { setSearch(event.target.value); setShown(PAGE); }} />
+      {search.trim() && <p className="text-xs text-muted-foreground" role="status">{filtered.length} of {rows.length} transactions match. Downloads include all included transactions.</p>}
+
+      <TabsContent value={view} className="space-y-4">
       {queriesOpen && queried.length > 0 && (
         <div className="rounded-xl border border-sky-200 bg-sky-50/60 p-4 text-sm">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -183,6 +190,7 @@ export function BankStatementTable<T extends StatementRow>({
             )}
           </thead>
           <tbody className="divide-y divide-border">
+            {visible.length === 0 && <tr><td colSpan={columns} className="p-4 text-sm text-muted-foreground">No transactions match. Clear the search to see your statement.</td></tr>}
             {visible.map(row => {
               const leftOut = isLeftOut(row);
               const ledger = ledgerOf(row);
@@ -295,11 +303,12 @@ export function BankStatementTable<T extends StatementRow>({
           </tbody>
         </table>
       </div>
-      {rows.length > shown && (
+      {filtered.length > shown && (
         <button type="button" className="text-sm font-medium text-[var(--fv-accent-dark)] hover:underline" onClick={() => setShown(count => count + PAGE)}>
-          Show {Math.min(PAGE, rows.length - shown)} more of {rows.length - shown} remaining
+          Show {Math.min(PAGE, filtered.length - shown)} more of {filtered.length - shown} remaining
         </button>
       )}
-    </div>
+      </TabsContent>
+    </Tabs>
   );
 }

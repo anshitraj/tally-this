@@ -36,7 +36,7 @@ test("unknown bank can be corrected and the reviewed Excel output is downloadabl
   await expect(page.getByRole("tab", { name: "Statement", exact: true })).toBeInViewport();
   await expect.poll(async () => (await page.getByRole("tab", { name: "Statement", exact: true }).boundingBox())?.y ?? Infinity).toBeLessThan(140);
   await expect(page.getByText("All transactions", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Download Excel", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Download Excel", exact: true })).toBeVisible();
   await page.getByLabel("Which bank issued this statement?").selectOption("ICICI Bank");
   await expect(page.getByText("ICICI Bank", { exact: true })).toBeVisible();
   await expect(page.locator('img[src*="brands/icici.svg"]')).toBeVisible();
@@ -46,14 +46,13 @@ test("unknown bank can be corrected and the reviewed Excel output is downloadabl
   await page.getByRole("button", { name: "Download Excel" }).click();
   expect((await download).suggestedFilename()).toBe("TallyThis_Bank_Transactions.xlsx");
   expect(excelPayload?.bankName).toBe("ICICI Bank");
-  expect(excelPayload?.rows?.[0].ledgerChoice).toBe("Office Expenses");
-  expect(excelPayload?.rows?.[0].ledgerConfirmed).toBe(true);
+  expect(excelPayload?.rows?.[0].ledgerChoice).toBe("Suspense");
+  expect(excelPayload?.rows?.[0].ledgerConfirmed).toBe(false);
   expect(excelPayload?.balanceCheck).toBe("needs_check");
-  await expect(page.getByRole("button", { name: "Review 1 item" })).toBeVisible();
-  await page.getByRole("button", { name: "Review 1 item" }).click();
+  await page.getByRole("tab", { name: "Review", exact: true }).click();
   await expect(page.getByText("Check the statement totals")).toBeVisible();
   await page.getByRole("button", { name: "I checked these totals" }).click();
   await page.getByRole("tab", { name: "Export", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Generate Tally File" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Download Tally XML" })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });

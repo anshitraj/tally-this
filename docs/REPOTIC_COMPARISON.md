@@ -15,11 +15,11 @@ The TallyThis bank screen now makes review the next action when rows, ledgers or
 | Step | Repotic public description | TallyThis now | Remaining gap |
 | --- | --- | --- | --- |
 | Upload | Bank-generated PDF; password prompt; bank selector in public demo | PDF, CSV, Excel and image upload; password prompt; detected bank can be corrected after reading | No tested coverage claim for Repotic's advertised 800+ banks. Add real, redacted statement fixtures bank by bank. |
-| Identify bank | User can select a bank | Header IFSC first, printed name or short wordmark next, file name last; seven official logos shown when available | Other banks show their name with a generic bank icon. An image-only logo or header without identifying text still needs manual choice. |
+| Identify bank | User can select a bank | Header IFSC first, printed name or short wordmark next, file name last; eight official logos shown when available | Other banks show their name with a generic bank icon. An image-only logo or header without identifying text still needs manual choice. |
 | Check transactions | Public site describes conversion and accuracy but does not expose its internal checks | Row extraction, running-balance proof where printed balances exist, review of uncertain rows and ledger choices | Some layouts and scans still need additional parser fixtures or optional AI/OCR. Review can be completed without editing dates or amounts. |
 | Export | Tally XML; tutorial also describes CSV | Tally XML, CSV and a real Excel workbook with numeric/date cells, review status and left-out rows | Tally import compatibility needs testing with real TallyPrime versions and sample companies. |
 
-The current identity directory recognizes 61 names, and seven have local logos. The [bank evidence matrix](BANK_SUPPORT.md) distinguishes these from tested statement layouts.
+The current identity directory recognizes 61 names, and eight have local logos. The [bank evidence matrix](BANK_SUPPORT.md) distinguishes these from tested statement layouts.
 
 ## E-commerce GST
 

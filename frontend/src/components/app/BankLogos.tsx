@@ -17,6 +17,7 @@ const STATEMENT_LOGOS: Record<string, string> = {
   "Kotak Mahindra Bank": "kotak.svg",
   "Punjab National Bank": "pnb.png",
   "IDFC FIRST Bank": "idfc.svg",
+  "DBS Bank India": "dbs.svg",
 };
 
 /** Identifies the bank found on one uploaded statement. */
