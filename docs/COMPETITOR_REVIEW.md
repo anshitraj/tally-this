@@ -63,3 +63,13 @@ Maintain the five-step CA journey: select client → select job → upload → r
 
 Do not advertise feature parity until every Repotic row in the [existing comparison](REPOTIC_COMPARISON.md) has working implementation and acceptance evidence. Do not advertise universal “100% accuracy.” The [accuracy standard](ACCURACY_STANDARD.md) defines measurable release targets and the conditions under which a job must stop.
 
+## REA assessment — 12 October 2026
+
+The user identified [morluto/rea](https://github.com/morluto/rea). Its documentation supports website observation as well as native/application analysis. The [browser guide](https://rea.tools/guides/browser/) connects a user action to the selected page's requests, response shapes and delivered JavaScript. This could help investigate a specific competitor workflow through public pages or an authorized normal session.
+
+REA is optional for the current result-view fix: TallyThis's source and Playwright already revealed that Excel was offered before the report sections, and tests verify the corrected tabs. For future research, capture one operation at a time—upload, correction, TCS comparison or export—and record evidence and limitations. Use synthetic/redacted examples and recreate the desired behavior in TallyThis with independent acceptance tests.
+
+Observed client behavior does not expose a hosted service's private server code, full parser coverage or correctness on unobserved files. [MDN's client/server explanation](https://developer.mozilla.org/en-US/docs/Learn_web_development/Extensions/Server-side/First_steps/Client-Server_overview) describes that separation. REA cannot establish GST accuracy or portal acceptance by inspecting a frontend.
+
+No REA package, agent configuration or competitor session was installed or changed during this assessment. Its [setup documentation](https://github.com/morluto/rea/blob/main/docs/installation.md) describes client registration changes and distinguishes repository-main capabilities from the published package. Verify the chosen package and browser workflow before a scoped trial; the native decompiler setup is unnecessary for a website-only investigation.
+

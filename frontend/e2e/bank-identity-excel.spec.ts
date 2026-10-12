@@ -32,9 +32,16 @@ test("unknown bank can be corrected and the reviewed Excel output is downloadabl
   await page.goto("/app/jobs/bank-to-tally");
   await page.locator('input[type="file"]').setInputFiles({ name: "statement.csv", mimeType: "text/csv", buffer: Buffer.from("Date,Narration,Debit\n01/05/2026,NEFT/ACME,500\n") });
   await expect(page.getByText("Choose the bank", { exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Statement", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "Statement", exact: true })).toBeInViewport();
+  await expect.poll(async () => (await page.getByRole("tab", { name: "Statement", exact: true }).boundingBox())?.y ?? Infinity).toBeLessThan(140);
+  await expect(page.getByText("All transactions", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Download Excel", exact: true })).toHaveCount(0);
   await page.getByLabel("Which bank issued this statement?").selectOption("ICICI Bank");
   await expect(page.getByText("ICICI Bank", { exact: true })).toBeVisible();
   await expect(page.locator('img[src*="brands/icici.svg"]')).toBeVisible();
+  await page.screenshot({ path: "../tmp/bank-statement-first-390.png", fullPage: true });
+  await page.getByRole("tab", { name: "Export", exact: true }).click();
   const download = page.waitForEvent("download");
   await page.getByRole("button", { name: "Download Excel" }).click();
   expect((await download).suggestedFilename()).toBe("TallyThis_Bank_Transactions.xlsx");
@@ -46,6 +53,7 @@ test("unknown bank can be corrected and the reviewed Excel output is downloadabl
   await page.getByRole("button", { name: "Review 1 item" }).click();
   await expect(page.getByText("Check the statement totals")).toBeVisible();
   await page.getByRole("button", { name: "I checked these totals" }).click();
+  await page.getByRole("tab", { name: "Export", exact: true }).click();
   await expect(page.getByRole("button", { name: "Generate Tally File" })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });

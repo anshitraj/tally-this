@@ -31,6 +31,7 @@ import { SendToTally, type TallyChoices, type TallySendResult } from "@/componen
 import { getActiveClient } from "@/lib/activeClient";
 import { getUser } from "@/lib/auth";
 import { cn } from "@/lib/utils";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 interface BankTxn {
   date: string;
@@ -109,6 +110,7 @@ export default function BankToTallyPage() {
   const [flipped, setFlipped] = useState<Set<number>>(new Set());
   const [totalsConfirmed, setTotalsConfirmed] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [resultView, setResultView] = useState<"statement" | "export">("statement");
   const [bankLedger, setBankLedger] = useState("Bank Account");
   const [bankOverride, setBankOverride] = useState<string | null>(null);
   const [otherBank, setOtherBank] = useState("");
@@ -128,17 +130,19 @@ export default function BankToTallyPage() {
   const [tallyLedgerNames, setTallyLedgerNames] = useState<string[]>([]);
   const reviewRef = useRef<HTMLDivElement>(null);
   const statementRef = useRef<HTMLDivElement>(null);
+  const resultRef = useRef<HTMLDivElement>(null);
   const tallyRef = useRef<HTMLDivElement>(null);
   const [consentMessage, setConsentMessage] = useState("");
   // Kept only in memory so a scan can be retried after the person agrees to AI.
   const passwordRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
-    if (reviewOpen) reviewRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, [reviewOpen]);
+    if (stage === "done") resultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [stage]);
+
   useEffect(() => {
-    if (statementOpen) statementRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, [statementOpen]);
+    if (reviewOpen && resultView === "statement") reviewRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [reviewOpen, resultView]);
   useEffect(() => {
     if (tallyOpen) tallyRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [tallyOpen]);
@@ -180,10 +184,11 @@ export default function BankToTallyPage() {
     setRowLedgers({});
     setRowVouchers({});
     setQueries({});
-    setStatementOpen(false);
+    setStatementOpen(true);
     setTallyOpen(false);
     setTotalsConfirmed(false);
     setReviewOpen(false);
+    setResultView("statement");
     setBankLedger(data.bankName ?? "Bank Account");
     setBankOverride(null);
     setOtherBank("");
@@ -548,7 +553,13 @@ export default function BankToTallyPage() {
       )}
 
       {stage === "done" && result && (
-        <div className="space-y-4">
+        <Tabs ref={resultRef} className="scroll-mt-4" value={resultView} onValueChange={value => setResultView(value as "statement" | "export")}>
+          <TabsList className="grid h-11 w-full grid-cols-2" aria-label="Bank statement results">
+            <TabsTrigger value="statement">Statement</TabsTrigger>
+            <TabsTrigger value="export">Export</TabsTrigger>
+          </TabsList>
+          <TabsContent value={resultView} className="space-y-4 pt-2">
+          <p className="text-sm text-muted-foreground">{resultView === "statement" ? "Review the bank, totals and ledger choices here. Open Export when you’re ready." : "Choose an output after reviewing the statement. Excel is a working copy; Tally exports keep the review checks."}</p>
           <ResultCard
             eyebrow={
               <span className="flex flex-wrap items-center gap-2">
@@ -563,7 +574,9 @@ export default function BankToTallyPage() {
                 ) : !displayBankName ? (
                   <button type="button" className="fv-button-primary h-11 px-6" onClick={() => document.getElementById("statement-bank")?.focus()}>Choose bank</button>
                 ) : hasReview ? (
-                  <button type="button" className="fv-button-primary h-11 px-6" onClick={() => setReviewOpen(true)}>Review {reviewItems} {reviewItems === 1 ? "item" : "items"}</button>
+                  <button type="button" className="fv-button-primary h-11 px-6" onClick={() => { setResultView("statement"); setReviewOpen(true); }}>Review {reviewItems} {reviewItems === 1 ? "item" : "items"}</button>
+                ) : resultView === "statement" ? (
+                  <button type="button" className="fv-button-primary h-11 px-6" onClick={() => setResultView("export")}>Open exports</button>
                 ) : (
                   <>
                     <button type="button" className="fv-button-primary h-11 px-6" onClick={generate} disabled={generating}>
@@ -572,9 +585,9 @@ export default function BankToTallyPage() {
                     <button type="button" className="fv-button-secondary h-11" onClick={() => setTallyOpen(true)}>Send to Tally</button>
                   </>
                 )}
-                <button type="button" className="fv-button-secondary h-11" onClick={exportExcel} disabled={exportingExcel}>
+                {resultView === "export" && <button type="button" className="fv-button-secondary h-11" onClick={exportExcel} disabled={exportingExcel}>
                   {exportingExcel ? "Creating Excel…" : "Download Excel"}
-                </button>
+                </button>}
               </>
             }
           >
@@ -619,7 +632,7 @@ export default function BankToTallyPage() {
             </div>
             <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
               <span className="text-muted-foreground">Money in {inr(totals.credit)} · Money out {inr(totals.debit)}</span>
-              <button type="button" className="font-medium text-[var(--fv-accent-dark)] hover:underline" onClick={() => setStatementOpen(true)}>View all {txns.length} transactions</button>
+              <button type="button" className="font-medium text-[var(--fv-accent-dark)] hover:underline" onClick={() => { setResultView("statement"); setStatementOpen(true); requestAnimationFrame(() => statementRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })); }}>View all {txns.length} transactions</button>
               {queryCount > 0 && <span className="text-sky-800">{queryCount} {queryCount === 1 ? "question" : "questions"} for the client</span>}
             </div>
             {statementEdited
@@ -646,11 +659,11 @@ export default function BankToTallyPage() {
             </Notice>
           )}
 
-          {reviewOpen && (
+          {reviewOpen && resultView === "statement" && (
             <div ref={reviewRef} className="scroll-mt-4">
             <ResultCard eyebrow="Review">
               {groupsToReview.length === 0 && rowsToReview.length === 0 && !needsTotalsCheck ? (
-                <div className="flex items-center gap-2 text-sm text-emerald-800"><CheckCircle2 className="h-4 w-4" />All done. Generate the Tally file.</div>
+                <div className="flex items-center gap-2 text-sm text-emerald-800"><CheckCircle2 className="h-4 w-4" />All done. Open Export to generate the Tally file.</div>
               ) : (
                 <div className="space-y-6">
                   {groupsToReview.length > 0 && (
@@ -712,7 +725,7 @@ export default function BankToTallyPage() {
             </div>
           )}
 
-          {tallyOpen && (
+          {tallyOpen && resultView === "export" && (
             <div ref={tallyRef} className="scroll-mt-4">
               <ResultCard>
                 <SendToTally
@@ -727,7 +740,7 @@ export default function BankToTallyPage() {
             </div>
           )}
 
-          {statementOpen && (
+          {statementOpen && resultView === "statement" && (
             <div ref={statementRef} className="scroll-mt-4">
               <ResultCard
                 eyebrow={
@@ -760,7 +773,7 @@ export default function BankToTallyPage() {
 
           <MoreOptions>
             <button type="button" className="text-sm font-medium text-[var(--fv-accent-dark)] hover:underline" onClick={reset}>Upload another statement</button>
-            {!tallyOpen && <button type="button" className="block text-sm font-medium text-[var(--fv-accent-dark)] hover:underline" onClick={() => setTallyOpen(true)}>Send straight to Tally</button>}
+            {resultView === "export" && !tallyOpen && <button type="button" className="block text-sm font-medium text-[var(--fv-accent-dark)] hover:underline" onClick={() => setTallyOpen(true)}>Send straight to Tally</button>}
             <div>
               <div className="text-sm font-semibold">Bank ledger name in Tally</div>
               <p className="mb-2 text-xs text-muted-foreground">Pick the name your Tally company uses for this bank account.</p>
@@ -780,12 +793,13 @@ export default function BankToTallyPage() {
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
-              <button type="button" className="fv-button-secondary" onClick={exportCsv}>Download transactions (CSV)</button>
+              {resultView === "export" && <button type="button" className="fv-button-secondary" onClick={exportCsv}>Download transactions (CSV)</button>}
               <button type="button" className="fv-button-secondary" onClick={() => navigate("/app/jobs/bank-tally")}>Compare with Tally</button>
             </div>
             {skipped.size > 0 && <p className="text-xs text-muted-foreground">{skipped.size} row(s) left out of the Tally file.</p>}
           </MoreOptions>
-        </div>
+          </TabsContent>
+        </Tabs>
       )}
     </JobShell>
   );

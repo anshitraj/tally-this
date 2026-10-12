@@ -81,7 +81,7 @@ test("the landing page explains the product and renders every bank logo", async 
     .click();
   await expect(page).toHaveURL(/\/login\?mode=signup/);
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(
-    "Create your free account",
+    "Create your account",
   );
 });
 
