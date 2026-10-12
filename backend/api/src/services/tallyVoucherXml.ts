@@ -11,19 +11,34 @@ export interface LedgerMapping {
   ledgerName: string;
 }
 
+export type VoucherType = "Receipt" | "Payment" | "Contra";
+
+/** A bank row plus the reviewer's own choices for that one row. */
+export type TallyBankTxn = NormalizedBankTxn & {
+  /** Overrides the party's ledger for this row only. */
+  ledgerName?: string | null;
+  voucherType?: VoucherType | null;
+};
+
 export interface TallyXmlInput {
   companyName: string;
   bankLedger: string;
-  transactions: NormalizedBankTxn[];
+  transactions: TallyBankTxn[];
   mappings?: LedgerMapping[];
   /** Adds create-only ledger masters so the import does not stop on a missing ledger. Existing ledgers are left untouched. */
   createLedgers?: boolean;
   bankGroup?: "Bank Accounts" | "Current Assets";
+  /** Tally company to import into when sending straight to Tally. A downloaded file goes into whichever company is open. */
+  tallyCompany?: string;
+  /** An existing Tally ledger that takes the place of "Suspense", e.g. "Suspense A/c". */
+  suspenseLedger?: string;
 }
 
 export interface TallyXmlResult {
   ok: boolean;
   xml?: string;
+  /** Ledger masters on their own, for sending to Tally before the vouchers. */
+  mastersXml?: string;
   fileName?: string;
   voucherCount?: number;
   errors: string[];
@@ -70,12 +85,17 @@ export const LEDGER_OPTIONS = [
   "Bank Charges",
   "Interest Received",
   "Interest Paid",
+  "Cashback Received",
   "Fixed Deposits",
   "Insurance Premium",
   "Loan Account",
+  "Credit Card Payable",
   "GST Payable",
   "TDS Payable",
   "Income Tax",
+  "PF Payable",
+  "ESI Payable",
+  "Professional Tax Payable",
   "Payment Gateway Settlements",
   "Marketplace Settlements",
   "Cash",
@@ -84,39 +104,87 @@ export const LEDGER_OPTIONS = [
   "Suspense",
 ] as const;
 
-const LEDGER_RULES: Array<[RegExp, string]> = [
-  [/salary|salaries|payroll|wages/, "Salary Expenses"],
-  [/razorpay|cashfree|payu|ccavenue|paytm pg|stripe|phonepe pg|billdesk/, "Payment Gateway Settlements"],
-  [/amazon seller|flipkart|meesho|myntra|jiomart|ajio|snapdeal|glowroad/, "Marketplace Settlements"],
-  [/\brent\b|lease/, "Rent"],
-  [/electricity|bescom|msedcl|tata power|adani elec|power bill|bses/, "Electricity Expenses"],
-  [/airtel|jio|vodafone|\bvi\b|bsnl|broadband|internet|mobile bill/, "Telephone & Internet"],
-  [/facebook|meta ads|google ads|advert|marketing/, "Advertisement Expenses"],
-  [/google|workspace|aws|amazon web|microsoft|zoho|adobe|github|atlassian|slack|notion|software|saas/, "Software Expenses"],
-  [/\bca fees|consult|professional|legal|audit fee/, "Professional Fees"],
-  [/\buber\b|\bola\b|irctc|makemytrip|indigo|air india|vistara|travel|hotel/, "Travelling Expenses"],
-  [/charges|chrg|chgs|sms alert|annual fee|gst on charges|commission/, "Bank Charges"],
-  [/\bfd\b|fixed deposit|term deposit|\btd\b.*(maturity|booking|closure)/, "Fixed Deposits"],
-  [/insurance|\blic\b|premium|(hdfc|sbi|kotak mahindra|max|bajaj allianz|tata aia|aditya birla sun|pnb met|star health) ?life|icici pru/, "Insurance Premium"],
-  [/\bemi\b|loan|nach.*finance/, "Loan Account"],
-  [/\bgst\b|gstn|cbic|gst challan/, "GST Payable"],
-  [/\btds\b|26q|24q|tin-nsdl/, "TDS Payable"],
-  [/income tax|advance tax|itns|\bitd\b/, "Income Tax"],
-  [/\batm\b|cash wdl|cash withdrawal|self/, "Cash"],
+interface LedgerRule {
+  pattern: RegExp;
+  ledger: string;
+  /** The rule fits only money in, or only money out. */
+  direction?: "in" | "out";
+  /** A likely ledger the reviewer must still confirm, because the narration alone cannot settle it. */
+  hint?: boolean;
+}
+
+const rule = (pattern: RegExp, ledger: string, extra: Omit<LedgerRule, "pattern" | "ledger"> = {}): LedgerRule => ({ pattern, ledger, ...extra });
+
+const MARKETPLACES = /amazon seller|flipkart|meesho|myntra|jiomart|ajio|snapdeal|glowroad/;
+
+/** First match wins. Sources and reasons for each treatment: docs/BANK_LEDGER_RULES.md. */
+const LEDGER_RULES: LedgerRule[] = [
+  // Google Pay handles say what the money was for; the "Google" name printed beside them does not.
+  rule(/goog-payments@|cashback|scratch ?card|gpay ?reward/, "Cashback Received", { direction: "in", hint: true }),
+  rule(/gpay-?creditcard@|credit ?card|card ?bill|cc ?bill|cred\.club|@cred\b/, "Credit Card Payable", { direction: "out", hint: true }),
+  rule(/gpayrecharge@|recharge/, "Telephone & Internet", { direction: "out", hint: true }),
+  rule(/gpayvoucher@|gift ?card/, "Suspense"),
+  rule(/playstore@|google ?play/, "Software Expenses", { direction: "out", hint: true }),
+  // Statutory dues deducted from salaries are paid out of a payable, not booked as a fresh expense.
+  rule(/epfo|\bepf\b|provident fund|pf challan|pf contribution/, "PF Payable"),
+  rule(/esic|\besi\b/, "ESI Payable"),
+  rule(/ptax|p\.tax|prof(essional|\.)? ?tax|\bpt challan/, "Professional Tax Payable"),
+  rule(/salary|salaries|payroll|wages/, "Salary Expenses"),
+  // Settlement ledgers hold money a gateway or marketplace pays you. Paying out through a gateway
+  // handle (vil.payu@, shop.rzp@) is a purchase, so the merchant name decides the ledger.
+  rule(/razorpay|cashfree|payu|ccavenue|paytm pg|stripe|phonepe pg|billdesk/, "Payment Gateway Settlements", { direction: "in" }),
+  rule(MARKETPLACES, "Marketplace Settlements", { direction: "in" }),
+  // Buying on a marketplace says nothing about what was bought.
+  rule(MARKETPLACES, "Suspense", { direction: "out" }),
+  rule(/\brent\b|lease/, "Rent"),
+  rule(/electricity|bescom|msedcl|tata power|adani elec|power bill|bses/, "Electricity Expenses"),
+  rule(/airtel|jio|vodafone|\bvi\b|bsnl|broadband|internet|mobile bill/, "Telephone & Internet"),
+  rule(/facebook|meta ads|google ads|advert|marketing/, "Advertisement Expenses"),
+  rule(/google ?(cloud|workspace|one)|g ?suite|workspace|aws|amazon web|microsoft|zoho|adobe|github|atlassian|slack|notion|software|saas/, "Software Expenses"),
+  rule(/\bca fees|consult|professional|legal|audit fee/, "Professional Fees"),
+  rule(/\buber\b|\bola\b|irctc|makemytrip|indigo|air india|vistara|travel|hotel/, "Travelling Expenses"),
+  rule(/charges|chrg|chgs|sms alert|annual fee|gst on charges|commission/, "Bank Charges"),
+  rule(/\bfd\b|fixed deposit|term deposit|\btd\b.*(maturity|booking|closure)/, "Fixed Deposits"),
+  rule(/insurance|\blic\b|premium|(hdfc|sbi|kotak mahindra|max|bajaj allianz|tata aia|aditya birla sun|pnb met|star health) ?life|icici pru/, "Insurance Premium"),
+  rule(/\bemi\b|loan|nach.*finance/, "Loan Account"),
+  rule(/\bgst\b|gstn|cbic|gst challan/, "GST Payable"),
+  rule(/\btds\b|26q|24q|tin-nsdl/, "TDS Payable"),
+  rule(/income tax|advance tax|itns|\bitd\b/, "Income Tax"),
+  // Moving money to the holder's own account could be a bank transfer, capital or drawings.
+  rule(/self ?(transfer|trf)|own account/, "Suspense"),
+  rule(/\batm\b|\bnwd\b|\batw\b|cash wdl|cash withdrawal|cash dep|by cash|\bcdm\b/, "Cash"),
+  // A cheque drawn to "self" is usually cash withdrawn at the branch.
+  rule(/\bself\b/, "Cash", { hint: true }),
 ];
 
 /** Interest the bank pays you ("Int.Pd", "Credit Interest") versus interest you pay on a loan. */
 const INTEREST = /\bint\.?\s*(pd|paid|cr|credit)\b|interest|\bsb\s*int\b|loan\s*int\b/;
 
+export interface LedgerSuggestion {
+  ledger: string;
+  /** False for a likely ledger the reviewer must confirm, and for Suspense. */
+  sure: boolean;
+}
+
+export function suggestLedgerDetail(narration: string, direction?: "in" | "out"): LedgerSuggestion {
+  const text = narration.toLowerCase();
+  if (INTEREST.test(text)) return { ledger: direction === "out" ? "Interest Paid" : "Interest Received", sure: true };
+  for (const candidate of LEDGER_RULES) {
+    if (candidate.direction && direction && candidate.direction !== direction) continue;
+    if (!candidate.pattern.test(text)) continue;
+    if (candidate.ledger === "Suspense") return { ledger: "Suspense", sure: false };
+    // Money coming back into an expense is a refund, reversal or cashback; only the reviewer can say which.
+    const refundLike = direction === "in" && (LEDGER_GROUPS[candidate.ledger] === "Indirect Expenses" || candidate.ledger === "Purchase");
+    return { ledger: candidate.ledger, sure: !candidate.hint && !refundLike };
+  }
+  return { ledger: "Suspense", sure: false };
+}
+
 export function suggestLedger(narration: string, mappings: LedgerMapping[] = [], direction?: "in" | "out") {
   const text = narration.toLowerCase();
   const remembered = mappings.find(mapping => mapping.counterparty && text.includes(mapping.counterparty.toLowerCase()));
   if (remembered) return remembered.ledgerName;
-  if (INTEREST.test(text)) return direction === "out" ? "Interest Paid" : "Interest Received";
-  for (const [pattern, ledger] of LEDGER_RULES) {
-    if (pattern.test(text)) return ledger;
-  }
-  return "Suspense";
+  return suggestLedgerDetail(narration, direction).ledger;
 }
 
 /** Tally parent group for each choice. Ledgers outside this list are assumed to exist already. */
@@ -135,12 +203,17 @@ const LEDGER_GROUPS: Record<string, string> = {
   "Bank Charges": "Indirect Expenses",
   "Interest Paid": "Indirect Expenses",
   "Interest Received": "Indirect Incomes",
+  "Cashback Received": "Indirect Incomes",
   "Fixed Deposits": "Investments",
   "Insurance Premium": "Indirect Expenses",
   "Loan Account": "Loans (Liability)",
+  "Credit Card Payable": "Current Liabilities",
   "GST Payable": "Duties & Taxes",
   "TDS Payable": "Duties & Taxes",
   "Income Tax": "Loans & Advances (Asset)",
+  "PF Payable": "Current Liabilities",
+  "ESI Payable": "Current Liabilities",
+  "Professional Tax Payable": "Current Liabilities",
   "Payment Gateway Settlements": "Current Assets",
   "Marketplace Settlements": "Current Assets",
   "Capital A/c": "Capital Account",
@@ -153,6 +226,17 @@ const PARTY_GROUPS = new Set(["Sundry Debtors", "Sundry Creditors"]);
 
 /** Ledgers every Tally company already has. */
 const BUILT_IN_LEDGERS = new Set(["cash", "profit & loss a/c"]);
+
+/** Cash in or out of the bank is a Contra entry; everything else follows the direction of money. */
+export function defaultVoucherType(credit: number | null, ledgerName: string): VoucherType {
+  if (ledgerName.toLowerCase() === "cash") return "Contra";
+  return credit != null && credit > 0 ? "Receipt" : "Payment";
+}
+
+/** Contra moves money between cash and bank, so the other side must be Cash or a bank account. */
+function contraAllowed(ledger: { name: string; group: string | null }) {
+  return ledger.name.toLowerCase() === "cash" || ledger.group === "Bank Accounts" || ledger.group === "Cash-in-Hand";
+}
 
 function partyName(label: string) {
   const cleaned = label.replace(/\s+/g, " ").trim().slice(0, 60);
@@ -218,9 +302,19 @@ export function buildTallyVoucherXml(input: TallyXmlInput): TallyXmlResult {
       return;
     }
     const isReceipt = txn.credit != null && txn.credit > 0;
-    const voucherType = isReceipt ? "Receipt" : "Payment";
-    const resolved = resolveLedger(txn, input.mappings);
+    const chosen = resolveLedger(txn, txn.ledgerName ? [{ counterparty: partyKey(txn), ledgerName: txn.ledgerName }] : input.mappings);
+    const suspense = input.suspenseLedger?.trim();
+    const resolved = chosen.name === "Suspense" && suspense ? { name: suspense, group: null } : chosen;
     const partyLedger = resolved.name;
+    const voucherType = txn.voucherType ?? defaultVoucherType(txn.credit, partyLedger);
+    if (voucherType === "Contra" && !contraAllowed(resolved)) {
+      errors.push(`Row ${txn.rowNumber}: a Contra entry needs Cash or another bank account, not ${partyLedger}.`);
+      return;
+    }
+    if ((voucherType === "Receipt" && !isReceipt) || (voucherType === "Payment" && isReceipt)) {
+      errors.push(`Row ${txn.rowNumber}: a ${voucherType} cannot be money ${isReceipt ? "in" : "out"}.`);
+      return;
+    }
     if (resolved.group && !BUILT_IN_LEDGERS.has(partyLedger.toLowerCase()) && !masters.has(partyLedger.toLowerCase())) {
       masters.set(partyLedger.toLowerCase(), ledgerMaster(partyLedger, resolved.group));
     }
@@ -251,7 +345,26 @@ export function buildTallyVoucherXml(input: TallyXmlInput): TallyXmlResult {
     return { ok: false, errors: errors.length > 0 ? errors : ["Voucher count does not match source rows."] };
   }
 
-  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+  const xml = importEnvelope("Vouchers", `${input.createLedgers === false ? "" : `${[...masters.values()].join("\n")}\n`}${vouchers.join("\n")}`, input.tallyCompany);
+
+  const validation = validateTallyVoucherXml(xml, vouchers.length);
+  if (!validation.ok) return { ok: false, errors: validation.errors };
+  const safeName = companyName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "client";
+  return {
+    ok: true,
+    xml,
+    mastersXml: importEnvelope("All Masters", [...masters.values()].join("\n"), input.tallyCompany),
+    fileName: `${safeName}-bank-vouchers.xml`,
+    voucherCount: vouchers.length,
+    errors: [],
+  };
+}
+
+function importEnvelope(report: "Vouchers" | "All Masters", data: string, company?: string) {
+  const target = company?.trim()
+    ? `\n        <STATICVARIABLES>\n          <SVCURRENTCOMPANY>${xmlEscape(company.trim())}</SVCURRENTCOMPANY>\n        </STATICVARIABLES>`
+    : "";
+  return `<?xml version="1.0" encoding="UTF-8"?>
 <ENVELOPE>
   <HEADER>
     <TALLYREQUEST>Import Data</TALLYREQUEST>
@@ -259,20 +372,15 @@ export function buildTallyVoucherXml(input: TallyXmlInput): TallyXmlResult {
   <BODY>
     <IMPORTDATA>
       <REQUESTDESC>
-        <REPORTNAME>Vouchers</REPORTNAME>
+        <REPORTNAME>${report}</REPORTNAME>${target}
       </REQUESTDESC>
       <REQUESTDATA>
-${input.createLedgers === false ? "" : `${[...masters.values()].join("\n")}\n`}${vouchers.join("\n")}
+${data}
       </REQUESTDATA>
     </IMPORTDATA>
   </BODY>
 </ENVELOPE>
 `;
-
-  const validation = validateTallyVoucherXml(xml, vouchers.length);
-  if (!validation.ok) return { ok: false, errors: validation.errors };
-  const safeName = companyName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "client";
-  return { ok: true, xml, fileName: `${safeName}-bank-vouchers.xml`, voucherCount: vouchers.length, errors: [] };
 }
 
 function ledgerEntry(name: string, deemedPositive: boolean, amount: number) {
@@ -292,8 +400,8 @@ export function validateTallyVoucherXml(xml: string, expectedVouchers: number): 
   if (voucherMatches.length !== expectedVouchers) errors.push(`Expected ${expectedVouchers} vouchers, found ${voucherMatches.length}.`);
   const dates = xml.match(/<DATE>\d{8}<\/DATE>/g) ?? [];
   if (dates.length !== expectedVouchers) errors.push("One or more vouchers have an invalid DATE.");
-  const types = xml.match(/<VOUCHERTYPENAME>(Receipt|Payment)<\/VOUCHERTYPENAME>/g) ?? [];
-  if (types.length !== expectedVouchers) errors.push("Voucher type must be Receipt or Payment.");
+  const types = xml.match(/<VOUCHERTYPENAME>(Receipt|Payment|Contra)<\/VOUCHERTYPENAME>/g) ?? [];
+  if (types.length !== expectedVouchers) errors.push("Voucher type must be Receipt, Payment or Contra.");
   if (xml.includes("<LEDGERNAME></LEDGERNAME>") || xml.includes("<LEDGERNAME> </LEDGERNAME>")) {
     errors.push("A voucher has an empty ledger name.");
   }

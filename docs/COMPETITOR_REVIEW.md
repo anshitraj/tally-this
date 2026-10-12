@@ -20,6 +20,20 @@ This review uses vendors' public product pages and help documentation, plus the 
 
 [TallyPrime's own bank import](https://help.tallysolutions.com/bank-statement/) is also a baseline. Its documentation supports bank-downloaded CSV/Excel, with preview and reconciliation, and excludes PDF and CSV/Excel converted from PDF for this particular importer. Compare TallyThis against the accountant's existing option before adding another workflow.
 
+### Repotic bank statement, observed 10 October 2026
+
+Source: the user's Repotic trial account (one DBS Bank India statement, 60 rows) and Repotic's product-listing screenshots. The listing screenshots are vendor marketing, not tests.
+
+| Repotic | Seen where | TallyThis now |
+| --- | --- | --- |
+| Statement table: transaction date, value date, details, debit, credit, balance; opening and closing balance shown above | Trial account | Built: "View all transactions" table with a Bank statement view, and the Excel download opens on the same layout (plus Chq/Ref, voucher, Tally ledger and review status) with a totals row. |
+| Downloads: MCS, CSV, Tally XML | Trial account | Excel, CSV, Tally XML. "MCS" is most likely an export for MCS/MCSCA accounting software by [Mehta Computer Services, Surat](http://www.mcssurat.com/) (Repotic is also Surat-based); its import layout is not public, so it needs a sample file from the trial. |
+| Desktop connector: choose Tally company, bank account and suspense account; map rows to the company's ledgers; one-click push | [Microsoft Store listing](https://apps.microsoft.com/detail/9nd71n2nr98b) | Built: Send to Tally lists open companies, loads the company's ledgers, preselects the matching bank and Suspense ledgers, and adds Tally's ledgers to every ledger list. Not tested against a live TallyPrime. |
+| Default / Bank view toggle, per-row menu, Raise Query | Trial account | Built: Tally view / Bank statement toggle; row menu (confirm ledger, apply to party, money in/out, leave out, client query). Our Raise Query is a question to the client, copied as a list and exported as an Excel sheet; Repotic's may be a support ticket (not inspected). |
+| Per-row voucher type and ledger dropdown | Listing screenshot | Built: per-row voucher (Receipt/Payment, Contra for cash) and ledger, carried into Tally XML, Excel and Send to Tally. Contra to another bank account is not offered yet. |
+| "Connect to Tally" / "Send to Tally" direct posting | Listing screenshot | Built: Connect to Tally (lists open companies) and Send to Tally through TallyPrime's local XML server, with Tally's created/error counts and a duplicate-send warning. Not yet tested against a live TallyPrime. Works only when the API can reach Tally (same computer or network); a hosted deployment needs a local connector. |
+| "Smart Suspense Solving" automatic categorisation | Listing screenshot | Rules, remembered choices and optional AI suggestions; unconfirmed parties stay in review. |
+
 ## TallyThis gap list
 
 Statuses below refer to the feature branch, not a verified production deployment.

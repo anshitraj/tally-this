@@ -8,7 +8,7 @@ test("unknown bank can be corrected and the reviewed Excel output is downloadabl
     localStorage.setItem("finverify_auth", JSON.stringify({ user: value }));
     localStorage.setItem(`finverify_onboarding_complete:${value.email}`, "true");
   }, user);
-  let excelPayload: { bankName?: string; rows?: Array<{ ledgerChoice?: string; excluded?: boolean }> } | null = null;
+  let excelPayload: { bankName?: string; balanceCheck?: string; rows?: Array<{ ledgerChoice?: string; ledgerConfirmed?: boolean; excluded?: boolean }> } | null = null;
   await page.route("**/api/**", async route => {
     const path = new URL(route.request().url()).pathname;
     if (path.endsWith("bank-statement/normalize")) {
@@ -40,6 +40,8 @@ test("unknown bank can be corrected and the reviewed Excel output is downloadabl
   expect((await download).suggestedFilename()).toBe("TallyThis_Bank_Transactions.xlsx");
   expect(excelPayload?.bankName).toBe("ICICI Bank");
   expect(excelPayload?.rows?.[0].ledgerChoice).toBe("Office Expenses");
+  expect(excelPayload?.rows?.[0].ledgerConfirmed).toBe(true);
+  expect(excelPayload?.balanceCheck).toBe("needs_check");
   await expect(page.getByRole("button", { name: "Review 1 item" })).toBeVisible();
   await page.getByRole("button", { name: "Review 1 item" }).click();
   await expect(page.getByText("Check the statement totals")).toBeVisible();

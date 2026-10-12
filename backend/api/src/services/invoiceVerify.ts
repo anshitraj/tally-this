@@ -63,6 +63,7 @@ export interface InvoiceMatchItem {
 const NO_INVOICE_LEDGERS = new Set([
   "Salary Expenses", "Cash", "Bank Charges", "Interest Paid", "Interest Received",
   "GST Payable", "TDS Payable", "Income Tax", "Loan Account",
+  "PF Payable", "ESI Payable", "Professional Tax Payable", "Credit Card Payable",
 ]);
 
 export function compareInvoicesWithBank(bank: NormalizedBankTxn[], invoices: InvoiceRow[]) {

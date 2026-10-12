@@ -111,6 +111,16 @@ export async function postJson<T>(path: string, payload: unknown): Promise<{ ok:
   }
 }
 
+export async function getJson<T>(path: string): Promise<{ ok: boolean; data: T & { ok?: boolean; message?: string } }> {
+  try {
+    const response = await fetch(`${BASE}${path}`);
+    const data = await response.json().catch(() => ({ ok: false }));
+    return { ok: response.ok && data.ok !== false, data };
+  } catch {
+    return { ok: false, data: { ok: false, message: "Could not reach TallyThis." } as T & { ok?: boolean; message?: string } };
+  }
+}
+
 export async function postDownload(path: string, payload: unknown): Promise<{ ok: boolean; blob?: Blob; message?: string }> {
   try {
     const response = await fetch(`${BASE}${path}`, {
