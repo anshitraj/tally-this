@@ -150,14 +150,23 @@ export async function tallyStatus(): Promise<{ running: boolean; companies: stri
 
 /**
  * Creates any missing ledgers, then the vouchers. Ledgers that already exist are expected to
- * come back as errors from the masters step and are not treated as a failure; only the
- * voucher step decides whether the entries reached Tally.
+ * come back as identified duplicate-ledger errors. Other master failures stop the
+ * voucher request; both steps must return an import acknowledgement.
  */
-export async function sendVouchersToTally(input: { mastersXml?: string; vouchersXml: string; expected: number }) {
-  const masters = input.mastersXml ? parseImportResponse(await postToTally(input.mastersXml, 60_000)) : null;
-  const vouchers = parseImportResponse(await postToTally(input.vouchersXml, 120_000));
+export async function sendVouchersToTally(input: { mastersXml?: string; vouchersXml: string; expected: number }, transport = postToTally) {
+  const acknowledged = async (xml: string, timeout: number) => {
+    const reply = await transport(xml, timeout);
+    if (!/<CREATED>\s*\d+\s*<\/CREATED>/i.test(reply) || !/<ERRORS>\s*\d+\s*<\/ERRORS>/i.test(reply)) throw new Error("Tally did not return an import acknowledgement.");
+    return parseImportResponse(reply);
+  };
+  const masters = input.mastersXml ? await acknowledged(input.mastersXml, 60_000) : null;
+  const existingOnly = masters && masters.messages.length > 0 && masters.errors + masters.exceptions <= masters.messages.length && masters.messages.every(message => /^ledger\b.*already exists/i.test(message));
+  if (masters && (masters.errors > 0 || masters.exceptions > 0 || masters.messages.length > 0) && !existingOnly) {
+    return { ok: false, expected: input.expected, created: 0, failed: input.expected, ledgersCreated: masters.created, messages: masters.messages.length ? masters.messages.slice(0, 10) : ["Ledger creation failed. No vouchers were sent."] };
+  }
+  const vouchers = await acknowledged(input.vouchersXml, 120_000);
   return {
-    ok: vouchers.created === input.expected && vouchers.errors === 0 && vouchers.exceptions === 0,
+    ok: vouchers.created === input.expected && vouchers.errors === 0 && vouchers.exceptions === 0 && vouchers.messages.length === 0,
     expected: input.expected,
     created: vouchers.created,
     failed: Math.max(0, input.expected - vouchers.created),

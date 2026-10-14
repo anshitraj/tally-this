@@ -4,6 +4,16 @@ import PDFDocument from "pdfkit";
 import { readStatementPdf } from "./pdfStatement";
 import { checkRunningBalance } from "./statementCheck";
 
+test("one-paise running and closing balance differences never pass", () => {
+  const row = { date: "2026-05-01", narration: "Test", description: "Test", reference: null, debit: null, credit: 0.29, balance: 100.30, rowNumber: 1, confidence: 0.95 };
+  const check = checkRunningBalance([row as any], 100, { printedClosing: 100.29 });
+  assert.equal(check.failed, 1);
+  assert.equal(check.closingMatches, false);
+  assert.equal(check.verified, false);
+  row.balance = 100.29;
+  assert.equal(checkRunningBalance([row as any], 100, { printedClosing: 100.29 }).verified, true);
+});
+
 type Cell = { text: string; x: number; align?: "right"; width?: number };
 type Line = { y: number; cells: Cell[] };
 
@@ -88,7 +98,7 @@ test("a Closing Balance column heading is not mistaken for a printed closing tot
   assert.equal(read.status, "ok");
   assert.equal(read.summary!.transactions.length, 3);
   assert.notEqual(read.check!.closingMatches, false, "no printed closing total exists, so nothing can disagree");
-  assert.equal(read.check!.verified, true, JSON.stringify(read.check));
+  assert.equal(read.check!.verified, false, "Without a printed opening balance the first row remains unproved.");
   assert.ok(!read.summary!.warnings.some(warning => /closing balance printed/i.test(warning)));
 });
 
@@ -138,7 +148,7 @@ test("newest-first statements with both columns printed and character-wrapped na
   assert.equal(summary.transactions[2].narration, "100000002222:Int.Pd:01-01-2026 to 31-03-2026");
   assert.equal(summary.transactions[1].debit, 818);
   assert.equal(summary.transactions[2].credit, 8);
-  assert.equal(read.check!.verified, true);
+  assert.equal(read.check!.verified, false, "Correct ordering does not prove the first amount without an opening balance.");
 });
 
 test("locked PDFs ask for the password and reject a wrong one", async () => {

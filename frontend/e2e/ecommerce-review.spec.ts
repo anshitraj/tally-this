@@ -15,7 +15,7 @@ function pack(row = sale) {
   return {
     ok: true, runId: "local-1", privacy: false, platform: "amazon", files: ["amazon.csv"],
     sales: [reviewed], documents: [{ platform: "amazon", issued: 1, cancelled: 0, source: "uploaded reports" }],
-    summary: { documents: 1, taxableValue: 100, gst: 18, gross: 118, refunds: 0, tcs: 1, b2b: 0, b2c: 1, errors: issues.length },
+    summary: { documents: 1, taxableValue: 100, gst: 18, gross: 118, refunds: 0, tcs: row.tcsAmount, b2b: 0, b2c: 1, errors: issues.length },
     tabs: { b2b: [], b2c: [reviewed], hsn: [{ supply: "B2C", hsn: row.hsn || "missing", gstRate: 18, taxableValue: 100, count: 1 }], tcs: [reviewed], table14: [], errors: issues.length ? [reviewed] : [] },
   };
 }
@@ -53,6 +53,10 @@ test("accountant corrects HSN, compares uploaded TCS and downloads the draft on 
   const reviewed = await setup(page);
   await page.goto("/app/jobs/ecommerce-gst");
   await page.locator('input[type="file"]').first().setInputFiles({ name: "amazon.csv", mimeType: "text/csv", buffer: Buffer.from("invoice,taxable\nINV-1,100") });
+  await expect(page.getByRole("tab", { name: "GST report", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "GST report", exact: true })).toBeInViewport();
+  await expect(page.getByRole("button", { name: /Review 1 item/ })).toBeInViewport();
+  await expect(page.getByRole("button", { name: "Download Excel", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /Review 1 item/ })).toBeVisible();
   await page.getByRole("button", { name: /Review 1 item/ }).click();
   await page.getByRole("button", { name: "Correct row" }).click();
@@ -62,11 +66,47 @@ test("accountant corrects HSN, compares uploaded TCS and downloads the draft on 
   expect((reviewed[0] as { sales: typeof sale[] }).sales[0].hsn).toBe("610910");
   await page.locator('input[aria-label="GST portal TCS summary"]').setInputFiles({ name: "portal.csv", mimeType: "text/csv", buffer: Buffer.from("State,TCS Amount\nKarnataka,1\n") });
   await expect(page.getByText("Uploaded portal TCS amounts agree", { exact: false })).toBeVisible();
+  await page.getByRole("tab", { name: "Export", exact: true }).click();
+  await page.getByLabel("Export format").selectOption("gst");
   const download = page.waitForEvent("download");
   await page.getByRole("button", { name: "Download GST draft" }).click();
   expect((await download).suggestedFilename()).toMatch(/gstr1-draft\.json$/);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: "../tmp/ecommerce-review-390.png", fullPage: true });
+});
+
+test("a clean upload opens GST sections and exports only when the accountant asks", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const reviewed = await setup(page);
+  const clean = pack({ ...sale, hsn: "610910", tcsAmount: 0, issues: [] });
+  clean.summary.tcs = 0;
+  await page.route("**/api/jobs/ecommerce/normalize", route => route.fulfill({ json: clean }));
+  const exportRequests: string[] = [];
+  page.on("request", request => { if (/\/ecommerce\/(excel|gst-json|csv|sales-xml)$/.test(new URL(request.url()).pathname)) exportRequests.push(request.url()); });
+  await page.goto("/app/jobs/ecommerce-gst");
+  await page.locator('input[type="file"]').first().setInputFiles({ name: "amazon.csv", mimeType: "text/csv", buffer: Buffer.from("invoice,taxable\nINV-1,100") });
+  await expect(page.getByRole("tab", { name: "GST report", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByLabel("GST section")).toHaveValue("B2C");
+  await expect(page.getByLabel("GST section").locator("option")).toHaveText(["B2B", "B2C", "HSN", "TCS", "Documents", "Credit notes", "Table 14"]);
+  await expect(page.getByRole("group", { name: "Choose upload mode" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Download/ })).toHaveCount(0);
+  expect(exportRequests).toHaveLength(0);
+  await page.screenshot({ path: "../tmp/gst-report-desktop.png", fullPage: true });
+  await page.getByLabel("GST section").selectOption("HSN");
+  await expect(page.getByRole("cell", { name: "610910", exact: true })).toBeVisible();
+  await page.getByLabel("GST section").selectOption("Documents");
+  await expect(page.getByText("Documents issued", { exact: true })).toBeVisible();
+  await page.getByLabel("Issued", { exact: true }).fill("2");
+  await page.getByRole("button", { name: "Save document summary" }).click();
+  await expect.poll(() => reviewed.length).toBe(1);
+  expect((reviewed[0] as { documents: Array<{ issued: number }> }).documents[0].issued).toBe(2);
+  await page.screenshot({ path: "../tmp/gst-documents-desktop.png", fullPage: true });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.getByRole("tab", { name: "GST report", exact: true }).focus();
+  await page.keyboard.press("End");
+  await expect(page.getByRole("tab", { name: "Export", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("button", { name: "Download Excel", exact: true })).toBeVisible();
+  expect(exportRequests).toHaveLength(0);
 });
 
 test("excluded marketplace documents are explained without overflowing the mobile result", async ({ page }) => {
@@ -82,4 +122,21 @@ test("excluded marketplace documents are explained without overflowing the mobil
   await expect(page.getByText("sales rows read", { exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: "../tmp/ecommerce-exclusions-390.png", fullPage: true });
+});
+
+test("linked credit notes show their source amounts and original invoice on mobile", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await setup(page);
+  const original = { ...sale, invoiceNumber: "INV-1", hsn: "610910", issues: [] };
+  const note = { ...original, invoiceNumber: "CN-1", originalInvoiceNumber: "INV-1", transactionType: "credit_note", taxableValue: -50, cgst: -4.5, sgst: -4.5, grossAmount: -59, sourceRow: 3 };
+  const result = pack(original);
+  await page.route("**/api/jobs/ecommerce/normalize", route => route.fulfill({ json: { ...result, sales: [original, note], summary: { ...result.summary, documents: 2, taxableValue: 50, gst: 9, gross: 59 }, tabs: { ...result.tabs, creditNotes: [note] } } }));
+  await page.goto("/app/jobs/ecommerce-gst");
+  await page.locator('input[type="file"]').first().setInputFiles({ name: "credits.csv", mimeType: "text/csv", buffer: Buffer.from("Invoice Number,Taxable Value\nCN-1,-50") });
+  await page.getByLabel("GST section").selectOption("Credit notes");
+  await expect(page.getByRole("cell", { name: "CN-1", exact: true })).toBeVisible();
+  await expect(page.getByRole("cell", { name: "INV-1", exact: true })).toBeVisible();
+  await expect(page.getByText("Net taxable value", { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: "../tmp/gst-credit-notes-mobile.png", fullPage: true });
 });

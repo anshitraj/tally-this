@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { signedIn } from "./signedIn";
 
 /**
  * Smoke tests for FinVerify OS.
@@ -7,16 +8,19 @@ import { test, expect } from "@playwright/test";
  */
 
 test.describe("FinVerify OS — smoke", () => {
-  test("root redirects to app", async ({ page }) => {
+  test.beforeEach(async ({ page }) => { await signedIn(page); });
+
+  test("the home page is the landing page, and its button opens the workspace when signed in", async ({ page }) => {
     await page.goto("/");
-    // Should land somewhere in /app
+    await expect(page).toHaveURL(/\/$/);
+    await page.getByRole("button", { name: /open workspace|go to workspace|dashboard|get started/i }).first().click();
     await expect(page).toHaveURL(/\/app\//);
   });
 
   test("uploads page loads with Smart Next Step Panel", async ({ page }) => {
     await page.goto("/app/uploads");
-    // Month Close Command Center header is visible
-    await expect(page.getByText(/Month Close|Command Center|What you uploaded/i).first()).toBeVisible({ timeout: 10000 });
+    // The Smart Next Step panel tells the person what to do next
+    await expect(page.getByText(/Smart Next Step/i).first()).toBeVisible({ timeout: 10000 });
   });
 
   test("transactions page loads", async ({ page }) => {

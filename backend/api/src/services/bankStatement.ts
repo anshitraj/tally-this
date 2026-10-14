@@ -3,6 +3,7 @@
  * Deterministic. Used by the Bank Statement → Tally job and the CSV parser fallback.
  */
 import { detectBankFromStatement } from "./bankDirectory";
+import { paise, sumMoney } from "./money";
 
 export interface NormalizedBankTxn {
   date: string;
@@ -140,7 +141,8 @@ export function normalizeAmount(raw: string | null | undefined): number | null {
   const value = Number(text);
   if (!Number.isFinite(value)) return null;
   const signed = negative ? -Math.abs(value) : value;
-  return Math.round(signed * 100) / 100;
+  const cents = paise(signed);
+  return cents == null ? null : cents / 100;
 }
 
 const MONTHS: Record<string, string> = {
@@ -261,6 +263,8 @@ const PAYMENT_APP_PARTIES: Array<[RegExp, string]> = [
   [/gpayvoucher@/i, "Google Pay voucher"],
   [/gpay-?creditcard@/i, "Google Pay card bill"],
   [/playstore@/i, "Google Play"],
+  // The destination account number says nothing about who the money went to.
+  [/sent money to own|money to own a\/c|self ?transfer|own account/i, "Own account transfer"],
 ];
 
 /**
@@ -392,9 +396,16 @@ export function parseBankStatement(text: string, fileName = "statement.csv"): Ba
       return;
     }
 
-    let debit = normalizeAmount(pick(row, DEBIT_KEYS));
-    let credit = normalizeAmount(pick(row, CREDIT_KEYS));
-    let balance = normalizeAmount(pick(row, BALANCE_KEYS));
+    const rawDebit = pick(row, DEBIT_KEYS);
+    const rawCredit = pick(row, CREDIT_KEYS);
+    const rawBalance = pick(row, BALANCE_KEYS);
+    let debit = normalizeAmount(rawDebit);
+    let credit = normalizeAmount(rawCredit);
+    let balance = normalizeAmount(rawBalance);
+    if ([[rawDebit, debit], [rawCredit, credit], [rawBalance, balance]].some(([raw, value]) => String(raw).trim() && !/^[-—]$/.test(String(raw).trim()) && value == null)) {
+      unreadableDatedRows += 1;
+      return;
+    }
     let repaired = false;
 
     if (debit != null && credit != null && previousBalance != null && balance == null) {
@@ -494,8 +505,8 @@ export function parseBankStatement(text: string, fileName = "statement.csv"): Ba
 
   const flipped = repairDirectionsFromBalance(transactions);
   if (flipped > 0) warnings.push(`${flipped} row(s) were set to money in or money out using the running balance.`);
-  const debitTotal = round2(transactions.reduce((sum, txn) => sum + (txn.debit ?? 0), 0));
-  const creditTotal = round2(transactions.reduce((sum, txn) => sum + (txn.credit ?? 0), 0));
+  const debitTotal = sumMoney(transactions.map(txn => txn.debit ?? 0));
+  const creditTotal = sumMoney(transactions.map(txn => txn.credit ?? 0));
   const first = transactions[0];
   const last = transactions[transactions.length - 1];
   const openingBalance = first.balance == null

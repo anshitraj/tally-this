@@ -18,7 +18,7 @@ import {
   takePendingFiles,
 } from "@/components/jobs/jobUi";
 import { getActiveClient } from "@/lib/activeClient";
-import { cn } from "@/lib/utils";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 interface Sale {
   platform: string;
@@ -43,6 +43,7 @@ interface Sale {
   sourceRow: number;
   sourceFile: string;
   issues: string[];
+  originalInvoiceNumber?: string | null;
 }
 
 interface Pack {
@@ -55,7 +56,7 @@ interface Pack {
   files?: string[];
   sales: Sale[];
   summary: { documents: number; taxableValue: number; gst: number; cess?: number; gross: number; refunds: number; tcs: number; b2b: number; b2c: number; errors: number; excludedSalesRows?: number };
-  tabs: { b2b: Sale[]; b2c: Sale[]; hsn: Array<{ hsn: string; gstRate: number | null; taxableValue: number; count: number; supply: "B2B" | "B2C" }>; tcs: Sale[]; table14: Sale[]; errors: Sale[] };
+  tabs: { creditNotes?: Sale[]; b2b: Sale[]; b2c: Sale[]; hsn: Array<{ hsn: string; gstRate: number | null; taxableValue: number; count: number; supply: "B2B" | "B2C" }>; tcs: Sale[]; table14: Sale[]; errors: Sale[] };
   documents?: Array<{ platform: string; issued: number; cancelled: number; source: "uploaded reports" | "accountant correction" }>;
 }
 
@@ -81,7 +82,7 @@ const PLATFORMS: Array<{ value: Platform; label: string }> = [
   { value: "limeroad", label: "LimeRoad" },
   { value: "generic", label: "Other" },
 ];
-const TABS = ["B2B", "B2C", "HSN", "TCS", "Table 14"] as const;
+const TABS = ["B2B", "B2C", "HSN", "TCS", "Documents", "Credit notes", "Table 14"] as const;
 
 function titleCase(text: string) {
   return text.split(" + ").map(part => part === "generic" ? "Marketplace" : part.charAt(0).toUpperCase() + part.slice(1)).join(" + ");
@@ -94,7 +95,10 @@ export default function EcommerceGstPage() {
   const [error, setError] = useState("");
   const [exportNote, setExportNote] = useState("");
   const [pack, setPack] = useState<Pack | null>(null);
-  const [reviewOpen, setReviewOpen] = useState(false);
+  const [resultView, setResultView] = useState<"report" | "review" | "export">("report");
+  const [exportFormat, setExportFormat] = useState<"excel" | "gst" | "tally">("excel");
+  const [exporting, setExporting] = useState(false);
+  const [rowLimit, setRowLimit] = useState(200);
   const [tab, setTab] = useState<(typeof TABS)[number]>("B2B");
   const [downloaded, setDownloaded] = useState(false);
   const [exportingExcel, setExportingExcel] = useState(false);
@@ -106,8 +110,12 @@ export default function EcommerceGstPage() {
   const [tcsBusy, setTcsBusy] = useState(false);
   const [partyLedgers, setPartyLedgers] = useState<Record<string, string>>({});
   const [documentEdits, setDocumentEdits] = useState<NonNullable<Pack["documents"]>>([]);
-  const [newDocumentPlatform, setNewDocumentPlatform] = useState("");
   const portalInput = useRef<HTMLInputElement>(null);
+  const resultRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (stage === "done") resultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [stage, resultView]);
 
   const run = async (picked: File[], chosen: Platform = platform) => {
     setFiles(picked);
@@ -125,7 +133,9 @@ export default function EcommerceGstPage() {
     }
     setPack(response.data);
     setDocumentEdits(response.data.documents ?? []);
-    setReviewOpen(false);
+    setResultView("report");
+    setTab(response.data.tabs.b2c.length ? "B2C" : "B2B");
+    setRowLimit(200);
     setStage("done");
   };
 
@@ -160,6 +170,7 @@ export default function EcommerceGstPage() {
     setPack(response.data);
     setDocumentEdits(response.data.documents ?? []);
     setAnnualTurnoverAbove5Cr(above5Cr);
+    if (!response.data.summary.errors) setResultView("report");
     setTcsComparison(null);
     setDownloaded(false);
     setReviewSale(null);
@@ -178,7 +189,7 @@ export default function EcommerceGstPage() {
     setTcsBusy(false);
     if (!response.ok) { setError(response.data.message || "The TCS summary could not be compared."); return; }
     setTcsComparison(response.data);
-    setReviewOpen(response.data.mismatches > 0);
+    setResultView(response.data.mismatches > 0 ? "review" : "report");
     setError("");
   };
 
@@ -239,6 +250,15 @@ export default function EcommerceGstPage() {
     setTcsComparison(null);
   };
 
+  const exportSelected = async () => {
+    setExporting(true);
+    try {
+      if (exportFormat === "excel") await exportExcel();
+      else if (exportFormat === "gst") await generate();
+      else await tallyXml();
+    } finally { setExporting(false); }
+  };
+
   const summary = pack?.summary;
   const needsPortalTcs = Boolean(pack?.sales.some(sale => sale.tcsAmount !== 0) && !tcsComparison);
   const attention = (summary?.errors ?? 0) + (tcsComparison?.mismatches ?? 0);
@@ -265,36 +285,42 @@ export default function EcommerceGstPage() {
       {stage === "working" && <Working steps={STEPS} />}
 
       {stage === "done" && pack && summary && (
-        <div className="space-y-4">
+        <Tabs ref={resultRef} className="scroll-mt-4" value={resultView} onValueChange={value => setResultView(value as typeof resultView)}>
+          <TabsList className="grid h-11 w-full grid-cols-3" aria-label="Marketplace results">
+            <TabsTrigger value="report">GST report</TabsTrigger>
+            <TabsTrigger value="review">Review{attention ? ` (${attention})` : ""}</TabsTrigger>
+            <TabsTrigger value="export">Export</TabsTrigger>
+          </TabsList>
+          <TabsContent value={resultView} className="space-y-4 pt-2">
           <ResultCard
             eyebrow={`${titleCase(pack.platform)} · ${files.length} ${files.length === 1 ? "report" : "reports"}`}
-            actions={
+            actions={resultView === "report" ?
               <>
                 {attention > 0
-                  ? <button type="button" className="fv-button-primary h-11 px-6" onClick={() => setReviewOpen(true)}>Review {attention} {attention === 1 ? "item" : "items"}</button>
+                  ? <button type="button" className="fv-button-primary h-11 px-6" onClick={() => setResultView("review")}>Review {attention} {attention === 1 ? "item" : "items"}</button>
                   : needsPortalTcs
-                    ? <button type="button" className="fv-button-primary h-11 px-6" onClick={() => portalInput.current?.click()}>Compare portal TCS</button>
-                    : <button type="button" className="fv-button-primary h-11 px-6" onClick={generate}>{downloaded ? "Download draft again" : "Download GST draft"}</button>}
-                <button type="button" className="fv-button-secondary h-11" onClick={needsPortalTcs && attention > 0 ? () => portalInput.current?.click() : exportExcel} disabled={tcsBusy || exportingExcel}>{needsPortalTcs && attention > 0 ? "Compare portal TCS" : exportingExcel ? "Creating Excel…" : "Download Excel"}</button>
-                <input ref={portalInput} type="file" accept=".csv,.xlsx,.xls" className="hidden" aria-label="GST portal TCS summary" onChange={event => { const file = event.currentTarget.files?.[0]; if (file) void compareTcsFile(file); event.currentTarget.value = ""; }} />
+                    ? <button type="button" className="fv-button-primary h-11 px-6" disabled={tcsBusy} onClick={() => portalInput.current?.click()}>{tcsBusy ? "Comparing…" : "Compare portal TCS"}</button>
+                    : <button type="button" className="fv-button-primary h-11 px-6" onClick={() => setResultView("export")}>Open exports</button>}
+                {needsPortalTcs && attention > 0 && <button type="button" className="fv-button-secondary h-11" onClick={() => portalInput.current?.click()} disabled={tcsBusy}>{tcsBusy ? "Comparing…" : "Compare portal TCS"}</button>}
               </>
-            }
+              : undefined}
           >
-            <div className="grid grid-cols-2 gap-6">
+            <div className="grid grid-cols-2 gap-4">
               <BigStat value={summary.documents} label="sales rows read" tone="good" />
               <BigStat value={summary.errors} label={summary.errors === 1 ? "needs review" : "need review"} tone={summary.errors > 0 ? "attention" : "good"} />
             </div>
-            <div className="mt-5 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-              <Mini label="Taxable value" value={inr(summary.taxableValue)} />
+            <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-sm">
+              <Mini label={pack.tabs.creditNotes?.some(note => note.issues.length === 0) ? "Net taxable value" : "Taxable value"} value={inr(summary.taxableValue)} />
               <Mini label={summary.cess ? "GST + cess" : "GST"} value={inr(summary.gst + (summary.cess ?? 0))} />
               <Mini label="TCS" value={inr(summary.tcs)} />
-              <Mini label="B2B · B2C" value={`${summary.b2b} · ${summary.b2c}`} />
             </div>
           </ResultCard>
+          <input ref={portalInput} type="file" accept=".csv,.xlsx,.xls" className="hidden" aria-label="GST portal TCS summary" onChange={event => { const file = event.currentTarget.files?.[0]; if (file) void compareTcsFile(file); event.currentTarget.value = ""; }} />
 
-          {pack.privacy && !downloaded && <Notice tone="success">Incognito: this file and result aren’t saved to your workspace. Download your reports before leaving.</Notice>}
-          {needsPortalTcs && <Notice tone="info">TCS comes from marketplace reports only. Upload a GST portal TCS summary to compare before CA review.</Notice>}
-          {tcsComparison && <Notice tone={tcsComparison.mismatches ? "warn" : "success"}>{tcsComparison.message} {tcsComparison.mismatches ? "Potential risk — needs CA review." : "Check the uploaded portal file and return period before filing."}</Notice>}
+          {needsPortalTcs && resultView === "report" && <p className="text-xs text-muted-foreground">Portal TCS has not been compared.</p>}
+          {tcsComparison && (tcsComparison.mismatches
+            ? <Notice tone="warn">{tcsComparison.message} Potential risk — needs CA review.</Notice>
+            : <p className="text-xs text-muted-foreground">{tcsComparison.message} Check the uploaded file and return period before filing.</p>)}
           {error && <Notice tone="error" onClose={() => setError("")}>{error}</Notice>}
           {Boolean(summary.excludedSalesRows) && <Notice tone="warn">Sales totals exclude {summary.excludedSalesRows} cancelled, return or adjustment {summary.excludedSalesRows === 1 ? "row" : "rows"}. Check their treatment before filing. Potential risk — needs CA review.</Notice>}
           {exportNote && <Notice tone="info" onClose={() => setExportNote("")}>{exportNote}</Notice>}
@@ -302,7 +328,7 @@ export default function EcommerceGstPage() {
             <Notice tone="success">GSTR-1 draft (JSON) and sales summary (CSV) downloaded. Potential risk — needs CA review before filing.</Notice>
           )}
 
-          {reviewOpen && (
+          {resultView === "review" && (
             <ResultCard eyebrow="Review">
               <p className="mb-4 text-sm text-muted-foreground">Correct flagged rows here. TallyThis recalculates every section and total before exporting. Potential risk — needs CA review.</p>
               {tcsComparison && tcsComparison.mismatches > 0 && (
@@ -333,8 +359,9 @@ export default function EcommerceGstPage() {
                   <h3 className="font-semibold">Correct {reviewSale.invoiceNumber || reviewSale.orderId || `row ${reviewSale.sourceRow}`}</h3>
                   <p className="mt-1 text-xs text-muted-foreground">From {reviewSale.sourceFile}, row {reviewSale.sourceRow}. Check every change against the marketplace report.</p>
                   <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                    {([ ["invoiceNumber", "Invoice number"], ["invoiceDate", "Invoice date (YYYY-MM-DD)"], ["gstin", "Buyer GSTIN"], ["placeOfSupply", "Place of supply"], ["hsn", "HSN"], ["transactionType", "Document type"] ] as const).map(([key, label]) => <label key={key} className="text-xs font-medium">{label}<input className="fv-input mt-1 w-full" value={reviewSale[key] ?? ""} onChange={event => setReviewSale(current => current ? { ...current, [key]: key === "transactionType" ? event.target.value || "sale" : event.target.value || null } : current)} /></label>)}
-                    {([ ["gstRate", "GST rate %"], ["taxableValue", "Taxable value"], ["cgst", "CGST"], ["sgst", "SGST"], ["igst", "IGST"], ["cess", "Cess"], ["grossAmount", "Invoice total"], ["tcsAmount", "TCS"], ["refundAmount", "Refund amount"] ] as const).map(([key, label]) => <label key={key} className="text-xs font-medium">{label}<input className="fv-input mt-1 w-full" type="number" min={key === "tcsAmount" ? undefined : "0"} step="0.01" value={reviewSale[key] ?? ""} onChange={event => setReviewSale(current => current ? { ...current, [key]: key === "gstRate" && !event.target.value ? null : Number(event.target.value) } : current)} /></label>)}
+                    {([ ["invoiceNumber", "Invoice / credit note number"], ["invoiceDate", "Invoice date (YYYY-MM-DD)"], ["gstin", "Buyer GSTIN"], ["placeOfSupply", "Place of supply"], ["hsn", "HSN"], ["transactionType", "Document type"] ] as const).map(([key, label]) => <label key={key} className="text-xs font-medium">{label}<input className="fv-input mt-1 w-full" value={reviewSale[key] ?? ""} onChange={event => setReviewSale(current => current ? { ...current, [key]: key === "transactionType" ? event.target.value || "sale" : event.target.value || null } : current)} /></label>)}
+                    {/credit[\s_-]*note/i.test(reviewSale.transactionType) && <label className="text-xs font-medium">Original invoice number<input className="fv-input mt-1 w-full" value={reviewSale.originalInvoiceNumber ?? ""} onChange={event => setReviewSale(current => current ? { ...current, originalInvoiceNumber: event.target.value || null } : current)} /><span className="mt-1 block text-muted-foreground">Include the original invoice report in this upload. Only single-row originals are supported.</span></label>}
+                    {([ ["gstRate", "GST rate %"], ["taxableValue", "Taxable value"], ["cgst", "CGST"], ["sgst", "SGST"], ["igst", "IGST"], ["cess", "Cess"], ["grossAmount", "Invoice total"], ["tcsAmount", "TCS"], ["refundAmount", "Refund amount"] ] as const).map(([key, label]) => <label key={key} className="text-xs font-medium">{label}<input className="fv-input mt-1 w-full" type="number" min={key === "gstRate" ? "0" : undefined} step="0.01" value={reviewSale[key] ?? ""} onChange={event => setReviewSale(current => current ? { ...current, [key]: key === "gstRate" && !event.target.value ? null : Number(event.target.value) } : current)} /></label>)}
                   </div>
                   <div className="mt-4 flex flex-wrap gap-2"><button type="button" className="fv-button-primary" disabled={savingReview} onClick={() => void saveReview(pack.sales.map(sale => sale.sourceFile === reviewSale.sourceFile && sale.sourceRow === reviewSale.sourceRow ? reviewSale : sale))}>{savingReview ? "Checking…" : "Save correction"}</button><button type="button" className="fv-button-secondary" onClick={() => setReviewSale(null)}>Cancel</button></div>
                 </div>
@@ -350,18 +377,50 @@ export default function EcommerceGstPage() {
                 }}>Apply to matching rows</button></div>
                 <label className="mt-4 flex items-center gap-2 text-xs"><input type="checkbox" checked={annualTurnoverAbove5Cr} onChange={event => void saveReview(pack.sales, event.target.checked)} />Previous year turnover exceeded ₹5 crore; check for at least six HSN digits.</label>
               </details>
-              <button type="button" className="fv-button-secondary mt-4" onClick={generate}>{downloaded ? "Download working draft again" : "Download working draft with issues"}</button>
+              {!attention && !reviewSale && <p className="mt-3 text-sm">No flagged items remain. Check the GST report, then open Export.</p>}
+              <button type="button" className="fv-button-secondary mt-4" onClick={() => setResultView("report")}>Back to GST report</button>
             </ResultCard>
           )}
 
-          <MoreOptions label="Show details">
+          {resultView === "report" && (
+            <ResultCard>
+              <label className="mb-4 flex flex-wrap items-center gap-3 text-sm font-medium">GST section
+                <select className="fv-input h-10 w-full sm:w-56" value={tab} onChange={event => { setTab(event.target.value as typeof tab); setRowLimit(200); }}>
+                  {TABS.map(section => <option key={section} value={section}>{section}</option>)}
+                </select>
+              </label>
+              {tab === "Documents"
+                ? <DocumentSummaryEditor value={documentEdits} onChange={setDocumentEdits} onSave={() => void saveReview(pack.sales, annualTurnoverAbove5Cr, documentEdits)} busy={savingReview} />
+                : <GstSectionSummary pack={pack} section={tab} comparison={tcsComparison} />}
+            </ResultCard>
+          )}
+
+          {resultView === "export" && (
+            <ResultCard eyebrow="Export">
+              <p className="mb-4 text-sm text-muted-foreground">Download the report you need. Uploading or opening a tab never starts a download.</p>
+              {(attention > 0 || needsPortalTcs) && <Notice tone="warn">This is a working copy. {attention > 0 ? `${attention} items still need review.` : "Portal TCS has not been compared."} Potential risk — needs CA review.</Notice>}
+              <label className="mt-4 block text-sm font-medium">Export format
+                <select className="fv-input mt-2 w-full" value={exportFormat} onChange={event => setExportFormat(event.target.value as typeof exportFormat)}>
+                  <option value="excel">Excel working copy</option>
+                  <option value="gst">GST JSON draft + sales CSV</option>
+                  <option value="tally">Tally Sales XML for test import</option>
+                </select>
+              </label>
+              {exportFormat === "gst" && <p className="mt-3 text-xs text-muted-foreground">This GST JSON is a review draft. GST portal acceptance has not been verified.</p>}
+              {exportFormat === "tally" && <div className="mt-4 space-y-3">
+                <p className="text-xs text-muted-foreground">Uses existing Sales, Marketplace Customers and Output GST ledgers. Linked credit notes reverse their original invoice amounts. Cancelled documents are left out; unlinked returns, adjustments and unresolved rows stop this export.</p>
+                {b2bGstins.map(gstin => <label key={gstin} className="block text-xs">Buyer {gstin}<input className="fv-input mt-1 w-full" value={partyLedgers[gstin] ?? ""} onChange={event => setPartyLedgers(current => ({ ...current, [gstin]: event.target.value }))} placeholder="Existing Tally party ledger" /></label>)}
+                <p className="text-xs text-muted-foreground">Check the Sales Register and GST reports in a test Tally company. Settlement and fee vouchers are not included. Potential risk — needs CA review.</p>
+              </div>}
+              <button type="button" className="fv-button-primary mt-5 h-11 px-6" disabled={exporting || exportingExcel} onClick={() => void exportSelected()}>
+                {exporting ? "Preparing download…" : exportFormat === "excel" ? "Download Excel" : exportFormat === "gst" ? "Download GST draft" : "Download Sales XML"}
+              </button>
+            </ResultCard>
+          )}
+
+          {resultView === "report" && tab !== "Documents" && <MoreOptions label="Show source rows">
             <button type="button" className="text-sm font-medium text-[var(--fv-accent-dark)] hover:underline" onClick={reset}>Upload other reports</button>
-            <button type="button" className="fv-button-secondary" onClick={exportExcel} disabled={exportingExcel}>{exportingExcel ? "Creating Excel…" : "Download Excel working copy"}</button>
-            <div className="flex flex-wrap gap-2">
-              {TABS.map(item => (
-                <button key={item} type="button" onClick={() => setTab(item)} className={cn("rounded-full px-3 py-1 text-xs font-semibold", tab === item ? "bg-foreground text-background" : "bg-card text-foreground border border-border")}>{item}</button>
-              ))}
-            </div>
+            <p className="text-xs text-muted-foreground">{tab} source entries. Edits are checked again before the report changes.</p>
             <div className="max-h-96 overflow-auto rounded-xl border border-border bg-card">
               {tab === "HSN" ? (
                 <table className="w-full min-w-[420px] text-left text-xs">
@@ -374,7 +433,7 @@ export default function EcommerceGstPage() {
                 <table className="w-full min-w-[620px] text-left text-xs">
                   <thead className="sticky top-0 bg-muted text-muted-foreground"><tr><th className="px-3 py-2">Invoice</th><th>Date</th><th>GSTIN</th><th>Place</th><th>Taxable</th><th>GST</th><th>Total</th><th>Review</th></tr></thead>
                   <tbody>
-                    {rows.slice(0, 200).map(sale => (
+                    {rows.slice(0, rowLimit).map(sale => (
                       <tr key={`${sale.sourceFile}-${sale.sourceRow}`} className="border-t border-border">
                         <td className="px-3 py-2">{sale.invoiceNumber ?? sale.orderId}</td>
                         <td>{fmtDate(sale.invoiceDate)}</td>
@@ -383,37 +442,21 @@ export default function EcommerceGstPage() {
                         <td>{inr(sale.taxableValue)}</td>
                         <td>{inr(sale.cgst + sale.sgst + sale.igst)}</td>
                         <td>{inr(sale.grossAmount)}</td>
-                        <td><button type="button" className="font-semibold text-[var(--fv-accent-dark)] underline" onClick={() => { setReviewOpen(true); setReviewSale({ ...sale }); }}>Edit</button></td>
+                        <td><button type="button" className="font-semibold text-[var(--fv-accent-dark)] underline" onClick={() => { setResultView("review"); setReviewSale({ ...sale }); }}>Edit</button></td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               )}
             </div>
-            <div className="rounded-xl border border-border p-4">
-              <div className="text-sm font-semibold">Documents issued</div>
-              <p className="mt-1 text-xs text-muted-foreground">Starting counts come from distinct invoice numbers in uploaded reports. Add or correct a count after checking the source document register.</p>
-              {documentEdits.map((document, index) => <div key={index} className="mt-3 grid gap-2 sm:grid-cols-[1fr_90px_90px]">
-                <label className="text-xs">Marketplace<input className="fv-input mt-1 w-full" value={document.platform} onChange={event => setDocumentEdits(rows => rows.map((row, i) => i === index ? { ...row, platform: event.target.value, source: "accountant correction" } : row))} /></label>
-                <label className="text-xs">Issued<input className="fv-input mt-1 w-full" type="number" min="0" step="1" value={document.issued} onChange={event => setDocumentEdits(rows => rows.map((row, i) => i === index ? { ...row, issued: Number(event.target.value), source: "accountant correction" } : row))} /></label>
-                <label className="text-xs">Cancelled<input className="fv-input mt-1 w-full" type="number" min="0" step="1" value={document.cancelled} onChange={event => setDocumentEdits(rows => rows.map((row, i) => i === index ? { ...row, cancelled: Number(event.target.value), source: "accountant correction" } : row))} /></label>
-              </div>)}
-              <div className="mt-3 flex flex-wrap gap-2"><input className="fv-input" aria-label="Additional marketplace for document summary" placeholder="Additional marketplace" value={newDocumentPlatform} onChange={event => setNewDocumentPlatform(event.target.value)} /><button type="button" className="fv-button-secondary" onClick={() => { if (newDocumentPlatform.trim()) { setDocumentEdits(rows => [...rows, { platform: newDocumentPlatform.trim(), issued: 0, cancelled: 0, source: "accountant correction" }]); setNewDocumentPlatform(""); } }}>Add document line</button></div>
-              <button type="button" className="fv-button-secondary mt-3" disabled={savingReview} onClick={() => void saveReview(pack.sales, annualTurnoverAbove5Cr, documentEdits)}>{savingReview ? "Checking…" : "Save document summary"}</button>
-            </div>
+            {rows.length > rowLimit && <button type="button" className="fv-button-secondary" onClick={() => setRowLimit(limit => limit + 200)}>Show next {Math.min(200, rows.length - rowLimit)} rows ({rowLimit} of {rows.length} shown)</button>}
             <div>
               <div className="mb-2 text-sm font-semibold">Marketplace</div>
               <Choice size="sm" value={platform} options={PLATFORMS} onChange={value => { setPlatform(value); void run(files, value); }} />
             </div>
-            <div>
-              <div className="text-sm font-semibold">Tally Sales voucher working copy</div>
-              <p className="mt-1 text-xs text-muted-foreground">Uses existing Sales, Marketplace Customers and Output GST ledgers in your test Tally company. For B2B, name each buyer’s existing ledger. Cancelled documents are left out. Returns, adjustments and unresolved sales stop this export.</p>
-              {b2bGstins.map(gstin => <label key={gstin} className="mt-2 block text-xs">Buyer {gstin}<input className="fv-input mt-1 w-full" value={partyLedgers[gstin] ?? ""} onChange={event => setPartyLedgers(current => ({ ...current, [gstin]: event.target.value }))} placeholder="Existing Tally party ledger" /></label>)}
-              <button type="button" className="fv-button-secondary mt-3" onClick={tallyXml}>Download Sales XML for test import</button>
-              <p className="mt-2 text-xs text-muted-foreground">Sales and CGST/SGST/IGST/Cess lines are balanced. Import into a test Tally company and check Sales Register and GST reports. Settlement and fee vouchers are not included. Potential risk — needs CA review.</p>
-            </div>
-          </MoreOptions>
-        </div>
+          </MoreOptions>}
+          </TabsContent>
+        </Tabs>
       )}
     </JobShell>
   );
@@ -421,9 +464,65 @@ export default function EcommerceGstPage() {
 
 function Mini({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl bg-muted/50 px-3 py-2">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="font-semibold">{value}</div>
+    <div className="inline-flex items-baseline gap-1.5">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <span className="text-sm font-medium tabular-nums">{value}</span>
     </div>
   );
+}
+
+function GstSectionSummary({ pack, section, comparison }: { pack: Pack; section: Exclude<(typeof TABS)[number], "Documents">; comparison: TcsComparison | null }) {
+  if (section === "Credit notes") return <ReportTable columns={["Credit note", "Original invoice", "Date", "Source taxable", "Source GST", "Source total", "Treatment"]} rows={(pack.tabs.creditNotes ?? []).map(note => [note.invoiceNumber ?? "Missing", note.originalInvoiceNumber ?? "Needs linking", note.invoiceDate ?? "Missing", inr(note.taxableValue), inr(note.cgst + note.sgst + note.igst), inr(note.grossAmount), note.issues.length ? "Needs review" : "Deducted from net totals"])} empty="No credit notes were detected in these reports." />;
+  if (section === "HSN") return <ReportTable columns={["Supply", "HSN", "GST rate", "Sales rows", "Taxable value"]} rows={pack.tabs.hsn.map(row => [row.supply, row.hsn, row.gstRate == null ? "Needs review" : `${row.gstRate}%`, row.count, inr(row.taxableValue)])} empty="No HSN summary is available." />;
+  if (section === "TCS") {
+    if (comparison) return <ReportTable columns={["State", "Marketplace TCS", "Uploaded portal TCS", "Difference"]} rows={comparison.rows.map(row => [row.state, inr(row.uploaded), inr(row.portal), inr(row.difference)])} empty="No TCS amounts were found." />;
+    const byState = new Map<string, number>();
+    pack.tabs.tcs.forEach(sale => { const state = sale.placeOfSupply || "Not provided"; byState.set(state, (byState.get(state) ?? 0) + sale.tcsAmount); });
+    return <ReportTable columns={["Place of supply", "TCS from reports"]} rows={[...byState].map(([state, amount]) => [state, inr(amount)])} empty="No TCS amounts were found in these reports." />;
+  }
+  const sales = section === "B2B" ? pack.tabs.b2b : section === "B2C" ? pack.tabs.b2c : pack.tabs.table14;
+  const groups = new Map<string, { buyer: string; state: string; rate: number | null; count: number; taxable: number; tax: number; gross: number }>();
+  sales.forEach(sale => {
+    const state = sale.placeOfSupply || "Not provided";
+    const buyer = section === "B2B" ? sale.gstin || "Not provided" : "";
+    const key = `${buyer}:${state}:${sale.gstRate}`;
+    const row = groups.get(key) ?? { buyer, state, rate: sale.gstRate, count: 0, taxable: 0, tax: 0, gross: 0 };
+    row.count++; row.taxable += sale.taxableValue; row.tax += sale.cgst + sale.sgst + sale.igst + sale.cess; row.gross += sale.grossAmount;
+    groups.set(key, row);
+  });
+  return <div className="space-y-3">
+    {(pack.tabs.creditNotes?.length ?? 0) > 0 && <p className="text-xs text-muted-foreground">Invoice sections show original sales. Linked credit notes are shown separately and deducted from the summary and HSN totals.</p>}
+    {section === "Table 14" && <p className="text-xs text-muted-foreground">Draft operator-related entries. Operator GSTIN and supply classification still need CA review.</p>}
+    <ReportTable columns={[...(section === "B2B" ? ["Buyer GSTIN"] : []), "Place of supply", "GST rate", "Sales rows", "Taxable value", "GST + cess", "Invoice total"]} rows={[...groups.values()].map(row => [...(section === "B2B" ? [row.buyer] : []), row.state, row.rate == null ? "Needs review" : `${row.rate}%`, row.count, inr(row.taxable), inr(row.tax), inr(row.gross)])} empty={`No ${section} sales are included in these reports.`} />
+  </div>;
+}
+
+function ReportTable({ columns, rows, empty }: { columns: string[]; rows: Array<Array<string | number>>; empty: string }) {
+  if (!rows.length) return <p className="rounded-xl bg-muted/40 p-4 text-sm text-muted-foreground">{empty}</p>;
+  return <div className="max-h-96 overflow-auto rounded-xl border border-border">
+    <table className="w-full text-left text-xs tabular-nums">
+      <thead className="sticky top-0 bg-muted text-muted-foreground"><tr>{columns.map(column => <th key={column} className="whitespace-nowrap px-3 py-3">{column}</th>)}</tr></thead>
+      <tbody>{rows.map((row, index) => <tr key={index} className="border-t border-border">{row.map((cell, col) => <td key={col} className="whitespace-nowrap px-3 py-3">{cell}</td>)}</tr>)}</tbody>
+    </table>
+  </div>;
+}
+
+type DocumentSummaryRows = NonNullable<Pack["documents"]>;
+function DocumentSummaryEditor({ value, onChange, onSave, busy }: { value: DocumentSummaryRows; onChange: (rows: DocumentSummaryRows) => void; onSave: () => void; busy: boolean }) {
+  const [newPlatform, setNewPlatform] = useState("");
+  const change = (index: number, patch: Partial<DocumentSummaryRows[number]>) => onChange(value.map((row, i) => i === index ? { ...row, ...patch, source: "accountant correction" } : row));
+  return <div>
+    <h3 className="text-sm font-semibold">Documents issued</h3>
+    <p className="mt-1 text-xs text-muted-foreground">Counts come from distinct invoice numbers. Correct them after checking the source document register.</p>
+    {value.map((document, index) => <div key={index} className="mt-3 grid gap-2 sm:grid-cols-[1fr_90px_90px]">
+      <label className="text-xs">Marketplace<input className="fv-input mt-1 w-full" value={document.platform} onChange={event => change(index, { platform: event.target.value })} /></label>
+      <label className="text-xs">Issued<input className="fv-input mt-1 w-full" type="number" min="0" step="1" value={document.issued} onChange={event => change(index, { issued: Number(event.target.value) })} /></label>
+      <label className="text-xs">Cancelled<input className="fv-input mt-1 w-full" type="number" min="0" step="1" value={document.cancelled} onChange={event => change(index, { cancelled: Number(event.target.value) })} /></label>
+    </div>)}
+    <MoreOptions label="Add document line">
+      <label className="text-xs">Additional marketplace<input className="fv-input mt-1 w-full" value={newPlatform} onChange={event => setNewPlatform(event.target.value)} /></label>
+      <button type="button" className="fv-button-secondary" disabled={!newPlatform.trim()} onClick={() => { onChange([...value, { platform: newPlatform.trim(), issued: 0, cancelled: 0, source: "accountant correction" }]); setNewPlatform(""); }}>Add document line</button>
+    </MoreOptions>
+    <button type="button" className="fv-button-primary mt-4" disabled={busy} onClick={onSave}>{busy ? "Checking…" : "Save document summary"}</button>
+  </div>;
 }

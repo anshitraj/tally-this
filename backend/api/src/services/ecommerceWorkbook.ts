@@ -1,6 +1,7 @@
 import ExcelJS from "exceljs";
 import { z } from "zod";
 import { marketplaceDocumentKind } from "./ecommerceGst";
+import { sumMoney } from "./money";
 
 const saleSchema = z.object({
   platform: z.string().max(80),
@@ -21,6 +22,7 @@ const saleSchema = z.object({
   hsn: z.string().max(30).nullable(),
   gstRate: z.number().finite().nullable(),
   issues: z.array(z.string().max(300)).max(20),
+  originalInvoiceNumber: z.string().max(120).nullable().optional(),
 });
 
 export const ecommerceWorkbookSchema = z.object({
@@ -34,7 +36,7 @@ export type EcommerceWorkbookInput = z.infer<typeof ecommerceWorkbookSchema>;
 
 const MONEY = '#,##0.00;[Red](#,##0.00)';
 const sum = (sales: EcommerceWorkbookInput["sales"], key: "taxableValue" | "cgst" | "sgst" | "igst" | "cess" | "grossAmount" | "tcsAmount") =>
-  Math.round(sales.reduce((total, sale) => total + sale[key], 0) * 100) / 100;
+  sumMoney(sales.map(sale => sale[key]));
 
 function styleHeader(sheet: ExcelJS.Worksheet) {
   sheet.views = [{ state: "frozen", ySplit: 1 }];
@@ -45,7 +47,7 @@ function styleHeader(sheet: ExcelJS.Worksheet) {
 
 /** Working summary of uploaded marketplace data; it does not assert GST portal agreement. */
 export function buildEcommerceWorkbook(input: EcommerceWorkbookInput) {
-  const activeSales = input.sales.filter(sale => marketplaceDocumentKind(sale) === "sale");
+  const activeSales = input.sales.filter(sale => marketplaceDocumentKind(sale) === "sale" || marketplaceDocumentKind(sale) === "credit_note" && sale.issues.length === 0).map(sale => marketplaceDocumentKind(sale) === "credit_note" ? { ...sale, taxableValue: -Math.abs(sale.taxableValue), cgst: -Math.abs(sale.cgst), sgst: -Math.abs(sale.sgst), igst: -Math.abs(sale.igst), cess: -Math.abs(sale.cess), grossAmount: -Math.abs(sale.grossAmount) } : sale);
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "TallyThis";
   const summary = workbook.addWorksheet("Summary");
@@ -57,11 +59,11 @@ export function buildEcommerceWorkbook(input: EcommerceWorkbookInput) {
     ["Client", input.clientName],
     ["Uploaded sales rows", input.sales.length],
     ["Rows needing review", input.sales.filter(sale => sale.issues.length > 0).length],
-    ["Active sales taxable value", sum(activeSales, "taxableValue")],
+    ["Net taxable value after linked credit notes", sum(activeSales, "taxableValue")],
     ["CGST", sum(activeSales, "cgst")],
     ["SGST", sum(activeSales, "sgst")],
     ["IGST", sum(activeSales, "igst")],
-    ["Active sales gross amount", sum(activeSales, "grossAmount")],
+    ["Net gross amount after linked credit notes", sum(activeSales, "grossAmount")],
     ["TCS from uploaded reports", sum(input.sales, "tcsAmount")],
     ["Cess on active sales", sum(activeSales, "cess")],
     ["Rows excluded from sales totals", input.sales.length - activeSales.length],
@@ -92,6 +94,7 @@ export function buildEcommerceWorkbook(input: EcommerceWorkbookInput) {
     { header: "Cess", key: "cess", width: 15 },
     { header: "Document type", key: "documentType", width: 20 },
     { header: "Sales treatment", key: "salesTreatment", width: 30 },
+    { header: "Original invoice", key: "originalInvoice", width: 24 },
   ];
   styleHeader(sales);
   for (const sale of input.sales) {
@@ -101,7 +104,7 @@ export function buildEcommerceWorkbook(input: EcommerceWorkbookInput) {
       gstin: sale.gstin ?? "", place: sale.placeOfSupply ?? "", hsn: sale.hsn ?? "", rate: sale.gstRate,
       taxable: sale.taxableValue, cgst: sale.cgst, sgst: sale.sgst, igst: sale.igst,
       gross: sale.grossAmount, tcs: sale.tcsAmount, cess: sale.cess,
-      documentType: sale.transactionType, salesTreatment: marketplaceDocumentKind(sale) === "sale" ? "Sales draft" : "Excluded from sales totals",
+      documentType: sale.transactionType, originalInvoice: sale.originalInvoiceNumber ?? "", salesTreatment: marketplaceDocumentKind(sale) === "sale" ? "Sales draft" : marketplaceDocumentKind(sale) === "credit_note" && sale.issues.length === 0 ? "Credit note deducted from totals" : "Excluded from sales totals",
       review: sale.issues.join("; ") || (marketplaceDocumentKind(sale) === "cancelled" ? "Cancelled — excluded" : "Ready for review"),
     });
     if (date instanceof Date) row.getCell(4).numFmt = "dd mmm yyyy";
@@ -109,23 +112,30 @@ export function buildEcommerceWorkbook(input: EcommerceWorkbookInput) {
     row.getCell(16).numFmt = MONEY;
     if (sale.issues.length > 0) row.getCell(15).font = { color: { argb: "FF9A5B00" }, bold: true };
   }
-  sales.autoFilter = { from: "A1", to: `R${input.sales.length + 1}` };
+  sales.autoFilter = { from: "A1", to: `S${input.sales.length + 1}` };
+  const creditNotes = workbook.addWorksheet("Credit notes");
+  creditNotes.columns = [{ header: "Credit note", width: 24 }, { header: "Original invoice", width: 24 }, { header: "Date", width: 17 }, { header: "Source taxable", width: 18 }, { header: "Source GST", width: 18 }, { header: "Source cess", width: 18 }, { header: "Source total", width: 18 }, { header: "Treatment", width: 48 }];
+  styleHeader(creditNotes);
+  for (const note of input.sales.filter(sale => marketplaceDocumentKind(sale) === "credit_note")) {
+    const row = creditNotes.addRow([note.invoiceNumber, note.originalInvoiceNumber ?? "", note.invoiceDate, note.taxableValue, sumMoney([note.cgst, note.sgst, note.igst]), note.cess, note.grossAmount, note.issues.length ? note.issues.join("; ") : "Deducted from net totals"]);
+    for (let col = 4; col <= 7; col += 1) row.getCell(col).numFmt = MONEY;
+  }
 
   const byState = new Map<string, EcommerceWorkbookInput["sales"]>();
   const byHsn = new Map<string, EcommerceWorkbookInput["sales"]>();
   for (const sale of input.sales) {
     const state = sale.placeOfSupply || "Not provided";
     byState.set(state, [...(byState.get(state) ?? []), sale]);
-    if (marketplaceDocumentKind(sale) === "sale") {
-      const hsn = sale.hsn || "Not provided";
-      byHsn.set(hsn, [...(byHsn.get(hsn) ?? []), sale]);
-    }
+  }
+  for (const sale of activeSales) {
+    const hsn = sale.hsn || "Not provided";
+    byHsn.set(hsn, [...(byHsn.get(hsn) ?? []), sale]);
   }
   const tcs = workbook.addWorksheet("TCS by state");
   tcs.columns = [{ header: "Place of supply", width: 25 }, { header: "Rows", width: 12 }, { header: "Active sales taxable", width: 23 }, { header: "TCS in uploads", width: 20 }];
   styleHeader(tcs);
   for (const [state, rows] of [...byState].sort(([a], [b]) => a.localeCompare(b))) {
-    const row = tcs.addRow([state, rows.length, sum(rows.filter(sale => marketplaceDocumentKind(sale) === "sale"), "taxableValue"), sum(rows, "tcsAmount")]);
+    const row = tcs.addRow([state, rows.length, sum(activeSales.filter(sale => (sale.placeOfSupply || "Not provided") === state), "taxableValue"), sum(rows, "tcsAmount")]);
     row.getCell(3).numFmt = MONEY;
     row.getCell(4).numFmt = MONEY;
   }

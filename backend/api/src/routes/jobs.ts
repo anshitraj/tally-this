@@ -5,6 +5,8 @@
  * Results are read back only for that run and company.
  */
 import { Router, type IRouter, type Request } from "express";
+import { mergeLedgerPreferences } from "../services/ledgerPreferences";
+import { UnreadableFileError } from "../services/fileDetect";
 import multer from "multer";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
@@ -96,10 +98,9 @@ async function rememberedMappings(companyId: number, clientId: string): Promise<
         AND (COALESCE(wr.metadata_json->>'clientId','') = '' OR wr.metadata_json->>'clientId' = ${String(companyId)})
         AND (${clientId} = '' OR wr.metadata_json->>'clientId' = ${clientId})
       ORDER BY ra.created_at DESC
-      LIMIT 1
+      LIMIT 200
     `);
-    const row = result.rows[0] as { json_data?: { mappings?: LedgerMapping[] } } | undefined;
-    return row?.json_data?.mappings ?? [];
+    return mergeLedgerPreferences(result.rows.map(row => (row as { json_data?: { mappings?: unknown } }).json_data?.mappings));
   } catch {
     return [];
   }
@@ -382,7 +383,7 @@ router.post("/jobs/ledger-mappings", requirePermission("uploads.create"), async 
     res.json({ ok: true, skipped: true, mappings: [] });
     return;
   }
-  const mappings = Array.isArray(req.body?.mappings) ? req.body.mappings : [];
+  const mappings = mergeLedgerPreferences([req.body?.mappings, await rememberedMappings(companyId, String(Number(req.body?.clientId) || ""))]);
   const runId = await rememberRun({
     companyId,
     userId: req.auth?.userId,
@@ -659,9 +660,15 @@ router.post("/jobs/ecommerce/normalize", requirePermission("uploads.create"), up
     return;
   }
   const files = filesOf(req, "files");
-  const inputs = files.length > 0
-    ? files.map(file => ({ fileName: file.originalname, text: sheetToCsvText(file) }))
-    : [{ fileName: textBody(req.body?.fileName) || "marketplace.csv", text: textBody(req.body?.text) }];
+  let inputs: Array<{ fileName: string; text: string }>;
+  try {
+    inputs = files.length > 0
+      ? files.map(file => ({ fileName: file.originalname, text: sheetToCsvText(file) }))
+      : [{ fileName: textBody(req.body?.fileName) || "marketplace.csv", text: textBody(req.body?.text) }];
+  } catch (error) {
+    res.status(422).json({ ok: false, message: error instanceof UnreadableFileError ? error.message : "The marketplace workbook could not be read." });
+    return;
+  }
   const packs: EcommercePack[] = inputs.map(input => {
     const platform = (chosen && chosen !== "auto" ? chosen : detectMarketplace(input.fileName, input.text)) as MarketplacePlatform;
     return normalizeMarketplaceCsv(input.text, platform, input.fileName);
@@ -776,7 +783,9 @@ router.post("/jobs/ecommerce/excel", requirePermission("reports.export"), async 
   if (companyId == null) return;
   const gate = await privacyGate(req, res);
   if (!gate) return;
-  const parsed = ecommerceWorkbookSchema.safeParse(req.body);
+  const reviewed = reviewMarketplaceSales(req.body?.sales, "marketplace");
+  if (!reviewed.ok) { res.status(422).json({ ok: false, message: "Marketplace values are invalid.", errors: reviewed.errors }); return; }
+  const parsed = ecommerceWorkbookSchema.safeParse({ ...req.body, sales: reviewed.pack.sales });
   if (!parsed.success) {
     res.status(422).json({ ok: false, message: "The Excel summary could not be created. Check the marketplace data and try again." });
     return;

@@ -5,7 +5,7 @@ Bank recognition, transaction extraction and Tally import are separate capabilit
 | Layer | Current evidence | Meaning |
 | --- | --- | --- |
 | Identity | 61 bank name patterns, some verified IFSC prefixes, and a manual bank choice. The directory includes the main RBI-listed public/private banks and selected small finance, payments, co-operative and foreign banks. | The bank can be named when the header or filename contains a known signal. A manual choice is needed for ambiguous or image-only headers. |
-| Logo | Seven local bank logos; other banks show their exact name with a neutral bank icon. | A neutral icon avoids inventing or fetching third-party branding. |
+| Logo | Eight local bank logos, including DBS; other banks show their exact name with a neutral bank icon. | A neutral icon avoids inventing or fetching third-party branding. |
 | CSV/Excel parsing | Shared deterministic column parser; synthetic HDFC fixture and parser tests. | Coverage depends on each bank's actual column names, date and amount conventions. Recognition does not certify a file layout. |
 | Text PDF parsing | Synthetic Kotak and IndusInd layouts, including a password and balance-break case. | Position-based extraction works for the tested synthetic layouts only. Scans need the optional reader and extra review. |
 | Financial proof | Running balances, printed closing balance and row sequence are checked when present. Unreadable dated rows and invalid dates stop CSV/Excel export. | A missing balance chain requires a person to check totals. A closing or row-sequence conflict stops the Tally download. |

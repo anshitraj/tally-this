@@ -9,3 +9,4 @@ Retrieved 8–9 October 2026 from the banks' official website headers. Displayed
 - Kotak Mahindra Bank: https://www.kotak.bank.in/content/dam/Kotak/svg-icons/navigation/kmbl-logo.svg
 - Punjab National Bank: https://pnb.bank.in/images/logo.png
 - IDFC FIRST Bank: https://www.idfcfirst.bank.in/content/dam/idfcfirstbank/images/n1/IDFC-logo-website.svg
+- DBS Bank India (retrieved 12 October 2026): https://www.dbs.com/in/iwov-resources/flp/splitter/images/dbs_logo.svg

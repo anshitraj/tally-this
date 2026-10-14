@@ -4,6 +4,8 @@
  */
 
 import { normalizeAmount, normalizeDate, scanCsvTable } from "./bankStatement";
+import { paise, sumMoney } from "./money";
+import { checkCreditNoteLinks, isCreditNote } from "./marketplaceCreditNotes";
 
 export type MarketplacePlatform = "amazon" | "flipkart" | "meesho" | "myntra" | "jiomart" | "glowroad" | "shop101" | "paytm" | "snapdeal" | "ajio" | "citymall" | "limeroad" | "generic";
 
@@ -30,6 +32,7 @@ export interface MarketplaceSale {
   sourceFile: string;
   sourceRow: number;
   issues: string[];
+  originalInvoiceNumber?: string | null;
 }
 
 export interface EcommercePack {
@@ -51,6 +54,7 @@ export interface EcommercePack {
     excludedSalesRows: number;
   };
   tabs: {
+    creditNotes: MarketplaceSale[];
     b2b: MarketplaceSale[];
     b2c: MarketplaceSale[];
     hsn: Array<{ hsn: string; gstRate: number | null; taxableValue: number; count: number; supply: "B2B" | "B2C" }>;
@@ -65,17 +69,21 @@ export interface EcommercePack {
 
 function pick(row: Record<string, string>, aliases: string[]) {
   const entries = Object.entries(row);
+  const keyOf = (key: string) => key.toLowerCase().replace(/[^a-z0-9]/g, "");
   for (const alias of aliases) {
-    const found = entries.find(([key]) => key.toLowerCase().replace(/[_-]+/g, " ").includes(alias));
+    const wanted = keyOf(alias);
+    const found = entries.find(([key]) => keyOf(key) === wanted || keyOf(key) === `${wanted}amount`);
     if (found && found[1].trim()) return found[1].trim();
   }
   return "";
 }
 
 /** Cancellations and unlinked returns/adjustments must not be treated as active sales. */
-export function marketplaceDocumentKind(sale: { transactionType: string; refundAmount: number }) {
+export function marketplaceDocumentKind(sale: { transactionType: string; refundAmount: number; taxableValue?: number; cgst?: number; sgst?: number; igst?: number; cess?: number; grossAmount?: number }) {
   if (/cancel|\bvoid\b/i.test(sale.transactionType)) return "cancelled" as const;
-  if (sale.refundAmount > 0 || /refund|return|credit[\s_-]*note|adjustment|settlement|\bfee\b/i.test(sale.transactionType)) return "adjustment" as const;
+  if (isCreditNote(sale)) return "credit_note" as const;
+  if ([sale.taxableValue, sale.cgst, sale.sgst, sale.igst, sale.cess, sale.grossAmount].some(value => value != null && value < 0)) return "adjustment" as const;
+  if (sale.refundAmount !== 0 || /refund|return|adjustment|settlement|\bfee\b/i.test(sale.transactionType)) return "adjustment" as const;
   return "sale" as const;
 }
 
@@ -84,6 +92,14 @@ export function normalizeMarketplaceCsv(text: string, platform: MarketplacePlatf
   if (!scanned || scanned.rows.length === 0) {
     return emptyPack(platform, "No marketplace rows were detected. Check that the file has order, invoice, and tax columns.");
   }
+  const moneyHeaders = /(?:taxable|cgst|sgst|igst|cess|gross|refund|commission|fee|tcs|invoice.?value|invoice.?amount|item.?price|item.?total)/i;
+  for (const row of scanned.rows) {
+    for (const [key, value] of Object.entries(row)) {
+      if (moneyHeaders.test(key) && value.trim() && !/^[-—]$/.test(value.trim()) && normalizeAmount(value) == null) {
+        return emptyPack(platform, `${fileName}, row ${row._rowNumber}: ${key} is unreadable or has unsupported decimal precision. No rows from this file were exported.`);
+      }
+    }
+  }
   const sales = marketplaceRowsToSales(scanned.rows, platform, fileName);
   if (sales.length === 0) return emptyPack(platform, "Rows were read, but no sales amounts were found.");
   return buildEcommercePack(sales, platform);
@@ -91,6 +107,8 @@ export function normalizeMarketplaceCsv(text: string, platform: MarketplacePlatf
 
 /** Combines several marketplace reports into one review pack. */
 export function mergeEcommercePacks(packs: EcommercePack[]): EcommercePack {
+  const failed = packs.find(pack => pack.status === "failed");
+  if (failed) return emptyPack(failed.platform, failed.message);
   const sales = packs.flatMap(pack => pack.sales);
   const platforms = [...new Set(packs.filter(pack => pack.sales.length > 0).map(pack => pack.platform))];
   const platform = platforms.length === 1 ? platforms[0] : platforms.join(" + ") || "generic";
@@ -101,12 +119,12 @@ export function mergeEcommercePacks(packs: EcommercePack[]): EcommercePack {
 function marketplaceRowsToSales(rows: Record<string, string>[], platform: MarketplacePlatform, fileName: string): MarketplaceSale[] {
   return rows.map((row, index) => {
     const gstin = pick(row, ["gstin", "buyer gstin", "customer gstin"]) || null;
-    const taxable = Math.abs(normalizeAmount(pick(row, ["taxable value", "taxable amount", "item taxable", "net taxable", "taxable", "item price"])) ?? 0);
-    const cgst = Math.abs(normalizeAmount(pick(row, ["cgst"])) ?? 0);
-    const sgst = Math.abs(normalizeAmount(pick(row, ["sgst"])) ?? 0);
-    const igst = Math.abs(normalizeAmount(pick(row, ["igst"])) ?? 0);
-    const gross = Math.abs(normalizeAmount(pick(row, ["gross amount", "invoice amount", "invoice value", "order amount", "item total", "gross"])) ?? round2(taxable + cgst + sgst + igst));
-    const refund = Math.abs(normalizeAmount(pick(row, ["refund"])) ?? 0);
+    const taxable = normalizeAmount(pick(row, ["taxable value", "taxable amount", "item taxable", "net taxable", "taxable", "item price"])) ?? 0;
+    const cgst = normalizeAmount(pick(row, ["cgst"])) ?? 0;
+    const sgst = normalizeAmount(pick(row, ["sgst"])) ?? 0;
+    const igst = normalizeAmount(pick(row, ["igst"])) ?? 0;
+    const gross = normalizeAmount(pick(row, ["gross amount", "invoice amount", "invoice value", "order amount", "item total", "gross"])) ?? sumMoney([taxable, cgst, sgst, igst, normalizeAmount(pick(row, ["cess"])) ?? 0]);
+    const refund = normalizeAmount(pick(row, ["refund"])) ?? 0;
     const hsn = pick(row, ["hsn"]) || null;
     const rateRaw = normalizeAmount(pick(row, ["gst rate", "tax rate", "rate"]));
     const negativeSourceAmount = ["taxable value", "taxable amount", "taxable", "item price", "gross amount", "gross", "invoice amount", "invoice value", "cgst", "sgst", "igst"].some(alias => (normalizeAmount(pick(row, [alias])) ?? 0) < 0);
@@ -136,10 +154,10 @@ function marketplaceRowsToSales(rows: Record<string, string>[], platform: Market
       cgst,
       sgst,
       igst,
-      cess: Math.abs(normalizeAmount(pick(row, ["cess"])) ?? 0),
+      cess: normalizeAmount(pick(row, ["cess"])) ?? 0,
       grossAmount: gross,
       refundAmount: refund,
-      marketplaceFees: Math.abs(normalizeAmount(pick(row, ["marketplace fee", "selling fee", "commission", "fee"])) ?? 0),
+      marketplaceFees: normalizeAmount(pick(row, ["marketplace fee", "selling fee", "commission", "fee"])) ?? 0,
       tcsAmount: normalizeAmount(pick(row, ["tcs"])) ?? 0,
       hsn,
       gstRate: rateRaw,
@@ -147,6 +165,7 @@ function marketplaceRowsToSales(rows: Record<string, string>[], platform: Market
       sourceFile: fileName,
       sourceRow: Number(row._rowNumber) || index + 2,
       issues,
+      originalInvoiceNumber: pick(row, ["original invoice number", "original invoice", "reference invoice number"]) || null,
     } satisfies MarketplaceSale;
   }).filter(sale => sale.invoiceNumber || sale.orderId || sale.grossAmount > 0);
 }
@@ -167,39 +186,48 @@ export function buildEcommercePack(sales: MarketplaceSale[], platform: string, a
     if (sale.grossAmount === 0 && sale.refundAmount === 0 && !/cancel/i.test(sale.transactionType)) sale.issues.push("Invoice total is zero. Potential risk — needs CA review.");
     const tax = sale.cgst + sale.sgst + sale.igst + sale.cess;
     if (kind === "adjustment") sale.issues.push("Return or adjustment needs supporting credit-note or settlement details. Potential risk — needs CA review.");
-    else if (kind === "sale" && Math.round((sale.taxableValue + tax) * 100) !== Math.round(sale.grossAmount * 100)) sale.issues.push("Invoice value and tax do not add up. Potential risk — needs CA review.");
+    else if ((kind === "sale" || kind === "credit_note") && sumMoney([sale.taxableValue, sale.cgst, sale.sgst, sale.igst, sale.cess]) !== sale.grossAmount) sale.issues.push("Invoice value and tax do not add up. Potential risk — needs CA review.");
+    if (kind === "sale" && [sale.taxableValue, sale.cgst, sale.sgst, sale.igst, sale.cess, sale.grossAmount].some(value => value < 0)) sale.issues.push("Negative sale amounts need explicit credit-note or adjustment treatment. Potential risk — needs CA review.");
     const gst = sale.cgst + sale.sgst + sale.igst;
-    if (kind === "sale" && sale.gstRate != null && sale.taxableValue > 0 && Math.abs(Math.round(gst * 100) - Math.round(sale.taxableValue * sale.gstRate)) > 2) sale.issues.push("GST rate and tax amount do not agree. Potential risk — needs CA review.");
+    if ((kind === "sale" || kind === "credit_note") && sale.gstRate != null && sale.taxableValue !== 0 && Math.abs(Math.round(Math.abs(gst) * 100) - Math.round(Math.abs(sale.taxableValue) * sale.gstRate)) > 2) sale.issues.push("GST rate and tax amount do not agree. Potential risk — needs CA review.");
     const key = `${sale.invoiceNumber ?? ""}:${sale.orderId ?? ""}:${sale.grossAmount}`;
     if (sale.invoiceNumber && seen.has(key)) sale.issues.push("Possible duplicate invoice. Potential risk — needs CA review.");
     seen.add(key);
   });
 
+  checkCreditNoteLinks(reviewed);
+  const creditNotes = reviewed.filter(sale => marketplaceDocumentKind(sale) === "credit_note");
+  const linkedNotes = creditNotes.filter(sale => sale.issues.length === 0);
+  const net = (field: "taxableValue" | "cgst" | "sgst" | "igst" | "cess" | "grossAmount") => sumMoney([
+    ...reviewed.filter(sale => marketplaceDocumentKind(sale) === "sale").map(sale => sale[field]),
+    ...linkedNotes.map(sale => -Math.abs(sale[field])),
+  ]);
+
   const eligible = reviewed.filter(sale => marketplaceDocumentKind(sale) === "sale");
   const b2b = eligible.filter(sale => Boolean(sale.gstin));
   const b2c = eligible.filter(sale => !sale.gstin);
   const hsnMap = new Map<string, { hsn: string; gstRate: number | null; taxableValue: number; count: number; supply: "B2B" | "B2C" }>();
-  eligible.forEach(sale => {
+  [...eligible, ...linkedNotes].forEach(sale => {
     const supply = sale.gstin ? "B2B" : "B2C";
     const key = `${supply}:${sale.hsn ?? "missing"}:${sale.gstRate ?? "missing"}`;
     const current = hsnMap.get(key) ?? { hsn: sale.hsn ?? "missing", gstRate: sale.gstRate, taxableValue: 0, count: 0, supply };
-    current.taxableValue = round2(current.taxableValue + sale.taxableValue);
+    current.taxableValue = sumMoney([current.taxableValue, marketplaceDocumentKind(sale) === "credit_note" ? -Math.abs(sale.taxableValue) : sale.taxableValue]);
     current.count += 1;
     hsnMap.set(key, current);
   });
   const errors = reviewed.filter(sale => sale.issues.length > 0);
   const summary = {
     documents: reviewed.length,
-    taxableValue: round2(eligible.reduce((sum, sale) => sum + sale.taxableValue, 0)),
-    gst: round2(eligible.reduce((sum, sale) => sum + sale.cgst + sale.sgst + sale.igst, 0)),
-    cess: round2(eligible.reduce((sum, sale) => sum + sale.cess, 0)),
-    gross: round2(eligible.reduce((sum, sale) => sum + sale.grossAmount, 0)),
-    refunds: round2(reviewed.reduce((sum, sale) => sum + sale.refundAmount, 0)),
-    tcs: round2(reviewed.reduce((sum, sale) => sum + sale.tcsAmount, 0)),
+    taxableValue: net("taxableValue"),
+    gst: sumMoney([net("cgst"), net("sgst"), net("igst")]),
+    cess: net("cess"),
+    gross: net("grossAmount"),
+    refunds: sumMoney(reviewed.map(sale => sale.refundAmount)),
+    tcs: sumMoney(reviewed.map(sale => sale.tcsAmount)),
     b2b: b2b.length,
     b2c: b2c.length,
     errors: errors.length,
-    excludedSalesRows: reviewed.length - eligible.length,
+    excludedSalesRows: reviewed.length - eligible.length - linkedNotes.length,
   };
 
   return {
@@ -211,6 +239,7 @@ export function buildEcommercePack(sales: MarketplaceSale[], platform: string, a
     sales: reviewed,
     summary,
     tabs: {
+      creditNotes,
       b2b,
       b2c,
       hsn: [...hsnMap.values()],
@@ -227,13 +256,14 @@ export function buildGstDraftJson(pack: EcommercePack) {
   if (pack.sales.length === 0) errors.push("No sales to export.");
   pack.sales.forEach(sale => {
     if (!sale.invoiceDate && marketplaceDocumentKind(sale) === "sale") errors.push(`Row ${sale.sourceRow}: invoice date is missing.`);
-    if (sale.taxableValue < 0) errors.push(`Row ${sale.sourceRow}: taxable value is negative.`);
+    if (sale.taxableValue < 0 && marketplaceDocumentKind(sale) === "sale") errors.push(`Row ${sale.sourceRow}: taxable value is negative.`);
   });
   if (errors.length > 0) return { ok: false as const, errors };
   const json = {
     schema: "finverify.gstr1.draft.v1",
     note: "Draft JSON for CA review. This file is not validated by the GST portal.",
     platform: pack.platform,
+    creditNotes: (pack.tabs.creditNotes ?? []).map(sale => ({ documentNumber: sale.invoiceNumber, date: sale.invoiceDate, originalInvoiceNumber: sale.originalInvoiceNumber, buyerGSTIN: sale.gstin, taxableValue: sale.taxableValue, cgst: sale.cgst, sgst: sale.sgst, igst: sale.igst, cess: sale.cess, total: sale.grossAmount, issues: sale.issues })),
     b2b: pack.tabs.b2b.map(sale => ({
       ctin: sale.gstin,
       inv: [{ inum: sale.invoiceNumber, idt: sale.invoiceDate, val: sale.grossAmount, pos: sale.placeOfSupply, itms: [{ hsn: sale.hsn, txval: sale.taxableValue, camt: sale.cgst, samt: sale.sgst, iamt: sale.igst, csamt: sale.cess, rt: sale.gstRate }] }],
@@ -252,7 +282,7 @@ export function buildGstDraftJson(pack: EcommercePack) {
     tcs: pack.tabs.tcs.map(sale => ({ inum: sale.invoiceNumber, tcs: sale.tcsAmount })),
     table14: pack.tabs.table14.map(sale => ({ inum: sale.invoiceNumber, note: "Potential risk — needs CA review." })),
     documentSummary: pack.documents ?? [],
-    excludedFromSales: pack.sales.filter(sale => marketplaceDocumentKind(sale) !== "sale").map(sale => ({ invoiceNumber: sale.invoiceNumber, documentType: sale.transactionType, sourceRow: sale.sourceRow, reason: marketplaceDocumentKind(sale) })),
+    excludedFromSales: pack.sales.filter(sale => marketplaceDocumentKind(sale) !== "sale" && !(marketplaceDocumentKind(sale) === "credit_note" && sale.issues.length === 0)).map(sale => ({ invoiceNumber: sale.invoiceNumber, documentType: sale.transactionType, sourceRow: sale.sourceRow, reason: marketplaceDocumentKind(sale), taxableValue: sale.taxableValue, grossAmount: sale.grossAmount, cess: sale.cess })),
   };
   if (!json.schema || !Array.isArray(json.b2b) || !Array.isArray(json.b2c)) {
     return { ok: false as const, errors: ["GST draft JSON failed structural checks."] };
@@ -261,7 +291,7 @@ export function buildGstDraftJson(pack: EcommercePack) {
 }
 
 export function salesToCsv(sales: MarketplaceSale[]) {
-  const headers = ["platform", "orderId", "invoiceNumber", "invoiceDate", "gstin", "buyerState", "placeOfSupply", "taxableValue", "cgst", "sgst", "igst", "cess", "grossAmount", "tcsAmount", "refundAmount", "marketplaceFees", "hsn", "gstRate", "transactionType", "salesTreatment"];
+  const headers = ["platform", "orderId", "invoiceNumber", "invoiceDate", "gstin", "buyerState", "placeOfSupply", "taxableValue", "cgst", "sgst", "igst", "cess", "grossAmount", "tcsAmount", "refundAmount", "marketplaceFees", "hsn", "gstRate", "transactionType", "salesTreatment", "originalInvoiceNumber"];
   const lines = sales.map(sale => headers.map(header => {
     const value = header === "salesTreatment" ? marketplaceDocumentKind(sale) : sale[header as keyof MarketplaceSale];
     const raw = value == null ? "" : String(value);
@@ -278,7 +308,7 @@ function emptyPack(platform: string, message: string): EcommercePack {
     platform,
     sales: [],
     summary: { documents: 0, taxableValue: 0, gst: 0, cess: 0, gross: 0, refunds: 0, tcs: 0, b2b: 0, b2c: 0, errors: 0, excludedSalesRows: 0 },
-    tabs: { b2b: [], b2c: [], hsn: [], tcs: [], table14: [], errors: [] },
+    tabs: { creditNotes: [], b2b: [], b2c: [], hsn: [], tcs: [], table14: [], errors: [] },
     errors: [message],
   };
 }

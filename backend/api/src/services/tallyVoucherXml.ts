@@ -5,6 +5,7 @@
  */
 
 import type { NormalizedBankTxn } from "./bankStatement";
+import { paise } from "./money";
 
 export interface LedgerMapping {
   counterparty: string;
@@ -143,15 +144,19 @@ const LEDGER_RULES: LedgerRule[] = [
   rule(/google ?(cloud|workspace|one)|g ?suite|workspace|aws|amazon web|microsoft|zoho|adobe|github|atlassian|slack|notion|software|saas/, "Software Expenses"),
   rule(/\bca fees|consult|professional|legal|audit fee/, "Professional Fees"),
   rule(/\buber\b|\bola\b|irctc|makemytrip|indigo|air india|vistara|travel|hotel/, "Travelling Expenses"),
+  // Airport lounges and similar card swipes: usually travel, but also a common card-validation charge.
+  rule(/lounge|airport/, "Travelling Expenses", { hint: true }),
   rule(/charges|chrg|chgs|sms alert|annual fee|gst on charges|commission/, "Bank Charges"),
   rule(/\bfd\b|fixed deposit|term deposit|\btd\b.*(maturity|booking|closure)/, "Fixed Deposits"),
   rule(/insurance|\blic\b|premium|(hdfc|sbi|kotak mahindra|max|bajaj allianz|tata aia|aditya birla sun|pnb met|star health) ?life|icici pru/, "Insurance Premium"),
   rule(/\bemi\b|loan|nach.*finance/, "Loan Account"),
   rule(/\bgst\b|gstn|cbic|gst challan/, "GST Payable"),
   rule(/\btds\b|26q|24q|tin-nsdl/, "TDS Payable"),
+  // A refund from the Income Tax Department clears an amount receivable; any interest paid with it is income.
+  rule(/itd ?tax|income tax refund|tax refund|\bitd\b.*refund/, "Income Tax", { direction: "in", hint: true }),
   rule(/income tax|advance tax|itns|\bitd\b/, "Income Tax"),
   // Moving money to the holder's own account could be a bank transfer, capital or drawings.
-  rule(/self ?(transfer|trf)|own account/, "Suspense"),
+  rule(/self ?(transfer|trf)|own account|money to own|to own a\/c/, "Suspense"),
   rule(/\batm\b|\bnwd\b|\batw\b|cash wdl|cash withdrawal|cash dep|by cash|\bcdm\b/, "Cash"),
   // A cheque drawn to "self" is usually cash withdrawn at the branch.
   rule(/\bself\b/, "Cash", { hint: true }),
@@ -255,8 +260,7 @@ export function resolveLedger(txn: Pick<NormalizedBankTxn, "narration" | "descri
   const narration = txn.narration || txn.description;
   const text = narration.toLowerCase();
   const key = partyKey(txn).toLowerCase();
-  const remembered = mappings.find(mapping => mapping.counterparty && mapping.counterparty.toLowerCase() === key)
-    ?? mappings.find(mapping => mapping.counterparty && text.includes(mapping.counterparty.toLowerCase()));
+  const remembered = mappings.find(mapping => mapping.counterparty && mapping.counterparty.trim().toLowerCase() === key);
   const choice = remembered?.ledgerName ?? suggestLedger(narration, [], txn.credit != null ? "in" : "out");
   if (PARTY_GROUPS.has(choice)) {
     const party = remembered ? partyName(remembered.counterparty) : null;
@@ -293,7 +297,7 @@ export function buildTallyVoucherXml(input: TallyXmlInput): TallyXmlResult {
       errors.push(`Row ${txn.rowNumber}: date ${txn.date} is not a valid ISO date.`);
       return;
     }
-    if (amount == null || amount <= 0) {
+    if (amount == null || amount <= 0 || paise(amount) == null) {
       errors.push(`Row ${txn.rowNumber}: amount is missing.`);
       return;
     }
@@ -306,6 +310,14 @@ export function buildTallyVoucherXml(input: TallyXmlInput): TallyXmlResult {
     const suspense = input.suspenseLedger?.trim();
     const resolved = chosen.name === "Suspense" && suspense ? { name: suspense, group: null } : chosen;
     const partyLedger = resolved.name;
+    if (partyLedger.trim().toLowerCase() === bankLedger.toLowerCase()) {
+      errors.push(`Row ${txn.rowNumber}: the other ledger cannot be the same bank account.`);
+      return;
+    }
+    if ([bankLedger, partyLedger, txn.narration, txn.reference, input.tallyCompany].some(value => value && /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(value))) {
+      errors.push(`Row ${txn.rowNumber}: text contains characters XML cannot represent.`);
+      return;
+    }
     const voucherType = txn.voucherType ?? defaultVoucherType(txn.credit, partyLedger);
     if (voucherType === "Contra" && !contraAllowed(resolved)) {
       errors.push(`Row ${txn.rowNumber}: a Contra entry needs Cash or another bank account, not ${partyLedger}.`);
@@ -412,8 +424,8 @@ export function validateTallyVoucherXml(xml: string, expectedVouchers: number): 
       errors.push(`Voucher ${index + 1} does not have two ledger lines.`);
       return;
     }
-    const sum = Math.round(amounts.reduce((total, value) => total + value, 0) * 100) / 100;
-    if (sum !== 0) errors.push(`Voucher ${index + 1} does not balance (${sum}).`);
+    const cents = amounts.map(paise);
+    if (cents.some(value => value == null) || cents.reduce<number>((total, value) => total + (value ?? 0), 0) !== 0) errors.push(`Voucher ${index + 1} does not balance to the paise.`);
   });
   return { ok: errors.length === 0, errors };
 }

@@ -1665,9 +1665,7 @@
   max-width: 850px;
 }
 .fv-job-header {
-  padding-bottom: 26px;
-  border-bottom: 1px solid var(--fv-line);
-  margin-bottom: 28px;
+  margin-bottom: 20px;
 }
 .fv-job-header h1,
 .fv-app-main h1 {
@@ -1676,8 +1674,8 @@
   letter-spacing: -1px;
 }
 .fv-job-header h1 {
-  font-size: 34px;
-  margin: 12px 0 8px;
+  font-size: 28px;
+  margin: 0 0 6px;
 }
 .fv-job-header > p {
   font-size: 13px;
@@ -2455,7 +2453,7 @@
     font-size: 8px;
   }
   .fv-job-header h1 {
-    font-size: 28px;
+    font-size: 24px;
   }
   .fv-job-header > p {
     font-size: 12px;
@@ -2469,4 +2467,9 @@
     transition: none !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* History is a table, so it uses more of the page than the other standard pages. */
+.fv-standard-page.fv-history-wide {
+  width: min(1180px, 100%);
 }
