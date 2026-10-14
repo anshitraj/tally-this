@@ -263,6 +263,8 @@ const PAYMENT_APP_PARTIES: Array<[RegExp, string]> = [
   [/gpayvoucher@/i, "Google Pay voucher"],
   [/gpay-?creditcard@/i, "Google Pay card bill"],
   [/playstore@/i, "Google Play"],
+  // The destination account number says nothing about who the money went to.
+  [/sent money to own|money to own a\/c|self ?transfer|own account/i, "Own account transfer"],
 ];
 
 /**

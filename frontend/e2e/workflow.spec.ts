@@ -1,10 +1,13 @@
 import { test, expect } from "@playwright/test";
+import { signedIn } from "./signedIn";
 
 /**
  * Workflow-level e2e for upload-management UX and reconciliation finalize flow.
- * These tests only verify static text/elements that render unauthenticated or with
- * placeholder data so they can run against a fresh dev server without seed data.
+ * These tests only verify static text/elements that render with an empty signed-in test
+ * session (see signedIn.ts) so they can run against a fresh dev server without seed data.
  */
+
+test.beforeEach(async ({ page }) => { await signedIn(page); });
 
 test.describe("Uploads management UI", () => {
   test("Current Uploaded Files panel renders under drop zone", async ({ page }) => {

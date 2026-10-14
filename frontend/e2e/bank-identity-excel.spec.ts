@@ -31,11 +31,16 @@ test("unknown bank can be corrected and the reviewed Excel output is downloadabl
   });
   await page.goto("/app/jobs/bank-to-tally");
   await page.locator('input[type="file"]').setInputFiles({ name: "statement.csv", mimeType: "text/csv", buffer: Buffer.from("Date,Narration,Debit\n01/05/2026,NEFT/ACME,500\n") });
+  // The statement opens full screen with balances and downloads along the top.
+  const viewer = page.getByTestId("statement-viewer");
+  await expect(viewer).toBeVisible();
+  await expect(viewer.getByRole("button", { name: "Download" })).toBeVisible();
+  await expect(viewer.getByText("Opening Bal.")).toBeVisible();
+  await viewer.getByRole("button", { name: "Back to results" }).click();
   await expect(page.getByText("Choose the bank", { exact: true })).toBeVisible();
   await expect(page.getByRole("tab", { name: "Statement", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("tab", { name: "Statement", exact: true })).toBeInViewport();
-  await expect.poll(async () => (await page.getByRole("tab", { name: "Statement", exact: true }).boundingBox())?.y ?? Infinity).toBeLessThan(140);
-  await expect(page.getByText("All transactions", { exact: true })).toBeVisible();
+  await expect.poll(async () => (await page.getByRole("tab", { name: "Statement", exact: true }).boundingBox())?.y ?? Infinity).toBeLessThan(240); // results are visible without scrolling on a phone
   await expect(page.getByRole("button", { name: "Download Excel", exact: true })).toBeVisible();
   await page.getByLabel("Which bank issued this statement?").selectOption("ICICI Bank");
   await expect(page.getByText("ICICI Bank", { exact: true })).toBeVisible();

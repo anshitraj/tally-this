@@ -738,6 +738,11 @@ test("Google Pay rows are split by handle and only confident rules skip review",
     if (party) assert.equal(counterpartyFrom(narration), party, narration);
     assert.deepEqual(suggestLedgerDetail(narration, direction), { ledger, sure }, narration);
   }
+  assert.deepEqual(suggestLedgerDetail("NEFT SBIN225353384588 ITDTAX REFUND 2025 26 BFZPG", "in"), { ledger: "Income Tax", sure: false });
+  assert.deepEqual(suggestLedgerDetail("PCD/5335/ENCALM LOUNGE/DELHI060725/11:40", "out"), { ledger: "Travelling Expenses", sure: false });
+  assert.equal(suggestLedger("ADVANCE TAX PAYMENT ITNS 280", [], "out"), "Income Tax");
+  assert.equal(suggestLedger("MB:SENT MONEY TO OWN 5111806138", [], "out"), "Suspense");
+  assert.equal(counterpartyFrom("MB:SENT MONEY TO OWN 5111806138"), "Own account transfer");
   assert.equal(suggestLedger("EPFO CHALLAN TRRN 123456", [], "out"), "PF Payable");
   assert.equal(suggestLedger("ESIC CONTRIBUTION MAY 26", [], "out"), "ESI Payable");
   assert.equal(suggestLedger("MAHA PTAX PAYMENT", [], "out"), "Professional Tax Payable");

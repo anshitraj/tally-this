@@ -27,7 +27,7 @@ import {
   toCsv,
   type StatementCheck,
 } from "@/components/jobs/jobUi";
-import { BankStatementTable, type RowLedger, type VoucherType } from "@/components/jobs/BankStatementTable";
+import { StatementViewer, type DownloadItem, type RowLedger, type VoucherType } from "@/components/jobs/BankStatementTable";
 import { SendToTally, type TallyChoices, type TallySendResult } from "@/components/jobs/SendToTally";
 import { getActiveClient } from "@/lib/activeClient";
 import { getUser } from "@/lib/auth";
@@ -129,12 +129,12 @@ export default function BankToTallyPage() {
   const [rowLedgers, setRowLedgers] = useState<Record<number, string>>({});
   const [rowVouchers, setRowVouchers] = useState<Record<number, VoucherType>>({});
   const [queries, setQueries] = useState<Record<number, string>>({});
-  const [statementOpen, setStatementOpen] = useState(false);
+  // The statement opens full screen as soon as it is read, like an editor.
+  const [viewerOpen, setViewerOpen] = useState(false);
   const [tallyOpen, setTallyOpen] = useState(false);
   // Ledger names from the connected Tally company, offered alongside the standard list.
   const [tallyLedgerNames, setTallyLedgerNames] = useState<string[]>([]);
   const reviewRef = useRef<HTMLDivElement>(null);
-  const statementRef = useRef<HTMLDivElement>(null);
   const resultRef = useRef<HTMLDivElement>(null);
   const tallyRef = useRef<HTMLDivElement>(null);
   const [consentMessage, setConsentMessage] = useState("");
@@ -194,7 +194,7 @@ export default function BankToTallyPage() {
     setRowLedgers({});
     setRowVouchers({});
     setQueries({});
-    setStatementOpen(true);
+    setViewerOpen(true);
     setTallyOpen(false);
     setTotalsConfirmed(false);
     setReviewOpen(false);
@@ -541,7 +541,28 @@ export default function BankToTallyPage() {
     setBankOverride(null);
     setBankPickerOpen(false);
     setTotalsConfirmed(false);
+    setViewerOpen(false);
     passwordRef.current = undefined;
+  };
+
+  // The three downloads along the top of the viewer: Excel, CSV and Tally XML.
+  const downloads: DownloadItem[] = [
+    { key: "excel", label: "Excel", hint: "The statement with Tally ledgers, review status and client questions", busy: exportingExcel, onSelect: () => void exportExcel() },
+    { key: "csv", label: "CSV", hint: "Every transaction as plain rows", onSelect: exportCsv },
+    { key: "xml", label: "Tally XML", hint: blockedReason ?? "Vouchers to import into TallyPrime", busy: generating, onSelect: () => void generate() },
+  ];
+
+  // Leaving the viewer lands on the results tabs at the top of the page.
+  const closeViewer = () => {
+    setViewerOpen(false);
+    requestAnimationFrame(() => resultRef.current?.scrollIntoView({ behavior: "auto", block: "start" }));
+  };
+
+  const leaveViewerFor = (view: "review" | "export") => {
+    closeViewer();
+    setResultView(view);
+    if (view === "review") setReviewOpen(true);
+    else setTallyOpen(true);
   };
 
   const bankChoices = useMemo(() => {
@@ -670,7 +691,7 @@ export default function BankToTallyPage() {
             <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
               {resultView !== "review" && <span className="font-medium tabular-nums">{activeTxns.length} <span>{skipped.size > 0 ? "transactions included" : "transactions detected"}</span></span>}
               <span className="text-muted-foreground">Money in {inr(totals.credit)} · Money out {inr(totals.debit)}</span>
-              {(!statementOpen || resultView !== "statement") && <button type="button" className="font-medium text-[var(--fv-accent-dark)] hover:underline" onClick={() => { setResultView("statement"); setStatementOpen(true); requestAnimationFrame(() => statementRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })); }}>View all {txns.length} transactions</button>}
+              <button type="button" className="font-medium text-[var(--fv-accent-dark)] hover:underline" onClick={() => setViewerOpen(true)}>Open statement</button>
               {queryCount > 0 && <span className="text-sky-800">{queryCount} {queryCount === 1 ? "question" : "questions"} for the client</span>}
             </div>
             {statementEdited
@@ -784,35 +805,38 @@ export default function BankToTallyPage() {
             </div>
           )}
 
-          {statementOpen && resultView === "statement" && (
-            <div ref={statementRef} className="scroll-mt-4">
-              <ResultCard
-                eyebrow={
-                  <span className="flex items-center justify-between gap-3">
-                    <span>All transactions</span>
-                    <button type="button" className="normal-case tracking-normal text-[var(--fv-accent-dark)] hover:underline" onClick={() => setStatementOpen(false)}>Hide</button>
-                  </span>
-                }
-              >
-                <BankStatementTable
-                  rows={txns}
-                  openingBalance={result.check?.openingBalance ?? result.openingBalance ?? null}
-                  closingBalance={result.check?.closingBalance ?? result.check?.printedClosing ?? result.closingBalance ?? null}
-                  ledgerOptions={options}
-                  ledgerOf={outputLedgerOf}
-                  voucherOf={outputVoucherOf}
-                  isLeftOut={txn => skipped.has(txn.rowNumber)}
-                  needsCheck={txn => needsCheck(txn) && !checkedRows.has(txn.rowNumber)}
-                  queries={queries}
-                  onLedger={setRowLedger}
-                  onConfirm={txn => pick(groupKeyOf(txn), ledgerOf(txn).ledger)}
-                  onVoucher={setRowVoucher}
-                  onFlip={txn => { flipRow(txn); setCheckedRows(current => new Set(current).add(txn.rowNumber)); }}
-                  onLeaveOut={setLeftOut}
-                  onQuery={setQuery}
-                />
-              </ResultCard>
-            </div>
+          {viewerOpen && (
+            <StatementViewer
+              title={`Bank statement${displayBankName ? ` · ${displayBankName}` : ""}`}
+              rows={txns}
+              openingBalance={result.check?.openingBalance ?? result.openingBalance ?? null}
+              closingBalance={result.check?.closingBalance ?? result.check?.printedClosing ?? result.closingBalance ?? null}
+              onClose={closeViewer}
+              backLabel="Back to results"
+              downloads={downloads}
+              review={{ count: attentionItems, onClick: () => leaveViewerFor("review") }}
+              actions={<button type="button" onClick={() => leaveViewerFor("export")} className="inline-flex h-9 items-center rounded-lg border border-border bg-card px-3 text-sm font-semibold hover:bg-muted">Send to Tally</button>}
+              notice={error || generated ? (
+                <>
+                  {error && <Notice tone="error" onClose={() => setError("")}>{error}</Notice>}
+                  {generated && <Notice tone="success">Tally XML downloaded · {generated.count} vouchers. Back up the Tally company before importing; importing the same file twice can create duplicates.</Notice>}
+                </>
+              ) : null}
+              edit={{
+                ledgerOptions: options,
+                ledgerOf: outputLedgerOf,
+                voucherOf: outputVoucherOf,
+                isLeftOut: txn => skipped.has(txn.rowNumber),
+                needsCheck: txn => needsCheck(txn) && !checkedRows.has(txn.rowNumber),
+                queries,
+                onLedger: setRowLedger,
+                onConfirm: txn => pick(groupKeyOf(txn), ledgerOf(txn).ledger),
+                onVoucher: setRowVoucher,
+                onFlip: txn => { flipRow(txn); setCheckedRows(current => new Set(current).add(txn.rowNumber)); },
+                onLeaveOut: setLeftOut,
+                onQuery: setQuery,
+              }}
+            />
           )}
 
           <MoreOptions>

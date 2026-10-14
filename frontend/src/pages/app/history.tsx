@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useRoute } from "wouter";
-import { ArrowLeft, ChevronRight, FileSpreadsheet, GitCompare, History as HistoryIcon, Layers, Receipt, Search, ShoppingBag, ShieldCheck, Sparkles, type LucideIcon } from "lucide-react";
+import { ArrowLeft, ChevronRight, FileSpreadsheet, GitCompare, History as HistoryIcon, Layers, LifeBuoy, Receipt, Search, ShoppingBag, ShieldCheck, Sparkles, type LucideIcon } from "lucide-react";
 import {
   BigStat,
   Choice,
@@ -8,14 +8,19 @@ import {
   Notice,
   ResultCard,
   StatementProof,
+  downloadBlob,
   downloadText,
   fmtDate,
   inr,
+  postDownload,
   postJson,
   toCsv,
   useClients,
   type StatementCheck,
 } from "@/components/jobs/jobUi";
+import { StatementViewer, type DownloadItem } from "@/components/jobs/BankStatementTable";
+import { getActiveClient } from "@/lib/activeClient";
+import { getUser } from "@/lib/auth";
 import { upgradeMailto, usePrivacy } from "@/lib/privacy";
 import { cn } from "@/lib/utils";
 
@@ -114,13 +119,11 @@ function when(value: string, withTime = false) {
     : { hour: "numeric", minute: "2-digit" });
 }
 
-function dayLabel(value: string) {
-  const date = new Date(value);
-  const start = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  const days = Math.round((start(new Date()) - start(date)) / 86_400_000);
-  if (days === 0) return "Today";
-  if (days === 1) return "Yesterday";
-  return date.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+/** A ready-to-send email about one saved item. It carries the item's name and date, never its contents. */
+function ticketMailto(email: string, row: Pick<HistoryRow, "id" | "title" | "run_type" | "created_at">) {
+  const name = displayTitle(row);
+  const body = [`Hello,`, ``, `I have a question about this item in TallyThis history:`, `File: ${name}`, `Job: ${kindOf(row.run_type).label}`, `Date: ${when(row.created_at, true)}`, `Reference: ${row.id}`, ``, `My question:`, ``].join("\n");
+  return `mailto:${email}?subject=${encodeURIComponent(`TallyThis history: ${name}`)}&body=${encodeURIComponent(body)}`;
 }
 
 function who(row: Pick<HistoryRow, "user_name" | "user_email">) {
@@ -173,17 +176,8 @@ export default function HistoryPage() {
 
   useEffect(() => { void load(0); }, [load, active?.id]);
 
-  const groups = useMemo(() => {
-    const map = new Map<string, HistoryRow[]>();
-    for (const row of rows) {
-      const label = dayLabel(row.created_at);
-      map.set(label, [...(map.get(label) ?? []), row]);
-    }
-    return [...map.entries()];
-  }, [rows]);
-
   return (
-    <div className="fv-standard-page">
+    <div className="fv-standard-page fv-history-wide">
       <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">History</h1>
       <p className="mt-1.5 text-sm text-muted-foreground sm:text-base">
         Your last {older.months} months of work{active ? <> for <span className="font-medium text-foreground">{active.name}</span></> : ""}. Open any item to see the result and download it again.
@@ -200,31 +194,56 @@ export default function HistoryPage() {
       {error && <div className="mt-4"><Notice tone="error">{error}</Notice></div>}
 
       <div className="mt-5 space-y-6">
-        {groups.map(([label, items]) => (
-          <section key={label}>
-            <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</h2>
-            <div className="divide-y divide-border rounded-2xl border border-border bg-card">
-              {items.map(row => {
-                const kind = kindOf(row.run_type);
-                const Icon = kind.icon;
-                const line = summaryLine(row);
-                return (
-                  <button key={row.id} type="button" onClick={() => navigate(`/app/history/${row.id}`)} className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition hover:bg-muted/40">
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-orange-50 text-[var(--fv-accent-dark)]"><Icon className="h-5 w-5" /></span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-semibold">{displayTitle(row)}</span>
-                      <span className="block truncate text-xs text-muted-foreground">{kind.label}{line ? ` · ${line}` : ""}</span>
-                      <span className="block truncate text-xs text-muted-foreground">{[who(row), when(row.created_at)].filter(Boolean).join(" · ")}</span>
-                    </span>
-                    {row.info?.verified && <span className="hidden shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-800 sm:inline-flex"><ShieldCheck className="h-3.5 w-3.5" />Checked</span>}
-                    {row.status === "failed" && <span className="shrink-0 rounded-full bg-red-50 px-2 py-1 text-xs font-semibold text-red-800">Failed</span>}
-                    <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  </button>
-                );
-              })}
-            </div>
-          </section>
-        ))}
+        {rows.length > 0 && (
+          <div className="overflow-x-auto rounded-2xl border border-border bg-card">
+            <table className="w-full min-w-[760px] border-collapse text-sm" aria-label="History">
+              <thead className="bg-muted/50 text-left">
+                <tr>
+                  {["Date & time", "File name", "Details", "Status"].map(label => <th key={label} className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-[var(--fv-accent-dark)]">{label}</th>)}
+                  <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-[var(--fv-accent-dark)]">View</th>
+                  <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-[var(--fv-accent-dark)]">Raise a ticket</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {rows.map(row => {
+                  const kind = kindOf(row.run_type);
+                  const failed = row.status === "failed";
+                  const done = row.status === "completed" || row.status === "complete" || row.status === "success";
+                  return (
+                    <tr key={row.id} className="align-top hover:bg-muted/30">
+                      <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">
+                        <div>{when(row.created_at, true)}</div>
+                        {who(row) && <div className="text-xs">{who(row)}</div>}
+                      </td>
+                      <td className="min-w-[200px] max-w-[320px] px-4 py-3">
+                        <span className="block font-medium [overflow-wrap:anywhere]">{displayTitle(row)}</span>
+                        <span className="block text-xs text-muted-foreground">{kind.label}</span>
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{summaryLine(row) || "—"}</td>
+                      <td className="whitespace-nowrap px-4 py-3">
+                        <span className={cn("font-medium", failed ? "text-red-700" : done ? "text-emerald-700" : "text-muted-foreground")}>{failed ? "Failed" : done ? "Success" : titleCase(row.status.replace(/_/g, " "))}</span>
+                        {row.info?.verified && <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-800"><ShieldCheck className="h-3 w-3" />Checked</span>}
+                      </td>
+                      <td className="px-4 py-3">
+                        <button type="button" onClick={() => navigate(`/app/history/${row.id}`)} className="font-semibold text-[var(--fv-accent-dark)] hover:underline" aria-label={`View ${displayTitle(row)}`}>View</button>
+                      </td>
+                      <td className="px-4 py-3">
+                        <a
+                          href={ticketMailto(older.email || privacy.supportEmail, row)}
+                          aria-label={`Raise a ticket about ${displayTitle(row)}`}
+                          title="Email us about this item"
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
+                        >
+                          <LifeBuoy className="h-4 w-4" />
+                        </a>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
         {!loading && rows.length === 0 && !error && (
           <div className="rounded-2xl border border-dashed border-border bg-card p-8 text-center">
             <HistoryIcon className="mx-auto h-8 w-8 text-muted-foreground" />
@@ -339,41 +358,94 @@ function Missing() {
   return <Notice tone="warn">The saved result for this item is not available.</Notice>;
 }
 
-interface StatementTxn { date: string; narration: string; reference: string | null; debit: number | null; credit: number | null; balance: number | null; confidence: number }
+interface StatementTxn {
+  rowNumber: number;
+  date: string;
+  valueDate?: string | null;
+  narration: string;
+  reference: string | null;
+  debit: number | null;
+  credit: number | null;
+  balance: number | null;
+  counterparty?: string | null;
+  confidence: number;
+}
 
+/** A saved statement opens in the same full-screen viewer as a fresh upload, without editing. */
 function BankStatementView({ artifact, xml }: { artifact?: Artifact; xml?: Artifact }) {
-  const [showAll, setShowAll] = useState(false);
+  const [viewerOpen, setViewerOpen] = useState(true);
+  const [exporting, setExporting] = useState(false);
+  const [notice, setNotice] = useState("");
   if (!artifact) return <Missing />;
   const data = artifact.json_data ?? {};
-  const txns: StatementTxn[] = Array.isArray(data.transactions) ? data.transactions : [];
+  const txns: StatementTxn[] = (Array.isArray(data.transactions) ? data.transactions : []).map((txn: StatementTxn, index: number) => ({ ...txn, rowNumber: txn.rowNumber ?? index + 1 }));
   const check: StatementCheck | null = data.check ?? null;
   const flagged = txns.filter(txn => txn.confidence < 0.9).length;
   const aiRead = data.source === "ai" || data.source === "ocr";
-  const shown = showAll ? txns : txns.slice(0, 25);
+  const opening: number | null = check?.openingBalance ?? data.openingBalance ?? null;
+  const closing: number | null = check?.printedClosing ?? check?.closingBalance ?? data.closingBalance ?? null;
+  const bankName: string = data.bankName ?? "Bank statement";
 
   const csv = () => downloadText(
     "bank-transactions.csv",
-    toCsv(["Date", "Narration", "Reference", "Withdrawal", "Deposit", "Balance"], txns.map(txn => [txn.date, txn.narration, txn.reference ?? "", txn.debit ?? "", txn.credit ?? "", txn.balance ?? ""])),
+    toCsv(["Date", "Value date", "Narration", "Reference", "Withdrawal", "Deposit", "Balance"], txns.map(txn => [txn.date, txn.valueDate ?? "", txn.narration, txn.reference ?? "", txn.debit ?? "", txn.credit ?? "", txn.balance ?? ""])),
     "text/csv",
   );
+
+  // Same conversion-only workbook as a fresh upload: nothing is classified until the CA reviews it.
+  const excel = async () => {
+    setExporting(true);
+    setNotice("");
+    const client = getActiveClient();
+    const response = await postDownload("/api/jobs/bank-to-tally/excel", {
+      clientName: client?.name || getUser()?.company || "Client",
+      bankName,
+      accountNumberMasked: data.accountNumberMasked ?? null,
+      periodLabel: data.periodLabel ?? null,
+      openingBalance: opening,
+      closingBalance: closing,
+      balanceCheck: check?.verified ? "passed" : "needs_check",
+      rows: txns.map(txn => ({
+        rowNumber: txn.rowNumber,
+        date: txn.date,
+        valueDate: txn.valueDate ?? null,
+        narration: txn.narration,
+        reference: txn.reference,
+        debit: txn.debit,
+        credit: txn.credit,
+        balance: txn.balance,
+        counterparty: txn.counterparty ?? null,
+        ledgerChoice: "Suspense",
+        ledgerConfirmed: false,
+        voucherType: txn.credit != null && txn.credit > 0 ? "Receipt" : "Payment",
+        query: null,
+        needsReview: txn.confidence < 0.9,
+        reviewed: false,
+        edited: false,
+        excluded: false,
+      })),
+    });
+    setExporting(false);
+    if (!response.ok || !response.blob) { setNotice(response.message || "The Excel file could not be created."); return; }
+    downloadBlob("TallyThis_Bank_Transactions.xlsx", response.blob);
+  };
+
+  const downloads: DownloadItem[] = [
+    { key: "excel", label: "Excel", hint: "The statement as saved, ready for review", busy: exporting, onSelect: () => void excel() },
+    { key: "csv", label: "CSV", hint: "Every transaction as plain rows", onSelect: csv },
+    ...(xml?.json_data?.xml ? [{ key: "xml", label: "Tally XML", hint: "The Tally file created for this statement", onSelect: () => downloadText(xml.title || "tally-vouchers.xml", xml.json_data.xml, "application/xml") }] : []),
+  ];
 
   return (
     <div className="space-y-4">
       <ResultCard
         eyebrow={
           <span className="flex flex-wrap items-center gap-2">
-            <span>{data.bankName ?? "Bank statement"}{data.accountNumberMasked ? ` · ••${data.accountNumberMasked}` : ""}{data.periodLabel ? ` · ${data.periodLabel}` : ""}</span>
+            <span>{bankName}{data.accountNumberMasked ? ` · ••${data.accountNumberMasked}` : ""}{data.periodLabel ? ` · ${data.periodLabel}` : ""}</span>
             {aiRead && <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 normal-case tracking-normal text-sky-800"><Sparkles className="h-3 w-3" />Read by AI</span>}
           </span>
         }
-        actions={
-          <>
-            {xml?.json_data?.xml
-              ? <button type="button" className="fv-button-primary h-11 px-6" onClick={() => downloadText(xml.title || "tally-vouchers.xml", xml.json_data.xml, "application/xml")}>Download Tally File</button>
-              : <span className="text-sm text-muted-foreground">No Tally file was generated for this statement.</span>}
-            <button type="button" className="fv-button-secondary h-11" onClick={csv}>Download transactions (CSV)</button>
-          </>
-        }
+        actions={<button type="button" className="fv-button-primary h-11 px-6" onClick={() => setViewerOpen(true)}>Open statement</button>}
       >
         <div className="grid grid-cols-2 gap-6">
           <BigStat value={txns.length} label="transactions" />
@@ -384,32 +456,18 @@ function BankStatementView({ artifact, xml }: { artifact?: Artifact; xml?: Artif
         {xml?.json_data?.voucherCount != null && <p className="mt-3 text-xs text-muted-foreground">Tally file: {xml.json_data.voucherCount} vouchers.</p>}
       </ResultCard>
 
-      <section className="rounded-2xl border border-border bg-card">
-        <div className="border-b border-border px-4 py-3 text-sm font-semibold">Transactions</div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[640px] text-left text-xs">
-            <thead className="bg-muted/50 text-muted-foreground">
-              <tr><th className="px-4 py-2">Date</th><th>Narration</th><th className="text-right">Withdrawal</th><th className="text-right">Deposit</th><th className="px-4 text-right">Balance</th></tr>
-            </thead>
-            <tbody>
-              {shown.map((txn, index) => (
-                <tr key={index} className={cn("border-t border-border", txn.confidence < 0.9 && "bg-amber-50/60")}>
-                  <td className="whitespace-nowrap px-4 py-2">{fmtDate(txn.date)}</td>
-                  <td className="max-w-[18rem] truncate pr-3" title={txn.narration}>{txn.narration}</td>
-                  <td className="text-right">{txn.debit != null ? inr(txn.debit) : ""}</td>
-                  <td className="text-right">{txn.credit != null ? inr(txn.credit) : ""}</td>
-                  <td className="px-4 text-right">{txn.balance != null ? inr(txn.balance) : ""}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {txns.length > 25 && (
-          <button type="button" className="w-full border-t border-border px-4 py-3 text-sm font-semibold text-[var(--fv-accent-dark)] hover:bg-muted/40" onClick={() => setShowAll(value => !value)}>
-            {showAll ? "Show fewer" : `Show all ${txns.length} transactions`}
-          </button>
-        )}
-      </section>
+      {viewerOpen && (
+        <StatementViewer
+          title={`${bankName} statement`}
+          rows={txns}
+          openingBalance={opening}
+          closingBalance={closing}
+          onClose={() => setViewerOpen(false)}
+          backLabel="Back to history"
+          downloads={downloads}
+          notice={notice ? <Notice tone="error" onClose={() => setNotice("")}>{notice}</Notice> : null}
+        />
+      )}
     </div>
   );
 }

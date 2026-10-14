@@ -2468,3 +2468,8 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* History is a table, so it uses more of the page than the other standard pages. */
+.fv-standard-page.fv-history-wide {
+  width: min(1180px, 100%);
+}

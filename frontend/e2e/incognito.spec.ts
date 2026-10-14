@@ -52,6 +52,8 @@ test("Premium switches the workspace to Incognito, fixes the mode during review 
   await page.locator('input[type="file"]').setInputFiles(file);
   await expect(page.getByText("HDFC Bank", { exact: true })).toBeVisible();
   expect(uploads[0]).toContain('name="privacy"');
+  // The statement opens full screen; the mode summary is on the results page behind it.
+  await page.getByTestId("statement-viewer").getByRole("button", { name: "Back to results" }).click();
   await expect(normal).toHaveCount(0);
   await expect(incognito).toHaveCount(0);
   await expect(page.getByTestId("job-mode-summary")).toContainText("Incognito · not saved");
@@ -64,6 +66,7 @@ test("Premium switches the workspace to Incognito, fixes the mode during review 
   await page.locator('input[type="file"]').setInputFiles(file);
   await expect(page.getByText("HDFC Bank", { exact: true })).toBeVisible();
   expect(uploads[1]).not.toContain('name="privacy"');
+  await page.getByTestId("statement-viewer").getByRole("button", { name: "Back to results" }).click();
   await page.getByText("More options", { exact: true }).click();
   await page.getByRole("button", { name: "Upload another statement" }).click();
   await incognito.click();

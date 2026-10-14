@@ -38,6 +38,8 @@ async function upload(page: Page, result: ReturnType<typeof statement>) {
   });
   await page.goto("/app/jobs/bank-to-tally");
   await page.locator('input[type="file"]').setInputFiles({ name: "synthetic.csv", mimeType: "text/csv", buffer: Buffer.from("Date,Narration,Credit\n01/05/2026,Test,100\n") });
+  await expect(page.getByTestId("statement-viewer")).toBeVisible();
+  await page.getByTestId("statement-viewer").getByRole("button", { name: "Back to results" }).click();
   await expect(page.getByText("transactions detected", { exact: true })).toBeVisible();
 }
 
