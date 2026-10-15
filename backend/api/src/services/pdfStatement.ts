@@ -597,12 +597,61 @@ function dateRange(transactions: NormalizedBankTxn[]): string | null {
   return `${formatDay(dates[0])} – ${formatDay(dates[dates.length - 1])}`;
 }
 
+/** The slice of the PDF.js document that page rendering needs. */
+interface RenderableDocument {
+  getPage(pageNumber: number): Promise<{
+    getViewport(options: { scale: number }): { width: number; height: number };
+    render(context: { canvasContext: unknown; viewport: unknown; canvas: unknown }): { promise: Promise<void> };
+    cleanup(): void;
+  }>;
+  canvasFactory: {
+    create(width: number, height: number): { canvas: { encode?: (format: "png") => Promise<Buffer>; toBuffer?: (mime: "image/png") => Buffer }; context: unknown };
+    destroy(canvasAndContext: unknown): void;
+  };
+}
+
+/**
+ * PNG images of the given 1-based pages, in page order, at twice the page size.
+ *
+ * pdf-parse's own getScreenshot encodes with a synchronous toBuffer and never releases the page
+ * canvas, and @napi-rs/canvas then keeps about 8 MB of native memory per page for the life of the
+ * process: a 150-page scan held more than a gigabyte. Encoding asynchronously and destroying each
+ * canvas keeps memory flat and gives the same pixels. If a future pdf-parse no longer exposes the
+ * document this falls back to getScreenshot.
+ */
+async function renderPagesPng(parser: PDFParse, pages: number[]): Promise<Buffer[]> {
+  const load = (parser as unknown as { load?: () => Promise<RenderableDocument> }).load;
+  const doc = typeof load === "function" ? await load.call(parser).catch(() => null) : null;
+  if (!doc?.canvasFactory || typeof doc.getPage !== "function") {
+    const shots = await parser.getScreenshot({ scale: 2, imageDataUrl: false, imageBuffer: true, partial: pages });
+    return [...shots.pages].sort((a, b) => a.pageNumber - b.pageNumber).map(page => Buffer.from(page.data));
+  }
+  const images: Buffer[] = [];
+  for (const pageNumber of [...pages].sort((a, b) => a - b)) {
+    const page = await doc.getPage(pageNumber);
+    try {
+      const viewport = page.getViewport({ scale: 2 });
+      const surface = doc.canvasFactory.create(viewport.width, viewport.height);
+      try {
+        await page.render({ canvasContext: surface.context, viewport, canvas: surface.canvas }).promise;
+        const { canvas } = surface;
+        images.push(typeof canvas.encode === "function" ? await canvas.encode("png") : Buffer.from(canvas.toBuffer?.("image/png") ?? []));
+      } finally {
+        doc.canvasFactory.destroy(surface);
+      }
+    } finally {
+      page.cleanup();
+    }
+  }
+  return images;
+}
+
 /** Page images for reading a locked or scanned PDF with AI. */
 export async function renderPdfPages(buffer: Buffer, password?: string, maxPages = 12): Promise<Buffer[]> {
   const parser = new PDFParse({ data: new Uint8Array(buffer), password: password || undefined });
   try {
-    const shots = await parser.getScreenshot({ scale: 2, imageDataUrl: false, imageBuffer: true, first: maxPages });
-    return shots.pages.map(page => Buffer.from(page.data));
+    const total = (await parser.getInfo()).total;
+    return await renderPagesPng(parser, Array.from({ length: Math.min(maxPages, total) }, (_, index) => index + 1));
   } finally {
     await parser.destroy().catch(() => undefined);
   }
@@ -629,10 +678,7 @@ export async function openPdfRenderer(buffer: Buffer, password?: string): Promis
   return {
     pageCount,
     render(pages) {
-      const run = queue.then(async () => {
-        const shots = await parser.getScreenshot({ scale: 2, imageDataUrl: false, imageBuffer: true, partial: pages });
-        return [...shots.pages].sort((a, b) => a.pageNumber - b.pageNumber).map(page => Buffer.from(page.data));
-      });
+      const run = queue.then(() => renderPagesPng(parser, pages));
       queue = run.catch(() => undefined);
       return run;
     },
