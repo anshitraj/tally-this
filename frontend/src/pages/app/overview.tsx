@@ -3,10 +3,13 @@ import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import {
   ArrowUpRight,
+  Banknote,
+  Calculator,
   CalendarClock,
   FileCheck2,
   FileSearch,
   FileSpreadsheet,
+  FileText,
   GitCompare,
   Receipt,
   Scale,
@@ -65,6 +68,9 @@ export const AUTOMATIONS: Array<{
 
 /** Quieter than the four jobs above: the checks a CA reaches for at month end. */
 const MORE_TOOLS: Array<{ label: string; href: string; icon: LucideIcon }> = [
+  { label: "Bills → Tally", href: "/app/jobs/bills-tally", icon: FileText },
+  { label: "Sales → GSTR-1 & 3B", href: "/app/jobs/gst-sales", icon: Calculator },
+  { label: "Payroll", href: "/app/jobs/payroll", icon: Banknote },
   { label: "GSTR-2B ↔ Books", href: "/app/jobs/gstr-2b", icon: FileCheck2 },
   { label: "26AS TDS", href: "/app/tds-recon", icon: Scale },
   { label: "Tax audit", href: "/app/tax-audit", icon: FileSearch },
@@ -77,6 +83,9 @@ const RUN_LABELS: Record<string, string> = {
   ecommerce_gst: "E-commerce GST",
   bank_invoice_reconciliation: "Invoice ↔ Bank",
   gstr_2b_reconciliation: "GSTR-2B ↔ Books",
+  bills_to_tally: "Bills → Tally",
+  gst_sales_register: "Sales → GSTR-1 & 3B",
+  payroll_register: "Payroll",
 };
 
 interface RunRow {
@@ -145,7 +154,7 @@ export default function OverviewPage() {
     const job = response.data?.job;
     if (!response.ok || !job) {
       setNotice(
-        "This looks like something else, so we could not match it to a job. Pick a job below, or drop a bank statement, Tally export, marketplace report or invoices.",
+        "This looks like something else, so we could not match it to a job. Pick a job below, or drop a bank statement, Tally export, sales register, salary sheet, marketplace report or bills.",
       );
       return;
     }
@@ -206,7 +215,7 @@ export default function OverviewPage() {
           multiple
           busy={busy}
           label="Drop your files here, or browse"
-          hint="Bank statements, Tally exports, marketplace reports or invoices"
+          hint="Bank statements, Tally exports, sales registers, bills, salary sheets or marketplace reports"
           accept=".pdf,.csv,.xlsx,.xls,.xml,.html,.htm,.png,.jpg,.jpeg,.webp"
           onFiles={onDrop}
         />

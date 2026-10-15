@@ -97,6 +97,7 @@ export const LEDGER_OPTIONS = [
   "PF Payable",
   "ESI Payable",
   "Professional Tax Payable",
+  "Salary Payable",
   "Payment Gateway Settlements",
   "Marketplace Settlements",
   "Cash",
@@ -193,7 +194,7 @@ export function suggestLedger(narration: string, mappings: LedgerMapping[] = [],
 }
 
 /** Tally parent group for each choice. Ledgers outside this list are assumed to exist already. */
-const LEDGER_GROUPS: Record<string, string> = {
+export const LEDGER_GROUPS: Record<string, string> = {
   "Sales": "Sales Accounts",
   "Purchase": "Purchase Accounts",
   "Salary Expenses": "Indirect Expenses",
@@ -219,6 +220,7 @@ const LEDGER_GROUPS: Record<string, string> = {
   "PF Payable": "Current Liabilities",
   "ESI Payable": "Current Liabilities",
   "Professional Tax Payable": "Current Liabilities",
+  "Salary Payable": "Current Liabilities",
   "Payment Gateway Settlements": "Current Assets",
   "Marketplace Settlements": "Current Assets",
   "Capital A/c": "Capital Account",

@@ -1,13 +1,16 @@
 import {
   Activity,
+  Banknote,
   BookOpen,
   Building2,
   CalendarClock,
+  Calculator,
   ClipboardCheck,
   FileBarChart,
   FileCheck2,
   FileSearch,
   FileSpreadsheet,
+  FileText,
   GitCompare,
   History,
   Hourglass,
@@ -114,12 +117,45 @@ export const GST_RECON_JOB: NavEntry = {
   hint: "Match GSTR-2B with your purchase register and see ITC at risk",
 };
 
+/** Purchase bills to Tally Purchase vouchers: the daily data-entry job. */
+export const BILLS_JOB: NavEntry = {
+  label: "Bills → Tally",
+  href: "/app/jobs/bills-tally",
+  icon: FileText,
+  keywords: "purchase invoice bill voucher supplier gst input credit import xml vendor",
+  hint: "Purchase bills to Tally purchase vouchers",
+};
+
+/** The sales register to GSTR-1 tables and a GSTR-3B working. */
+export const GST_SALES_JOB: NavEntry = {
+  label: "Sales → GSTR-1 & 3B",
+  href: "/app/jobs/gst-sales",
+  icon: Calculator,
+  keywords: "gstr-1 gstr1 gstr-3b gstr3b sales register b2b b2cs hsn return outward liability",
+  hint: "Sales register to GSTR-1 tables and a GSTR-3B working",
+};
+
+/** Salary sheet to a register with the employer's details, PF, ESI and TDS working, and a Tally entry. */
+export const PAYROLL_JOB: NavEntry = {
+  label: "Payroll",
+  href: "/app/jobs/payroll",
+  icon: Banknote,
+  keywords: "salary pf esi epf pt tds 192 employer employee payslip register uan",
+  hint: "Salary sheet to register, PF/ESI/TDS working and a Tally entry",
+};
+
+/** The jobs beyond the four everyday ones. Home and search offer them; the menu keeps them under Advanced. */
+export const MORE_JOBS: NavEntry[] = [BILLS_JOB, GST_SALES_JOB, GST_RECON_JOB, PAYROLL_JOB];
+
 /** Everything else. Shown only when the person opens Advanced. */
 export const ADVANCED_GROUPS: NavGroup[] = [
   {
+    title: "More jobs",
+    items: MORE_JOBS,
+  },
+  {
     title: "GST and TDS",
     items: [
-      GST_RECON_JOB,
       {
         label: "GST and TDS risks",
         href: "/app/gst-tds-risks",
@@ -247,13 +283,6 @@ export const ADVANCED_GROUPS: NavGroup[] = [
   {
     title: "Data sources",
     items: [
-      {
-        label: "Payroll",
-        href: "/app/payroll",
-        icon: Users,
-        keywords: "salary pf esi",
-        hint: "Payroll register and bank match",
-      },
       {
         label: "Gateway settlements",
         href: "/app/gateway-settlements",

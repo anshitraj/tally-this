@@ -236,6 +236,70 @@ export function extractInvoicesFromText(text: string): InvoiceRow[] {
   }];
 }
 
+export interface BillTaxLines {
+  /** Value before tax, when the invoice prints it with a clear label. */
+  taxable: number | null;
+  igst: number;
+  cgst: number;
+  sgst: number;
+  cess: number;
+  placeOfSupply: string | null;
+  reverseCharge: boolean;
+}
+
+const TAXABLE_LABEL = /taxable\s*(?:value|amount|amt)|total\s*(?:before|excl\w*)\s*(?:gst|tax)|(?:value|amount)\s*before\s*(?:gst|tax)|amount\s*excl\w*|assessable\s*value|basic\s*(?:amount|value)/i;
+const SUBTOTAL_LABEL = /^\s*(?:sub\s*-?\s*total|net\s*amount|total\s*value\s*of\s*goods)\b/i;
+const HEAD_WORDS: Array<[keyof Pick<BillTaxLines, "igst" | "cgst" | "sgst" | "cess">, RegExp]> = [
+  ["igst", /\bigst\b|integrated\s*(?:goods\s*and\s*services\s*)?tax/i],
+  ["cgst", /\bcgst\b|central\s*(?:goods\s*and\s*services\s*)?tax/i],
+  ["sgst", /\b[su]tgst\b|\bsgst\b|state\s*(?:goods\s*and\s*services\s*)?tax|union\s*territory\s*tax/i],
+  ["cess", /\bcess\b/i],
+];
+
+/**
+ * The amounts of tax printed on one invoice, by head. An invoice with several items prints each
+ * item's tax and then a total, so the largest value per head is the total. If a total is missing
+ * the sum will not agree with the invoice total and the caller shows the bill for review.
+ */
+export function extractBillTaxFromText(text: string): BillTaxLines {
+  const lines = text.split(/\r?\n/).map(clean).filter(Boolean);
+  const found: Record<"igst" | "cgst" | "sgst" | "cess", number[]> = { igst: [], cgst: [], sgst: [], cess: [] };
+  const taxable: number[] = [];
+  const subtotal: number[] = [];
+  lines.forEach((line, index) => {
+    if (/in\s*words/i.test(line)) return;
+    const withoutRates = line.replace(/@?\s*\d+(?:\.\d+)?\s*%/g, " ");
+    const heads = HEAD_WORDS.map(([head, pattern]) => ({ head, at: withoutRates.search(pattern) })).filter(entry => entry.at >= 0).sort((a, b) => a.at - b.at);
+    heads.forEach((entry, position) => {
+      const end = heads[position + 1]?.at ?? withoutRates.length;
+      const chunk = withoutRates.slice(entry.at, end);
+      // "Total CGST" lines count; an item table row with a HSN or quantity before the head does not.
+      const values = moneyTokens(chunk);
+      if (values.length > 0) found[entry.head].push(values[values.length - 1]);
+    });
+    if (heads.length === 0 && TAXABLE_LABEL.test(line)) {
+      let values = moneyTokens(line.replace(TAXABLE_LABEL, " "));
+      if (values.length === 0 && lines[index + 1] && !/[A-Za-z]{4}/.test(lines[index + 1])) values = moneyTokens(lines[index + 1]);
+      if (values.length > 0) taxable.push(values[values.length - 1]);
+    } else if (heads.length === 0 && SUBTOTAL_LABEL.test(line)) {
+      const values = moneyTokens(line.replace(SUBTOTAL_LABEL, " "));
+      if (values.length > 0) subtotal.push(values[values.length - 1]);
+    }
+  });
+  const biggest = (values: number[]) => (values.length > 0 ? Math.round(Math.max(...values) * 100) / 100 : 0);
+  const base = taxable.length > 0 ? taxable : subtotal;
+  const place = /place\s*of\s*supply\s*[:\-]?\s*([A-Za-z][A-Za-z &]{2,40}?)(?:\s*\(?\s*(\d{2})\s*\)?)?\s*$/im.exec(text) ?? /place\s*of\s*supply\s*[:\-]?\s*(\d{2})\s*[-–]?\s*([A-Za-z &]{3,40})/i.exec(text);
+  return {
+    taxable: base.length > 0 ? Math.round(Math.max(...base) * 100) / 100 : null,
+    igst: biggest(found.igst),
+    cgst: biggest(found.cgst),
+    sgst: biggest(found.sgst),
+    cess: biggest(found.cess),
+    placeOfSupply: place ? (place[2] && /^\d{2}$/.test(place[2]) ? `${place[2]}-${place[1]}` : place[1] && /^\d{2}$/.test(place[1]) ? `${place[1]}-${place[2]}` : place[1]).trim() : null,
+    reverseCharge: /reverse\s*charge\s*(?:applicable)?\s*[:\-]?\s*(?:yes|y)\b/i.test(text),
+  };
+}
+
 export type PdfText = { status: "ok"; text: string } | { status: "locked" } | { status: "no_text" } | { status: "unreadable" };
 
 /** The text layer of a PDF, if it has one. Scans have none and are left to OCR or AI. */

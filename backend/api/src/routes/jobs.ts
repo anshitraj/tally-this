@@ -169,12 +169,15 @@ router.post("/jobs/detect", requirePermission("uploads.read"), upload.array("fil
     return { fileName: file.originalname, ...(peek === "unknown" ? byName : { kind: peek } as typeof byName) };
   }));
   const kinds = new Set(detected.map(item => item.kind));
+  const hasBills = kinds.has("invoice_register") || kinds.has("invoice_document") || kinds.has("purchase_register");
   let job: string | null = null;
-  if (kinds.has("bank_statement") && kinds.has("tally_export")) job = "bank-tally";
-  else if (kinds.has("bank_statement") && (kinds.has("invoice_register") || kinds.has("invoice_document"))) job = "invoice-bank";
+  if (kinds.has("payroll_sheet")) job = "payroll";
+  else if (kinds.has("bank_statement") && kinds.has("tally_export")) job = "bank-tally";
+  else if (kinds.has("bank_statement") && hasBills) job = "invoice-bank";
+  else if (kinds.has("sales_register")) job = "gst-sales";
   else if (kinds.has("marketplace_report")) job = "ecommerce-gst";
   else if (kinds.has("tally_export")) job = "bank-tally";
-  else if (kinds.has("invoice_register") || kinds.has("invoice_document")) job = "invoice-bank";
+  else if (hasBills) job = "bills-tally";
   else if (kinds.has("bank_statement")) job = "bank-to-tally";
   res.json({ ok: true, files: detected, job });
 });
@@ -583,18 +586,24 @@ router.get("/jobs/history", requirePermission("uploads.read"), async (req, res):
                 'entries', jsonb_array_length(COALESCE(ra.json_data->'comparison'->'items', '[]'::jsonb)),
                 'matched', (SELECT count(*) FROM jsonb_array_elements(COALESCE(ra.json_data->'comparison'->'items', '[]'::jsonb)) item WHERE item->>'bucket' IN ('matched', 'confirmed')),
                 'summary', ra.json_data->'summary',
-                'platform', ra.json_data->>'platform')
+                'platform', ra.json_data->>'platform',
+                'bills', jsonb_array_length(COALESCE(ra.json_data->'bills', '[]'::jsonb)),
+                'employees', jsonb_array_length(COALESCE(ra.json_data->'employees', '[]'::jsonb)),
+                'documents', ra.json_data->'gstr1'->'counts'->>'documents',
+                'period', COALESCE(ra.json_data->'gstr1'->>'period', ra.json_data->>'month'),
+                'employer', ra.json_data->'employer'->>'name',
+                'netPay', ra.json_data->'statutory'->>'net')
               FROM run_artifacts ra
-              WHERE ra.run_id = wr.id AND ra.artifact_type IN ('bank_statement', 'bank_tally_comparison', 'invoice_bank_comparison', 'ecommerce_gst', 'gstr2b_comparison')
+              WHERE ra.run_id = wr.id AND ra.artifact_type IN ('bank_statement', 'bank_tally_comparison', 'invoice_bank_comparison', 'ecommerce_gst', 'gstr2b_comparison', 'purchase_bills', 'gstr1_working', 'payroll_register')
               ORDER BY ra.created_at ASC LIMIT 1) AS info
       FROM workflow_runs wr
       LEFT JOIN users u ON u.id = wr.created_by
       WHERE wr.company_id = ${companyId}
         AND (COALESCE(wr.metadata_json->>'clientId','') = '' OR wr.metadata_json->>'clientId' = ${String(companyId)})
-        AND NOT EXISTS (SELECT 1 FROM run_artifacts a WHERE a.run_id = wr.id AND a.artifact_type = 'ledger_mappings')
+        AND NOT EXISTS (SELECT 1 FROM run_artifacts a WHERE a.run_id = wr.id AND a.artifact_type IN ('ledger_mappings', 'client_profile'))
         AND wr.created_at >= ${cutoff}::timestamptz
         AND (${type} = '' OR wr.run_type = ${type}
-             OR (${type} = 'other' AND wr.run_type NOT IN ('bank_to_tally', 'bank_tally_reconciliation', 'ecommerce_gst', 'bank_invoice_reconciliation', 'gstr_2b_reconciliation')))
+             OR (${type} = 'other' AND wr.run_type NOT IN ('bank_to_tally', 'bank_tally_reconciliation', 'ecommerce_gst', 'bank_invoice_reconciliation', 'gstr_2b_reconciliation', 'bills_to_tally', 'gst_sales_register', 'payroll_register')))
         AND (${search} = '' OR wr.title ILIKE ${pattern})
       ORDER BY wr.created_at DESC
       LIMIT ${limit + 1} OFFSET ${offset}
@@ -607,7 +616,7 @@ router.get("/jobs/history", requirePermission("uploads.read"), async (req, res):
         SELECT count(*)::int AS n FROM workflow_runs wr
         WHERE wr.company_id = ${companyId}
           AND (COALESCE(wr.metadata_json->>'clientId','') = '' OR wr.metadata_json->>'clientId' = ${String(companyId)})
-          AND NOT EXISTS (SELECT 1 FROM run_artifacts a WHERE a.run_id = wr.id AND a.artifact_type = 'ledger_mappings')
+          AND NOT EXISTS (SELECT 1 FROM run_artifacts a WHERE a.run_id = wr.id AND a.artifact_type IN ('ledger_mappings', 'client_profile'))
           AND wr.created_at < ${cutoff}::timestamptz
       `);
       olderCount = Number((older.rows[0] as { n?: number } | undefined)?.n ?? 0);
