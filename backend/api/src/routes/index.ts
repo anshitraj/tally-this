@@ -26,6 +26,9 @@ import taxAuditRouter from "./taxAudit";
 import practiceRouter from "./practice";
 import tdsReconRouter from "./tdsRecon";
 import jobsRouter from "./jobs";
+import gstJobsRouter from "./gstJobs";
+import jobReportsRouter from "./jobReports";
+import reconExportsRouter from "./reconExports";
 import accountRouter from "./account";
 import neonAuthRouter from "./neonAuth";
 
@@ -36,6 +39,10 @@ router.use(overviewRouter);
 router.use(demoRouter);
 router.use(uploadsRouter);
 router.use(jobsRouter);
+router.use(gstJobsRouter);
+// jobReports adds /reports/jobs-*; it comes before reportsRouter so nothing there can shadow it.
+router.use(jobReportsRouter);
+router.use(reconExportsRouter);
 router.use(accountRouter);
 router.use(neonAuthRouter);
 router.use(transactionsRouter);

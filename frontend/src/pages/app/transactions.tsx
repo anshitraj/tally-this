@@ -3,9 +3,11 @@ import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { Download, Search } from "lucide-react";
 import PageHeader from "@/components/app/PageHeader";
+import { NoDataYet } from "@/components/app/EmptyPanel";
 import StatusBadge from "@/components/app/StatusBadge";
 import { ConfidenceBar, EmptyState, PageTransition } from "@/components/app/finverify-ui";
 import { exportToCsv, formatCurrencyFull, formatDate } from "@/lib/format";
+import { readJson } from "@/lib/api";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -33,7 +35,7 @@ export default function TransactionsPage() {
 
   const { data = [], isLoading } = useQuery<Transaction[]>({
     queryKey: ["transactions"],
-    queryFn: () => fetch(`${BASE}/api/transactions`).then(r => r.json()),
+    queryFn: () => fetch(`${BASE}/api/transactions`).then(readJson),
   });
 
   const filtered = data.filter(t => {
@@ -110,7 +112,9 @@ export default function TransactionsPage() {
               ) : filtered.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="p-6">
-                    <EmptyState title="No transactions found" description="Adjust filters or upload a bank statement to add transaction rows." />
+                    <NoDataYet title="No transactions to show" bare job={{ label: "Convert a bank statement", href: "/app/jobs/bank-to-tally" }}>
+                      Change the filters above, or upload a bank statement to add transaction rows.
+                    </NoDataYet>
                   </td>
                 </tr>
               ) : filtered.map(t => (

@@ -35,20 +35,56 @@ export interface ReconResult {
 
 const norm = (s: string) => (s || "").trim().toUpperCase();
 const r2 = (n: number) => Math.round(n * 100) / 100;
-const keyOf = (e: TdsEntry) => `${norm(e.tan) || norm(e.deductor)}|${norm(e.section)}`;
 
+/** "M/s Sharma Traders Pvt. Ltd." and "SHARMA TRADERS PRIVATE LIMITED" are the same party. */
+export function normalizeParty(name: string): string {
+  return norm(name)
+    .replace(/\bM\/?S\b\.?/g, " ")
+    .replace(/\b(PRIVATE|PVT|LIMITED|LTD|LLP|CO|COMPANY|AND)\b\.?/g, " ")
+    .replace(/&/g, " ")
+    .replace(/[^A-Z0-9]+/g, " ")
+    .trim();
+}
+
+const SECTIONLESS = "*";
+
+/**
+ * Matches the two statements by deductor and section.
+ *
+ * Form 26AS carries the deductor's TAN; a ledger from the books usually carries only the name.
+ * A books line without a TAN takes the TAN of the 26AS deductor with the same (tidied) name.
+ * A books line without a section is compared with everything that deductor shows in 26AS.
+ */
 export function reconcile26AS(as26: TdsEntry[], books: TdsEntry[]): ReconResult {
-  const map = new Map<string, { deductor: string; tan: string; section: string; as26: number; books: number }>();
-
-  const add = (e: TdsEntry, side: "as26" | "books") => {
-    const k = keyOf(e);
-    const row = map.get(k) ?? { deductor: e.deductor, tan: e.tan, section: e.section, as26: 0, books: 0 };
-    row[side] += e.amount;
-    if (!row.deductor && e.deductor) row.deductor = e.deductor;
-    map.set(k, row);
+  const tanByName = new Map<string, string>();
+  for (const entry of as26) {
+    const tan = norm(entry.tan);
+    if (tan && entry.deductor) tanByName.set(normalizeParty(entry.deductor), tan);
+  }
+  const identity = (entry: TdsEntry) => {
+    const tan = norm(entry.tan) || tanByName.get(normalizeParty(entry.deductor)) || "";
+    return tan ? `T:${tan}` : `N:${normalizeParty(entry.deductor)}`;
   };
-  as26.forEach(e => add(e, "as26"));
-  books.forEach(e => add(e, "books"));
+  const sectionOf = (entry: TdsEntry) => norm(entry.section).replace(/[^0-9A-Z]/g, "");
+
+  // Deductors for whom the books give no section: their 26AS lines are compared as one.
+  const sectionless = new Set<string>();
+  for (const entry of books) if (!sectionOf(entry)) sectionless.add(identity(entry));
+
+  const map = new Map<string, { deductor: string; tan: string; section: string; as26: number; books: number; sections: Set<string> }>();
+  const add = (entry: TdsEntry, side: "as26" | "books") => {
+    const who = identity(entry);
+    const section = sectionless.has(who) ? SECTIONLESS : sectionOf(entry);
+    const key = `${who}|${section}`;
+    const row = map.get(key) ?? { deductor: entry.deductor, tan: entry.tan, section: section === SECTIONLESS ? "" : section, as26: 0, books: 0, sections: new Set<string>() };
+    row[side] = r2(row[side] + entry.amount);
+    if (!row.deductor && entry.deductor) row.deductor = entry.deductor;
+    if (!row.tan && entry.tan) row.tan = entry.tan;
+    if (sectionOf(entry)) row.sections.add(sectionOf(entry));
+    map.set(key, row);
+  };
+  as26.forEach(entry => add(entry, "as26"));
+  books.forEach(entry => add(entry, "books"));
 
   const rows: ReconRow[] = [...map.values()].map(r => {
     const diff = r2(r.as26 - r.books);
@@ -58,7 +94,8 @@ export function reconcile26AS(as26: TdsEntry[], books: TdsEntry[]): ReconResult 
     else if (Math.abs(diff) < 1) status = "Matched";
     else if (diff > 0) status = "Short credit in books";
     else status = "Excess in books";
-    return { deductor: r.deductor, tan: r.tan, section: r.section, as26: r2(r.as26), books: r2(r.books), difference: diff, status };
+    const section = r.section || [...r.sections].sort().join(", ");
+    return { deductor: r.deductor, tan: r.tan, section, as26: r2(r.as26), books: r2(r.books), difference: diff, status };
   }).sort((a, b) => Math.abs(b.difference) - Math.abs(a.difference));
 
   const totals = {

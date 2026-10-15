@@ -2,8 +2,10 @@ import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { Users } from "lucide-react";
 import PageHeader from "@/components/app/PageHeader";
+import { NoDataYet } from "@/components/app/EmptyPanel";
 import StatusBadge from "@/components/app/StatusBadge";
 import { formatCurrencyFull, formatDate } from "@/lib/format";
+import { readJson } from "@/lib/api";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -21,7 +23,7 @@ interface PayrollEntry {
 export default function PayrollPage() {
   const { data = [], isLoading } = useQuery<PayrollEntry[]>({
     queryKey: ["payroll"],
-    queryFn: () => fetch(`${BASE}/api/payroll`).then(r => r.json()),
+    queryFn: () => fetch(`${BASE}/api/payroll`).then(readJson),
   });
 
   const totalNet = data.reduce((s, e) => s + e.netAmount, 0);
@@ -73,8 +75,9 @@ export default function PayrollPage() {
               ) : data.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="px-4 py-12 text-center">
-                    <Users className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
-                    <div className="text-muted-foreground">No payroll entries</div>
+                    <NoDataYet icon={Users} title="No payroll entries yet" bare>
+                      Upload a payroll sheet (Excel or CSV) and it is listed here, ready to match with the salary payments in your bank.
+                    </NoDataYet>
                   </td>
                 </tr>
               ) : data.map(e => (

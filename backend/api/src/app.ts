@@ -8,6 +8,7 @@ import { logger } from "./lib/logger";
 import { attachAuthContext } from "./middleware/authz";
 import { periodLockMiddleware } from "./middleware/periodLock";
 import { UnreadableFileError } from "./services/fileDetect";
+import { MAX_UPLOAD_MB } from "./lib/uploadLimit";
 
 const CORS_ORIGIN = process.env.CORS_ORIGIN ?? "http://localhost:21950";
 
@@ -67,6 +68,11 @@ app.use("/api", (err: unknown, req: express.Request, res: express.Response, _nex
 
   if (typeof err === "object" && err !== null && "type" in err && err.type === "entity.too.large") {
     res.status(413).json({ ok: false, message: "This request is too large. Split the file into smaller statements and try again." });
+    return;
+  }
+
+  if (typeof err === "object" && err !== null && "code" in err && err.code === "LIMIT_FILE_SIZE") {
+    res.status(413).json({ ok: false, message: `This file is larger than the ${MAX_UPLOAD_MB} MB upload limit. Download the statement from net banking, which is usually much smaller, or split it by period.` });
     return;
   }
 

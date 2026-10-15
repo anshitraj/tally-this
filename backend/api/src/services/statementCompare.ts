@@ -5,6 +5,7 @@
 import { calculateConfidenceScore, calculateDateDistance, calculateNameSimilarity, normalizeName } from "./matchingEngine";
 import { normalizeAmount, normalizeDate, parseCsvLine } from "./bankStatement";
 import type { NormalizedBankTxn } from "./bankStatement";
+import { classifyTallyHeader, isSideMarker, sideOf, type TallyColumn } from "./tallyColumns";
 
 export type ReviewStatus = "suggested" | "approved" | "rejected" | "needs_info" | "document_requested" | "resolved";
 
@@ -43,44 +44,79 @@ export interface CompareResult {
   items: CompareItem[];
 }
 
-function headerIndex(headers: string[], aliases: string[]) {
-  const normalized = headers.map(header => header.toLowerCase());
-  return normalized.findIndex(header => aliases.some(alias => header.includes(alias)));
+function firstOfKind(kinds: Array<TallyColumn | null>, kind: TallyColumn) {
+  return kinds.indexOf(kind);
+}
+
+/** Amount text with its side: "118,000.00", "INR 118,000.00 Dr", "(2,400.00)". */
+function readAmount(cell: string): { value: number | null; side: "debit" | "credit" | null } {
+  const text = cell.trim();
+  if (!text) return { value: null, side: null };
+  const suffix = text.match(/\b(dr|cr)\.?\s*$/i);
+  const value = normalizeAmount(text);
+  return { value, side: suffix ? sideOf(suffix[1]) : null };
 }
 
 export function parseTallyLedgerCsv(text: string): TallyRow[] {
   const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  if (lines.length === 0) return [];
   let headerAt = 0;
-  for (let i = 0; i < Math.min(lines.length, 15); i += 1) {
-    const cells = parseCsvLine(lines[i]).map(cell => cell.toLowerCase());
-    if (cells.some(cell => cell.includes("date")) && cells.some(cell => cell.includes("debit") || cell.includes("particular"))) {
+  for (let i = 0; i < Math.min(lines.length, 20); i += 1) {
+    const kinds = parseCsvLine(lines[i]).map(classifyTallyHeader);
+    const has = (kind: TallyColumn) => kinds.includes(kind);
+    if (has("date") && (has("debit") || has("credit") || has("amount") || has("particulars"))) {
       headerAt = i;
       break;
     }
   }
-  const headers = parseCsvLine(lines[headerAt]);
-  const dateIdx = headerIndex(headers, ["date"]);
-  const ledgerIdx = headerIndex(headers, ["particular", "ledger", "account"]);
-  const voucherIdx = headerIndex(headers, ["vch no", "voucher"]);
-  const debitIdx = headerIndex(headers, ["debit"]);
-  const creditIdx = headerIndex(headers, ["credit"]);
-  const narrationIdx = headerIndex(headers, ["narration", "description"]);
+  const headerKinds = parseCsvLine(lines[headerAt]).map(classifyTallyHeader);
+  const dateIdx = firstOfKind(headerKinds, "date");
+  const ledgerIdx = firstOfKind(headerKinds, "particulars");
+  const voucherIdx = firstOfKind(headerKinds, "vchNo");
+  const debitIdx = firstOfKind(headerKinds, "debit");
+  const creditIdx = firstOfKind(headerKinds, "credit");
+  const amountIdx = firstOfKind(headerKinds, "amount");
+  const sideIdx = firstOfKind(headerKinds, "drcr");
+  const narrationIdx = firstOfKind(headerKinds, "narration");
   const rows: TallyRow[] = [];
+  // Tally prints the date once for a run of vouchers on the same day, so an empty date cell
+  // belongs to the date above. Dropping those rows would silently lose real entries.
+  let carriedDate: string | null = null;
   for (let i = headerAt + 1; i < lines.length; i += 1) {
     const cells = parseCsvLine(lines[i]);
-    const date = normalizeDate(cells[dateIdx] ?? "");
-    const ledgerName = (cells[ledgerIdx] ?? "").trim();
-    if (!date || !ledgerName) continue;
-    const debit = normalizeAmount(cells[debitIdx] ?? "");
-    const credit = normalizeAmount(cells[creditIdx] ?? "");
-    if ((debit == null || debit === 0) && (credit == null || credit === 0)) continue;
+    const dateCell = (cells[dateIdx] ?? "").trim();
+    const cellDate = normalizeDate(dateCell);
+    if (cellDate) carriedDate = cellDate;
+    const date = cellDate ?? (dateCell === "" ? carriedDate : null);
+    // ERP 9 puts "To" or "By" in the Particulars cell and the name in the next one.
+    let ledgerCell = (cells[ledgerIdx] ?? "").trim();
+    if (isSideMarker(ledgerCell)) ledgerCell = cells.slice(ledgerIdx + 1).map(cell => cell.trim()).find(cell => cell && !isSideMarker(cell) && normalizeAmount(cell) == null && !normalizeDate(cell)) ?? "";
+    const ledgerName = ledgerCell.replace(/^(to|by)\s+/i, "");
+    // Balances and totals are not entries.
+    if (!date || !ledgerName || /^(opening|closing)\s+balance\b|^(grand\s+)?total\b|^carried\s+(over|forward)\b|^brought\s+forward\b/i.test(ledgerName)) continue;
+    let debit: number | null = null;
+    let credit: number | null = null;
+    if (debitIdx >= 0 || creditIdx >= 0) {
+      const d = debitIdx >= 0 ? readAmount(cells[debitIdx] ?? "").value : null;
+      const c = creditIdx >= 0 ? readAmount(cells[creditIdx] ?? "").value : null;
+      debit = d != null && d !== 0 ? Math.abs(d) : null;
+      credit = c != null && c !== 0 ? Math.abs(c) : null;
+    } else if (amountIdx >= 0) {
+      // One Amount column: the side is in a Dr/Cr column, beside the amount, or in its sign.
+      const amount = readAmount(cells[amountIdx] ?? "");
+      if (amount.value == null || amount.value === 0) continue;
+      const side = (sideIdx >= 0 ? sideOf(cells[sideIdx]) : null) ?? amount.side ?? (amount.value < 0 ? "credit" : "debit");
+      if (side === "credit") credit = Math.abs(amount.value);
+      else debit = Math.abs(amount.value);
+    }
+    if (debit == null && credit == null) continue;
     rows.push({
       id: `tally-${i + 1}`,
       date,
       ledgerName,
       voucherNumber: (cells[voucherIdx] ?? "").trim() || null,
-      debit: debit && debit !== 0 ? Math.abs(debit) : null,
-      credit: credit && credit !== 0 ? Math.abs(credit) : null,
+      debit,
+      credit,
       narration: (cells[narrationIdx] ?? "").trim(),
       rowNumber: i + 1,
     });

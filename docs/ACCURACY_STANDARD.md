@@ -8,6 +8,8 @@ The release target is exact source agreement for every relevant row and value in
 
 Report both correctness and coverage. Refusing an unreadable file protects accuracy but reduces automation coverage; excluding those files from reporting would give a misleading picture. User corrections and AI extraction must be counted separately from automatic verified extraction.
 
+**AI-read statements are never "verified".** The model reads the balances as well as the amounts, so a closing balance it reports can be the last row it happened to read, and a model that recomputes balances produces rows that follow each other while being wrong. A long scan is therefore read in page groups, the balance is checked across every join, groups whose joins or dates disagree are read again by the strongest model, and whatever still disagrees is flagged. The result is always "needs review" and the reviewer compares the transaction count and totals with the bank statement. Measured on synthetic image statements only (12 and 40 pages, live Gemini): see the README for what is and is not measured.
+
 ## Required evidence per stage
 
 | Stage | Requirement | Stop or review when |

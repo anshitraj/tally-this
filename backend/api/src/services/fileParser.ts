@@ -3,6 +3,7 @@ import { PDFParse } from "pdf-parse";
 import { extractHybrid, type ExtractionMethod } from "./pdfTableExtractor";
 import { scanCsvTable } from "./bankStatement";
 import { recognizeStatement } from "./statementOcr";
+import { pageRanges, pagesNeedingOcr } from "./statementReadPlan";
 
 export interface ParsedFileResult {
   parser: "csv" | "excel" | "pdf" | "image" | "unsupported";
@@ -248,7 +249,7 @@ async function tryPythonPdfTable(file: Express.Multer.File, sourceType: string):
 export async function parseUploadedFile(
   file: Express.Multer.File,
   sourceType: string = "unknown",
-  options: { password?: string } = {},
+  options: { password?: string; onProgress?: (percent: number, step: string) => void } = {},
 ): Promise<ParsedFileResult> {
   const extension = file.originalname.split(".").pop()?.toLowerCase();
 
@@ -360,23 +361,48 @@ export async function parseUploadedFile(
     await parser.destroy();
     let pdfText = parsed.text ?? "";
     let ocrStatus: ParsedFileResult["ocrStatus"];
-    if (pdfText.trim().length < 40) {
-      const ocr = await recognizeStatement({ buffer: file.buffer, fileName: file.originalname, kind: "pdf" });
-      if (!ocr.available) {
+    const extraNotes: string[] = [];
+    // Only pages without a real text layer are scanned. A text page is read exactly from its text.
+    // (The joined text carries "-- N of T --" page markers, so its length says nothing about scans.)
+    const pageTexts = parsed.pages ?? [];
+    const scannedPages = pagesNeedingOcr(pageTexts);
+    if (scannedPages.length > 0) {
+      const allScanned = scannedPages.length >= Math.max(1, parsed.total);
+      const ocr = await recognizeStatement({
+        buffer: file.buffer,
+        fileName: file.originalname,
+        kind: "pdf",
+        pageCount: parsed.total,
+        pages: scannedPages,
+        onProgress: options.onProgress
+          ? (done, total) => options.onProgress?.(10 + Math.round((80 * done) / Math.max(1, total)), `Reading page ${done} of ${total}`)
+          : undefined,
+      });
+      if (!ocr.available && allScanned) {
         return {
           parser: "pdf",
           rowCount: 0,
           detectedColumns: [],
           status: "metadata_only",
           pageCount: parsed.total,
-          textLength: pdfText.trim().length,
-          textPreview: pdfText.replace(/\s+/g, " ").trim().slice(0, 1000),
+          textLength: 0,
+          textPreview: "",
           ocrStatus: "unavailable",
           notes: [ocr.note],
         };
       }
-      pdfText = ocr.text;
-      ocrStatus = "pending_review";
+      if (!ocr.available) {
+        // A mostly-text statement keeps its text layer. The thin pages are named, never silently dropped.
+        extraNotes.push(`Page${scannedPages.length === 1 ? "" : "s"} ${pageRanges(scannedPages)} had no text and could not be read by OCR, so rows on ${scannedPages.length === 1 ? "that page" : "those pages"} may be missing.`);
+      } else if (allScanned) {
+        pdfText = ocr.text;
+        ocrStatus = "pending_review";
+      } else {
+        // Text pages keep their text layer; scanned pages take the OCR text. Page order is kept.
+        const ocrByPage = new Map(ocr.pages.map(item => [item.page, item.text]));
+        pdfText = [...pageTexts].sort((a, b) => a.num - b.num).map(page => ocrByPage.get(page.num) ?? page.text).join("\n");
+        ocrStatus = "pending_review";
+      }
     }
     const lines = pdfText.split(/\r?\n/).map((line: string) => line.trim()).filter(Boolean);
 
@@ -404,11 +430,14 @@ export async function parseUploadedFile(
       ocrStatus,
       extractionMethod: hybrid.method,
       extractionConfidence: hybrid.confidence,
-      notes: ocrStatus === "pending_review"
-        ? [`OCR extracted — pending review. These rows are not verified books.`, ...hybrid.notes]
-        : parsedRows.length > 0
-        ? [`PDF extraction (${hybrid.method}, ${Math.round(hybrid.confidence * 100)}% confidence): ${parsedRows.length} rows. AI/auto rows are pending CA review before final use.`, ...hybrid.notes]
-        : ["PDF text extracted but no structured rows could be derived. Upload CSV/Excel or wait for AI fallback (requires GEMINI_API_KEY).", ...hybrid.notes],
+      notes: [
+        ...extraNotes,
+        ...(ocrStatus === "pending_review"
+          ? [`OCR extracted — pending review. These rows are not verified books.`, ...hybrid.notes]
+          : parsedRows.length > 0
+          ? [`PDF extraction (${hybrid.method}, ${Math.round(hybrid.confidence * 100)}% confidence): ${parsedRows.length} rows. AI/auto rows are pending CA review before final use.`, ...hybrid.notes]
+          : ["PDF text extracted but no structured rows could be derived. Upload CSV/Excel or wait for AI fallback (requires GEMINI_API_KEY).", ...hybrid.notes]),
+      ],
     };
   }
 

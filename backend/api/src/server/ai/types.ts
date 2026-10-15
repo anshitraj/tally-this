@@ -17,6 +17,8 @@ export type AIProviderConfig = {
   temperature: number;
   maxTokens: number;
   timeoutMs: number;
+  /** Extraction does not need long reasoning; "low" keeps big documents fast. Gemini 3 models only. */
+  thinkingLevel?: "low";
 };
 
 export type AIResult<T> = {

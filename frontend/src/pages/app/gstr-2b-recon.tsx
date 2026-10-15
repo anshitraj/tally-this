@@ -1,10 +1,12 @@
 import { useRef, useState } from "react";
+import { useLocation } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Upload, BadgeIndianRupee, CheckCircle2, AlertTriangle, FileX2, FileQuestion } from "lucide-react";
 import PageHeader from "@/components/app/PageHeader";
 import { PageTransition, EmptyState } from "@/components/app/finverify-ui";
 import { formatCurrencyFull } from "@/lib/format";
 import { useToast } from "@/hooks/use-toast";
+import { readJson } from "@/lib/api";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -35,6 +37,7 @@ const STATUS_LABELS: Record<string, { label: string; tone: string; icon: typeof 
 
 export default function Gstr2bReconPage() {
   const { toast } = useToast();
+  const [, navigate] = useLocation();
   const fileRef = useRef<HTMLInputElement>(null);
   const [period, setPeriod] = useState<string>(new Date().toISOString().slice(0, 7));
   const [reconResult, setReconResult] = useState<ReconResult | null>(null);
@@ -42,7 +45,7 @@ export default function Gstr2bReconPage() {
 
   const { data: rows = [], refetch } = useQuery<{ id: number; supplier_gstin: string; invoice_number: string; return_period: string }[]>({
     queryKey: ["gstr-2b", period],
-    queryFn: () => fetch(`${BASE}/api/gstr-2b?period=${period}`).then(r => r.json()),
+    queryFn: () => fetch(`${BASE}/api/gstr-2b?period=${period}`).then(readJson),
   });
 
   const uploadMutation = useMutation({
@@ -63,14 +66,20 @@ export default function Gstr2bReconPage() {
   });
 
   const reconMutation = useMutation({
-    mutationFn: () => fetch(`${BASE}/api/gstr-2b/reconcile`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ period }),
-    }).then(r => r.json() as Promise<ReconResult>),
+    mutationFn: async () => {
+      const response = await fetch(`${BASE}/api/gstr-2b/reconcile`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ period }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok || !body?.summary) throw new Error(body?.error || "The comparison could not run. Try again.");
+      return body as ReconResult;
+    },
     onSuccess: r => {
       setReconResult(r);
       toast({ title: "Reconciliation complete", description: `${r.summary.matched} matched, ${r.summary.missingIn2B} ITC-at-risk` });
     },
+    onError: err => toast({ title: "Comparison failed", description: err instanceof Error ? err.message : "Try again.", variant: "destructive" }),
   });
 
   const filtered = reconResult?.results.filter(r => filter === "all" || r.status === filter) ?? [];
@@ -78,8 +87,8 @@ export default function Gstr2bReconPage() {
   return (
     <PageTransition className="mx-auto max-w-6xl">
       <PageHeader
-        title="GSTR-2B Reconciliation"
-        subtitle="Compare GSTR-2B (supplier filings on GST portal) with your purchase register. Flag ITC at risk."
+        title="GSTR-2B vs imported invoices"
+        subtitle="Compare GSTR-2B with the purchase invoices already imported in the Upload center."
         actions={
           <div className="flex items-center gap-2">
             <input type="month" value={period} onChange={e => setPeriod(e.target.value)} className="fv-input" />
@@ -100,15 +109,30 @@ export default function Gstr2bReconPage() {
         }
       />
 
-      <div className="fv-status-review mb-6 rounded-2xl border p-4 text-sm leading-6">
-        Download GSTR-2B JSON from GST portal → Returns → GSTR-2B → JSON download. Upload here. We compare with your purchase invoices and flag mismatches. Potential ITC risk → needs CA review.
+      <div className="fv-status-review mb-6 flex flex-wrap items-center gap-3 rounded-2xl border p-4 text-sm leading-6">
+        <span className="min-w-0 flex-1">
+          Upload GSTR-2B JSON from the GST portal (Returns → GSTR-2B → Download JSON). It is compared with the invoices imported in the Upload center. Potential ITC risk → needs CA review.
+        </span>
+        <button type="button" className="fv-button-secondary shrink-0" onClick={() => navigate("/app/jobs/gstr-2b")}>
+          Have a purchase register file? Use GSTR-2B ↔ Books
+        </button>
       </div>
 
       {rows.length === 0 && !reconResult ? (
         <EmptyState
           icon={BadgeIndianRupee}
           title="No GSTR-2B data uploaded"
-          description="Upload GSTR-2B JSON (or CSV with columns: supplier_gstin, invoice_number, taxable_value, igst, cgst, sgst) for the selected period."
+          description="Upload GSTR-2B JSON for the selected month, then compare it with your imported invoices. A CSV needs the columns supplier_gstin, invoice_number, taxable_value, igst, cgst and sgst."
+          action={
+            <div className="flex flex-wrap justify-center gap-2">
+              <button type="button" className="fv-button-primary" onClick={() => fileRef.current?.click()} disabled={uploadMutation.isPending}>
+                <Upload className="h-4 w-4" /> {uploadMutation.isPending ? "Uploading…" : "Upload GSTR-2B"}
+              </button>
+              <button type="button" className="fv-button-secondary" onClick={() => navigate("/app/jobs/gstr-2b")}>
+                Compare with a purchase register file
+              </button>
+            </div>
+          }
         />
       ) : (
         <>

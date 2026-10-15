@@ -4,6 +4,7 @@ import { AlertCircle, BadgeIndianRupee, BookOpen, CreditCard, Eye, FileText, Fol
 import { formatDate, formatDateTime } from "@/lib/format";
 import { useToast } from "@/hooks/use-toast";
 import StatusBadge from "@/components/app/StatusBadge";
+import { readJson } from "@/lib/api";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -259,7 +260,7 @@ export default function CurrentUploadedFiles() {
 
   const { data = [], isLoading } = useQuery<UploadBatch[]>({
     queryKey: ["uploads"],
-    queryFn: () => fetch(`${BASE}/api/uploads`).then(r => r.json()),
+    queryFn: () => fetch(`${BASE}/api/uploads`).then(readJson),
   });
 
   const removeMutation = useMutation({

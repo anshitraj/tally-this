@@ -14,6 +14,7 @@ import PageHeader from "@/components/app/PageHeader";
 import StatusBadge from "@/components/app/StatusBadge";
 import { severityColor, formatDateTime } from "@/lib/format";
 import { useToast } from "@/hooks/use-toast";
+import { readJson } from "@/lib/api";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -47,7 +48,16 @@ function GenerateCaPackButton() {
     setGenerating(true);
     try {
       const res = await fetch(`${BASE}/api/reconciliation/finalize`, { method: "POST" });
-      const data = await res.json() as { ok: boolean; approved: number; pending: number; message: string };
+      const data = await res.json().catch(() => ({})) as { ok: boolean; approved: number; pending: number; message: string };
+      // A failed request must never be shown as a ready pack.
+      if (!res.ok || data.ok === false || typeof data.pending !== "number") {
+        toast({
+          title: "Could not generate the pack",
+          description: data.message || "The server could not finish this. Try again, or open Reconciliation to see what is pending.",
+          variant: "destructive",
+        });
+        return;
+      }
       if (data.pending > 0) {
         toast({
           title: `${data.pending} items still pending`,
@@ -90,7 +100,7 @@ function CaReviewTab() {
 
   const { data = [], isLoading } = useQuery<CaReviewItem[]>({
     queryKey: ["caReview"],
-    queryFn: () => fetch(`${BASE}/api/ca-review`).then(r => r.json()),
+    queryFn: () => fetch(`${BASE}/api/ca-review`).then(readJson),
   });
 
   const actionMutation = useMutation({
@@ -333,7 +343,7 @@ export default function ActionItemsPage() {
 
   const { data: caItems = [] } = useQuery<CaReviewItem[]>({
     queryKey: ["caReview"],
-    queryFn: () => fetch(`${BASE}/api/ca-review`).then(r => r.json()),
+    queryFn: () => fetch(`${BASE}/api/ca-review`).then(readJson),
   });
 
   const pendingCount = caItems.filter(i => i.status === "pending").length;

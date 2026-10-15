@@ -11,9 +11,12 @@ import { logger } from "../lib/logger";
 import { logAIUsage } from "../server/ai/usageLogger";
 import { estimateTokens, geminiModels, getAIProviderSettings, type AIProviderName } from "../server/ai/types";
 import type { InvoiceRow } from "./invoiceVerify";
-import { counterpartyFrom, normalizeDate, type BankStatementSummary, type NormalizedBankTxn } from "./bankStatement";
-import { detectBankFromStatement } from "./bankDirectory";
-import { checkRunningBalance, chronological, type StatementCheck } from "./statementCheck";
+import { normalizeDate } from "./bankStatement";
+import { BANK_PROMPT, bankStatementAnswerSchema, compactStatementSchema, finishAiRead, money, toSummary, type AIBankStatement, type AIStatementRead } from "./aiStatementShape";
+import { readBankStatementByPages, type DocFile } from "./statementPageReader";
+import { AI_ATTEMPTS_PER_GROUP, AI_CALL_TIMEOUT_MS, chainIntact, pageRanges } from "./statementReadPlan";
+
+export type { AIBankStatement, AIStatementRead } from "./aiStatementShape";
 
 const MAX_BYTES = 20 * 1024 * 1024;
 
@@ -39,7 +42,6 @@ export function mimeFor(fileName: string, declared?: string) {
   return declared || "application/octet-stream";
 }
 
-type DocFile = { data: Buffer; mimeType: string };
 
 /**
  * Tries Claude, then the Gemini models in order. `score` (0..1) lets the caller keep
@@ -58,6 +60,20 @@ async function readDocument<T>(input: {
   score?: (data: T) => number;
   /** A valid answer that found nothing. Two in a row means the file has nothing to find; stop paying for more tries. */
   empty?: (data: T) => boolean;
+  /** Per-attempt limit for Gemini. Defaults to five minutes, which suits one document but not many page groups. */
+  timeoutMs?: number;
+  /** Stop after this many models. */
+  maxAttempts?: number;
+  /** Extraction without long reasoning: much faster on dense tables. */
+  fast?: boolean;
+  /**
+   * Try the quick fallback model first, twice (its slips are random, so a fresh answer usually
+   * proves), then the primary model. Slower models in between are left out: on dense numbers a
+   * model that is quick and wrong is worse than none.
+   */
+  fastestFirst?: boolean;
+  /** The primary model only, twice. For a second look at what the quick model could not prove. */
+  primaryOnly?: boolean;
 }): Promise<DocReadResult<T>> {
   const bytes = input.files.reduce((sum, file) => sum + file.data.length, 0);
   if (bytes > MAX_BYTES) return { ok: false, error: "file_too_large_for_ai" };
@@ -70,7 +86,11 @@ async function readDocument<T>(input: {
     // Primary model first, then the fallback model (often a cheaper tier with free quota).
     for (const model of geminiModels()) {
       const base = geminiConfig(model);
-      const config = { ...base, timeoutMs: Math.max(base.timeoutMs, 300_000) };
+      const config = {
+        ...base,
+        timeoutMs: input.timeoutMs ?? Math.max(base.timeoutMs, 300_000),
+        ...(input.fast ? { thinkingLevel: "low" as const } : {}),
+      };
       byProvider.gemini!.push({ name: "gemini", model: config.model, call: () => callGeminiParts(input.prompt, input.files, config) });
     }
   }
@@ -78,7 +98,12 @@ async function readDocument<T>(input: {
   const order = getAIProviderSettings().providerOrder.filter(name => name === "gemini" || name === "claude");
   // Privacy mode tells the person their file goes to Gemini, so it never falls through to another vendor.
   const providers = (order.length > 0 ? order : ["gemini", "claude"] as AIProviderName[]).filter(name => !input.privacy || name === "gemini");
-  const attempts = providers.flatMap(name => byProvider[name] ?? []);
+  if ((input.fastestFirst || input.primaryOnly) && (byProvider.gemini?.length ?? 0) > 0) {
+    const [primary, ...quicker] = byProvider.gemini!;
+    const quick = quicker[0];
+    byProvider.gemini = input.primaryOnly || !quick ? [primary, primary] : [quick, quick, primary];
+  }
+  const attempts = providers.flatMap(name => byProvider[name] ?? []).slice(0, input.maxAttempts ?? Number.MAX_SAFE_INTEGER);
   if (attempts.length === 0) return { ok: false, error: "no_ai_provider_configured" };
 
   let lastError = "ai_read_failed";
@@ -133,147 +158,6 @@ async function readDocument<T>(input: {
 }
 
 // ── Bank statements ─────────────────────────────────────────────────────────
-
-const money = z.union([z.number(), z.string()]).nullable().transform(value => {
-  if (value == null) return null;
-  if (typeof value === "number") return Number.isFinite(value) ? value : null;
-  const cleaned = value.replace(/[₹,\s]/g, "").replace(/(cr|dr)$/i, "");
-  const parsed = Number(cleaned);
-  return Number.isFinite(parsed) ? parsed : null;
-});
-
-const bankStatementSchema = z.object({
-  bankName: z.string().nullable().optional(),
-  ifsc: z.string().nullable().optional(),
-  accountNumberLast4: z.string().nullable().optional(),
-  periodFrom: z.string().nullable().optional(),
-  periodTo: z.string().nullable().optional(),
-  openingBalance: money.optional().default(null),
-  closingBalance: money.optional().default(null),
-  transactions: z.array(z.object({
-    date: z.string(),
-    valueDate: z.string().nullable().optional(),
-    narration: z.string().default(""),
-    reference: z.string().nullable().optional(),
-    debit: money.optional().default(null),
-    credit: money.optional().default(null),
-    balance: money.optional().default(null),
-  })).max(5000),
-});
-
-export type AIBankStatement = z.infer<typeof bankStatementSchema>;
-
-const BANK_PROMPT = [
-  "These pages are one Indian bank account statement. Read the transaction table and return JSON only.",
-  "Shape: {\"bankName\": string|null, \"ifsc\": string|null, \"accountNumberLast4\": string|null,",
-  "\"periodFrom\": \"YYYY-MM-DD\"|null, \"periodTo\": \"YYYY-MM-DD\"|null,",
-  "\"openingBalance\": number|null, \"closingBalance\": number|null,",
-  "\"transactions\": [{\"date\": \"YYYY-MM-DD\", \"valueDate\": \"YYYY-MM-DD\"|null, \"narration\": string,",
-  "\"reference\": string|null, \"debit\": number|null, \"credit\": number|null, \"balance\": number|null}]}.",
-  "Rules:",
-  "1. One entry per transaction row, in the order printed, across every page. Never skip, merge, summarise or invent a row.",
-  "2. Do not include opening balance, closing balance, total or header rows as transactions; put printed opening and closing balances in openingBalance and closingBalance.",
-  "3. date is the transaction date; valueDate is the value date column if the statement has one.",
-  "4. narration is the full description cell. Join lines that wrap inside the cell. Keep spelling and punctuation exactly as printed.",
-  "5. reference is the cheque or reference number column if there is one, else null.",
-  "6. debit is the amount in the Withdrawal / Debit column; credit is the amount in the Deposit / Credit column. A printed 0.00 means null.",
-  "7. balance is the running balance printed on that row. A balance marked Dr is negative.",
-  "8. Numbers are plain JSON numbers without commas or currency signs. Copy every digit exactly.",
-  "9. bankName and ifsc are the issuing bank's, from the logo or header, not banks named in narrations.",
-].join(" ");
-
-function round2(value: number) {
-  return Math.round(value * 100) / 100;
-}
-
-/** A row the AI put in the wrong column is fixed only when the printed balance proves it. */
-function alignDirections(rows: NormalizedBankTxn[], opening: number | null) {
-  rows.forEach((row, index) => {
-    const previous = index === 0 ? opening : rows[index - 1].balance;
-    const amount = row.debit ?? row.credit;
-    if (previous == null || row.balance == null || amount == null) return;
-    const delta = round2(row.balance - previous);
-    if (Math.abs(Math.abs(delta) - amount) > 0.011) return;
-    if (delta > 0 && row.debit != null) {
-      row.credit = row.debit;
-      row.debit = null;
-    } else if (delta < 0 && row.credit != null) {
-      row.debit = row.credit;
-      row.credit = null;
-    }
-  });
-}
-
-export interface AIStatementRead {
-  summary: BankStatementSummary;
-  check: StatementCheck;
-  provider: AIProviderName;
-  model: string;
-}
-
-function toSummary(statement: AIBankStatement, fileName: string): { summary: BankStatementSummary; check: StatementCheck } {
-  const detection = detectBankFromStatement([statement.ifsc ? `IFSC Code: ${statement.ifsc}` : "", statement.bankName ?? ""].join("\n"), fileName);
-  const bankName = detection?.name ?? statement.bankName ?? null;
-  const last4 = statement.accountNumberLast4?.replace(/\D/g, "").slice(-4) || null;
-  const rows: NormalizedBankTxn[] = statement.transactions.flatMap(txn => {
-    const date = normalizeDate(txn.date);
-    if (!date) return [];
-    const narration = txn.narration.replace(/\s+/g, " ").trim();
-    return [{
-      date,
-      valueDate: normalizeDate(txn.valueDate ?? null),
-      description: narration,
-      narration,
-      reference: txn.reference?.trim() || null,
-      debit: txn.debit != null && txn.debit !== 0 ? Math.abs(txn.debit) : null,
-      credit: txn.credit != null && txn.credit !== 0 ? Math.abs(txn.credit) : null,
-      balance: txn.balance,
-      counterparty: counterpartyFrom(narration),
-      accountName: bankName,
-      accountNumberMasked: last4,
-      bankName,
-      rowNumber: 0,
-      confidence: 0.85,
-      sourceFile: fileName,
-      sourcePage: null,
-      sourceQuote: narration.slice(0, 200),
-    }];
-  });
-  const ordered = chronological(rows);
-  ordered.forEach((row, index) => { row.rowNumber = index + 1; });
-  alignDirections(ordered, statement.openingBalance);
-  const check = checkRunningBalance(ordered, statement.openingBalance, { printedClosing: statement.closingBalance });
-  const debitTotal = round2(ordered.reduce((sum, txn) => sum + (txn.debit ?? 0), 0));
-  const creditTotal = round2(ordered.reduce((sum, txn) => sum + (txn.credit ?? 0), 0));
-  const from = normalizeDate(statement.periodFrom ?? null) ?? ordered[0]?.date ?? null;
-  const to = normalizeDate(statement.periodTo ?? null) ?? ordered[ordered.length - 1]?.date ?? null;
-  const day = (iso: string) => {
-    const [y, m, d] = iso.split("-").map(Number);
-    return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });
-  };
-  const lowConfidenceCount = ordered.filter(txn => txn.confidence < 0.9).length;
-  return {
-    check,
-    summary: {
-      status: check.verified ? "parsed" : "needs_review",
-      message: check.verified
-        ? `${ordered.length} transactions read. Every row matches the bank's running balance.`
-        : `${ordered.length} transactions read. ${lowConfidenceCount} need a check.`,
-      bankName,
-      periodLabel: from && to ? `${day(from)} – ${day(to)}` : null,
-      accountNumberMasked: last4,
-      transactions: ordered,
-      openingBalance: statement.openingBalance ?? null,
-      closingBalance: ordered[ordered.length - 1]?.balance ?? null,
-      debitTotal,
-      creditTotal,
-      lowConfidenceCount,
-      detectedColumns: [],
-      warnings: check.failed > 0 ? [`${check.failed} row(s) do not match the running balance. Compare them with the statement.`] : [],
-    },
-  };
-}
-
 /**
  * Reads statement pages with AI. Each model's answer is scored by the running-balance
  * proof; a fully proved answer is used at once, otherwise the next model is tried.
@@ -294,7 +178,7 @@ export async function readBankStatementWithAI(input: {
   const result = await readDocument({
     files: input.files,
     prompt: BANK_PROMPT,
-    schema: bankStatementSchema,
+    schema: bankStatementAnswerSchema,
     purpose: "bank_narration_interpretation",
     companyId: input.companyId,
     userId: input.userId,
@@ -305,7 +189,41 @@ export async function readBankStatementWithAI(input: {
   if (!result.ok) return result;
   const { summary, check } = toSummary(result.data, input.fileName);
   if (summary.transactions.length === 0) return { ok: false, error: "no_transactions_read" };
+  finishAiRead(summary, check);
   return { ok: true, read: { summary, check, provider: result.provider, model: result.model } };
+}
+
+
+/** Reads a long scan page group by page group, each group by the usual models in the usual order. */
+export function readBankStatementPages(input: Omit<Parameters<typeof readBankStatementByPages>[0], "read"> & {
+  companyId?: number | null;
+  userId?: number | null;
+  privacy?: boolean;
+}) {
+  return readBankStatementByPages({
+    ...input,
+    read: ({ files, prompt, strong }) => readDocument({
+      files,
+      prompt,
+      schema: compactStatementSchema,
+      purpose: "bank_narration_interpretation",
+      companyId: input.companyId,
+      userId: input.userId,
+      privacy: input.privacy,
+      timeoutMs: AI_CALL_TIMEOUT_MS,
+      maxAttempts: strong ? 2 : AI_ATTEMPTS_PER_GROUP,
+      fast: true,
+      fastestFirst: !strong,
+      primaryOnly: strong === true,
+      score: data => {
+        const { check } = toSummary(data, input.fileName);
+        if (check.rows === 0) return 0;
+        return chainIntact(check) ? 1 : 0.5 * (check.passed / Math.max(1, check.checked));
+      },
+      empty: data => data.transactions.length === 0,
+    }),
+    onGroupError: (pages, reason) => logger.warn({ pages: pageRanges(pages), reason }, "Statement page group could not be read"),
+  });
 }
 
 // ── Invoices ────────────────────────────────────────────────────────────────

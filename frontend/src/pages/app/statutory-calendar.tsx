@@ -4,10 +4,48 @@
  * CAs get blamed if these are missed, so this must be always visible.
  */
 import { useState, useMemo } from "react";
+import { useLocation } from "wouter";
 import { motion } from "framer-motion";
-import { AlertTriangle, Calendar, CheckCircle, Clock, Info } from "lucide-react";
+import { AlertTriangle, ArrowRight, Calendar, CheckCircle, CheckCircle2, Circle, Clock, Info } from "lucide-react";
 import PageHeader from "@/components/app/PageHeader";
 import { PageTransition } from "@/components/app/finverify-ui";
+import { getActiveClient } from "@/lib/activeClient";
+
+/** Where each deadline's preparation happens in TallyThis. */
+const PREPARE_WITH: Record<string, { label: string; href: string }> = {
+  "gstr1-monthly": { label: "Prepare marketplace sales", href: "/app/jobs/ecommerce-gst" },
+  gstr3b: { label: "Check ITC with GSTR-2B", href: "/app/jobs/gstr-2b" },
+  "gst-payment": { label: "Check ITC with GSTR-2B", href: "/app/jobs/gstr-2b" },
+  "tds-payment": { label: "Compare TDS with 26AS", href: "/app/tds-recon" },
+  "tds-q1": { label: "Compare TDS with 26AS", href: "/app/tds-recon" },
+  "tds-q2": { label: "Compare TDS with 26AS", href: "/app/tds-recon" },
+  "tds-q3": { label: "Compare TDS with 26AS", href: "/app/tds-recon" },
+  "tds-q4": { label: "Compare TDS with 26AS", href: "/app/tds-recon" },
+};
+
+/**
+ * TallyThis does not see the GST or income-tax portal, so it cannot know a return was filed.
+ * The person marks it, and the mark stays in this browser for the client.
+ */
+function doneKey() {
+  return `finverify_due_done:${getActiveClient()?.id ?? "own"}`;
+}
+
+function readDone(): Set<string> {
+  try {
+    return new Set<string>(JSON.parse(localStorage.getItem(doneKey()) ?? "[]"));
+  } catch {
+    return new Set<string>();
+  }
+}
+
+function saveDone(done: Set<string>) {
+  try {
+    localStorage.setItem(doneKey(), JSON.stringify([...done]));
+  } catch {
+    // The mark simply is not kept if storage is blocked.
+  }
+}
 
 interface DueDate {
   id: string;
@@ -217,18 +255,22 @@ const MONTHS = [
   "July","August","September","October","November","December",
 ];
 
-function getDueDatesForMonth(month: number, year: number): (DueDate & { dueDate: Date; status: "overdue" | "upcoming" | "future" })[] {
+type Status = "overdue" | "upcoming" | "future" | "done";
+
+function getDueDatesForMonth(month: number, year: number, done: Set<string>): (DueDate & { dueDate: Date; status: Status; doneKey: string })[] {
   const today = new Date();
   return STATUTORY_DATES
     .filter(d => d.month === undefined || d.month === month + 1)
     .map(d => {
       const due = new Date(year, month, d.day);
       const diffDays = Math.ceil((due.getTime() - today.getTime()) / 86400000);
-      let status: "overdue" | "upcoming" | "future";
-      if (diffDays < 0) status = "overdue";
+      const doneKey = `${d.id}:${year}-${String(month + 1).padStart(2, "0")}`;
+      let status: Status;
+      if (done.has(doneKey)) status = "done";
+      else if (diffDays < 0) status = "overdue";
       else if (diffDays <= 7) status = "upcoming";
       else status = "future";
-      return { ...d, dueDate: due, status };
+      return { ...d, dueDate: due, status, doneKey };
     })
     .sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime());
 }
@@ -239,11 +281,23 @@ export default function StatutoryCalendarPage() {
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [selectedCategory, setSelectedCategory] = useState<DueDate["category"] | "ALL">("ALL");
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [, navigate] = useLocation();
+  const [done, setDone] = useState<Set<string>>(() => readDone());
+
+  const toggleDone = (key: string) => {
+    setDone(current => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      saveDone(next);
+      return next;
+    });
+  };
 
   const dueDates = useMemo(() => {
-    const all = getDueDatesForMonth(viewMonth, viewYear);
+    const all = getDueDatesForMonth(viewMonth, viewYear, done);
     return selectedCategory === "ALL" ? all : all.filter(d => d.category === selectedCategory);
-  }, [viewMonth, viewYear, selectedCategory]);
+  }, [viewMonth, viewYear, selectedCategory, done]);
 
   const overdue = dueDates.filter(d => d.status === "overdue").length;
   const upcoming = dueDates.filter(d => d.status === "upcoming").length;
@@ -269,9 +323,9 @@ export default function StatutoryCalendarPage() {
         <div className={`mb-5 flex items-center gap-3 rounded-xl border px-4 py-3 ${overdue > 0 ? "border-destructive/30 bg-destructive/8" : "border-warning/30 bg-warning/8"}`}>
           <AlertTriangle className={`h-4 w-4 shrink-0 ${overdue > 0 ? "text-destructive" : "text-warning"}`} />
           <div className="text-sm">
-            {overdue > 0 && <><strong className="text-destructive">{overdue} overdue</strong> — </>}
+            {overdue > 0 && <><strong className="text-destructive">{overdue} past due, not marked done</strong> — </>}
             {upcoming > 0 && <><strong className="text-foreground">{upcoming} due within 7 days</strong> — </>}
-            <span className="text-muted-foreground">review before penalties apply.</span>
+            <span className="text-muted-foreground">TallyThis cannot see the portal, so mark each one done once it is filed.</span>
           </div>
         </div>
       )}
@@ -322,7 +376,9 @@ export default function StatutoryCalendarPage() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.025 * i }}
                 className={`overflow-hidden rounded-xl border transition-all ${
-                  d.status === "overdue"
+                  d.status === "done"
+                    ? "border-emerald-200 bg-emerald-50/50"
+                    : d.status === "overdue"
                     ? "border-destructive/30 bg-destructive/5"
                     : d.status === "upcoming"
                     ? "border-warning/30 bg-warning/5"
@@ -350,7 +406,12 @@ export default function StatutoryCalendarPage() {
                   </div>
 
                   <div className="shrink-0 text-right">
-                    {d.status === "overdue" ? (
+                    {d.status === "done" ? (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800">
+                        <CheckCircle2 className="h-3 w-3" />
+                        Done
+                      </span>
+                    ) : d.status === "overdue" ? (
                       <span className="inline-flex items-center gap-1 rounded-full bg-destructive/10 px-2 py-0.5 text-xs font-semibold text-destructive">
                         <AlertTriangle className="h-3 w-3" />
                         Overdue
@@ -388,7 +449,19 @@ export default function StatutoryCalendarPage() {
                     </div>
                     <div className="mt-3 flex items-start gap-1.5 rounded-lg bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
                       <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
-                      Potential risk — needs CA review before this deadline.
+                      Potential risk — needs CA review before this deadline. Dates can be extended by notification; check the portal.
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button type="button" className="fv-button-secondary" onClick={() => toggleDone(d.doneKey)}>
+                        {d.status === "done" ? <Circle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
+                        {d.status === "done" ? "Mark as not done" : "Mark as filed / paid"}
+                      </button>
+                      {PREPARE_WITH[d.id] && (
+                        <button type="button" className="fv-button-secondary" onClick={() => navigate(PREPARE_WITH[d.id].href)}>
+                          {PREPARE_WITH[d.id].label}
+                          <ArrowRight className="h-4 w-4" />
+                        </button>
+                      )}
                     </div>
                   </motion.div>
                 )}

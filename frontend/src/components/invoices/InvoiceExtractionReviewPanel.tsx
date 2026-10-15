@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { AlertTriangle, ChevronDown, ChevronUp, CheckCircle, XCircle, Edit3 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrencyFull } from "@/lib/format";
+import { readJson } from "@/lib/api";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -252,7 +253,7 @@ export default function InvoiceExtractionReviewPanel() {
   const { data, isLoading } = useQuery<{ count: number; extractions: Extraction[] }>({
     queryKey: ["invoices/extractions/pending"],
     queryFn: () =>
-      fetch(`${BASE}/api/invoices/extractions/pending`).then(r => r.json()),
+      fetch(`${BASE}/api/invoices/extractions/pending`).then(readJson),
     staleTime: 10_000,
   });
 

@@ -5,11 +5,14 @@
  */
 import { parseUploadedFile } from "./fileParser";
 import { applyStatementMeta, parseBankStatement, extractionFailureMessage, type BankStatementSummary } from "./bankStatement";
-import { aiDocumentReadingAvailable, mimeFor, readBankStatementWithAI, readInvoicesWithAI } from "./aiDocumentReader";
-import { readStatementPdf, renderPdfPages } from "./pdfStatement";
+import { aiDocumentReadingAvailable, mimeFor, readBankStatementPages, readBankStatementWithAI, readInvoicesWithAI } from "./aiDocumentReader";
+import { openPdfRenderer, readStatementPdf, renderPdfPages } from "./pdfStatement";
+import { AI_CALLS_IN_FLIGHT, AI_READ_BUDGET_MS, PAGES_PER_AI_CALL, pageGroups, pageRanges, planAiRead } from "./statementReadPlan";
 import { checkRunningBalance, chronological, type StatementCheck } from "./statementCheck";
+import { recallStatement, rememberStatement, statementCacheKey } from "./statementCache";
 import { AI_BLOCKED_MESSAGE, AI_CONSENT_MESSAGE, aiDecision } from "./privacyPolicy";
 import { parseInvoiceCsv, type InvoiceRow } from "./invoiceVerify";
+import { extractInvoicesFromText, readPdfText } from "./invoicePdf";
 import { NOT_A_STATEMENT, extensionOf, isDocumentFile, notAStatementMessage, sheetToCsvText } from "./fileDetect";
 
 export { detectFileKind, detectMarketplace, sheetToCsvText } from "./fileDetect";
@@ -53,10 +56,37 @@ function better(a: { check: StatementCheck }, b: { check: StatementCheck }) {
   return a.check.passed >= b.check.passed ? a : b;
 }
 
-export async function readBankStatementFile(
-  file: UploadedFile,
-  ctx: { password?: string; companyId?: number | null; userId?: number | null; privacy?: boolean; allowAi?: boolean } = {},
-): Promise<StatementRead> {
+interface StatementReadContext {
+  password?: string;
+  companyId?: number | null;
+  userId?: number | null;
+  privacy?: boolean;
+  allowAi?: boolean;
+  /** Called while a long scan is being read, with a percentage and a plain description. */
+  onProgress?: (percent: number, step: string) => void;
+}
+
+/**
+ * Reads a bank statement. The same document uploaded again by the same company is answered from
+ * memory (never in privacy mode, and spreadsheets are quick enough to read again).
+ */
+export async function readBankStatementFile(file: UploadedFile, ctx: StatementReadContext = {}): Promise<StatementRead> {
+  const cacheKey = ctx.privacy !== true && ctx.companyId != null && isDocumentFile(file)
+    ? statementCacheKey({ companyId: ctx.companyId, buffer: file.buffer, password: ctx.password, allowAi: ctx.allowAi === true })
+    : null;
+  if (cacheKey) {
+    const remembered = recallStatement(cacheKey);
+    if (remembered) {
+      ctx.onProgress?.(95, "Statement already read");
+      return remembered;
+    }
+  }
+  const read = await readStatementUncached(file, ctx);
+  if (cacheKey) rememberStatement(cacheKey, read);
+  return read;
+}
+
+async function readStatementUncached(file: UploadedFile, ctx: StatementReadContext): Promise<StatementRead> {
   const fileName = file.originalname || "statement";
   const privacy = ctx.privacy === true;
   if (!isDocumentFile(file)) {
@@ -76,6 +106,7 @@ export async function readBankStatementFile(
   const isPdf = extensionOf(fileName) === "pdf" || file.mimetype === "application/pdf";
   let layout: { summary: BankStatementSummary; check: StatementCheck } | null = null;
   let textLength = 0;
+  let pageCount = 0;
 
   // 1. Text PDF: read the table by column position and prove each row with the running balance.
   if (isPdf) {
@@ -87,6 +118,7 @@ export async function readBankStatementFile(
       if (read.check.verified) return { ok: true, summary: read.summary, source: "pdf_layout", check: read.check, message: read.summary.message };
     }
     textLength = read?.headerText.length ?? 0;
+    pageCount = read?.pageCount ?? 0;
   }
 
   // 2. Scanned, photographed or unusual statements, or a table read that did not fully prove:
@@ -99,7 +131,46 @@ export async function readBankStatementFile(
   let aiFailed = false;
   // The AI could read the file but found no transactions in it: not an outage.
   let aiFoundNothing = false;
-  if (decision === "use_ai" && aiDocumentReadingAvailable(privacy)) {
+  // Pages of a long scan that could not be read, so the message can name them.
+  let unreadPages: number[] = [];
+  // A long statement the table reader got through is not sent whole to AI: no single answer can hold it.
+  const plan = planAiRead({ hasTableRead: layout != null, check: layout?.check, pageCount: isPdf ? pageCount : 0 });
+  if (decision === "use_ai" && plan === "by_pages" && aiDocumentReadingAvailable(privacy)) {
+    const renderer = await openPdfRenderer(file.buffer, ctx.password).catch(() => null);
+    if (renderer) {
+      try {
+        ctx.onProgress?.(8, `Reading ${renderer.pageCount} pages`);
+        const outcome = await readBankStatementPages({
+          fileName,
+          totalPages: renderer.pageCount,
+          groups: pageGroups(renderer.pageCount),
+          render: async pages => (await renderer.render(pages)).map(data => ({ data, mimeType: "image/png" })),
+          concurrency: AI_CALLS_IN_FLIGHT,
+          budgetMs: AI_READ_BUDGET_MS,
+          companyId: privacy ? null : ctx.companyId,
+          userId: privacy ? null : ctx.userId,
+          privacy,
+          onProgress: (done, total) => {
+            const pagesDone = Math.min(done * PAGES_PER_AI_CALL, renderer.pageCount);
+            ctx.onProgress?.(Math.min(90, 8 + Math.round((82 * done) / Math.max(1, total))), `Reading page ${pagesDone} of ${renderer.pageCount}`);
+          },
+          onRepair: groups => ctx.onProgress?.(92, `Checking ${groups} page ${groups === 1 ? "group" : "groups"} again`),
+        });
+        if (outcome.ok) {
+          const summary = outcome.read.summary;
+          if (!outcome.read.check.verified) summary.warnings = [...summary.warnings, "AI extracted — pending review."];
+          return { ok: true, summary, source: "ai", aiProvider: outcome.read.provider, check: outcome.read.check, message: summary.message };
+        }
+        if (outcome.error === "no_transactions_read") aiFoundNothing = true;
+        else {
+          aiFailed = true;
+          unreadPages = outcome.failedPages;
+        }
+      } finally {
+        await renderer.close();
+      }
+    }
+  } else if (decision === "use_ai" && plan === "whole_document" && aiDocumentReadingAvailable(privacy)) {
     let files: Array<{ data: Buffer; mimeType: string }> = [];
     if (isPdf && ctx.password) files = (await renderPdfPages(file.buffer, ctx.password).catch(() => [])).map(data => ({ data, mimeType: "image/png" }));
     else files = [{ data: file.buffer, mimeType: mimeFor(fileName, file.mimetype) }];
@@ -121,13 +192,16 @@ export async function readBankStatementFile(
   }
   if (layout) return { ok: true, summary: layout.summary, source: "pdf_layout", check: layout.check, message: layout.summary.message };
   // Privacy mode keeps to the in-memory readers: no temp files, no local OCR, no helper services.
-  if (privacy) return { ok: false, summary: null, source: "none", message: aiFailed ? AI_DOWN : aiFoundNothing ? NO_ROWS : "No transactions could be read from this file. Try the bank's Excel or CSV download." };
+  if (privacy) {
+    const pagesMessage = `Page${unreadPages.length === 1 ? "" : "s"} ${pageRanges(unreadPages)} of this ${pageCount}-page scan could not be read, so nothing was created. Try again in a little while, or use the bank's Excel or CSV download.`;
+    return { ok: false, summary: null, source: "none", message: aiFailed && unreadPages.length > 0 ? pagesMessage : aiFailed ? AI_DOWN : aiFoundNothing ? NO_ROWS : "No transactions could be read from this file. Try the bank's Excel or CSV download." };
+  }
 
   // 3. Last resort: the older text-table and OCR pipeline.
   let ruleSummary: BankStatementSummary | null = null;
   let source: StatementRead["source"] = "none";
   try {
-    const parsed = await parseUploadedFile(file, "bank", { password: ctx.password });
+    const parsed = await parseUploadedFile(file, "bank", { password: ctx.password, onProgress: ctx.onProgress });
     textLength = Math.max(textLength, parsed.textLength ?? parsed.textPreview?.length ?? 0);
     if (parsed.parsedRows?.length) {
       const columns = parsed.detectedColumns.length > 0 ? parsed.detectedColumns : Object.keys(parsed.parsedRows[0] ?? {});
@@ -153,7 +227,9 @@ export async function readBankStatementFile(
     ok: false,
     summary: null,
     source: "none",
-    message: aiFailed
+    message: aiFailed && unreadPages.length > 0
+      ? `Page${unreadPages.length === 1 ? "" : "s"} ${pageRanges(unreadPages)} of this ${pageCount}-page scan could not be read, so nothing was created. Try again in a little while, or use the bank's Excel or CSV download.`
+      : aiFailed
       ? AI_DOWN
       : aiFoundNothing
       ? NO_ROWS
@@ -167,27 +243,47 @@ export async function readBankStatementFile(
 export async function readInvoiceFiles(
   files: UploadedFile[],
   ctx: { companyId?: number | null; userId?: number | null; privacy?: boolean; allowAi?: boolean } = {},
-): Promise<{ rows: InvoiceRow[]; aiRead: number; failed: string[]; needsAiConsent?: boolean; aiBlocked?: boolean }> {
+): Promise<{ rows: InvoiceRow[]; aiRead: number; pdfRead: number; failed: string[]; needsAiConsent?: boolean; aiBlocked?: boolean; aiUnavailable?: boolean }> {
   const privacy = ctx.privacy === true;
   let aiBlocked = false;
+  let aiUnavailable = false;
   const rows: InvoiceRow[] = [];
   const failed: string[] = [];
   let aiRead = 0;
+  let pdfRead = 0;
   for (const file of files) {
     if (!isDocumentFile(file)) {
-      const parsed = parseInvoiceCsv(sheetToCsvText(file));
+      let parsed: InvoiceRow[] = [];
+      try {
+        parsed = parseInvoiceCsv(sheetToCsvText(file));
+      } catch {
+        // A file that cannot be opened is reported by name below, not as a server error.
+      }
       if (parsed.length === 0) failed.push(file.originalname);
       rows.push(...parsed);
       continue;
     }
+    // A PDF with a text layer is read by its printed labels first: no AI, nothing leaves the server.
+    if (extensionOf(file.originalname) === "pdf" || file.mimetype === "application/pdf") {
+      const text = await readPdfText(file.buffer);
+      if (text.status === "ok") {
+        const byRules = extractInvoicesFromText(text.text);
+        if (byRules.length > 0) {
+          pdfRead += byRules.length;
+          rows.push(...byRules.map(row => ({ ...row, rowNumber: rows.length + 1 })));
+          continue;
+        }
+      }
+    }
     const decision = aiDecision({ privacy, allowAi: ctx.allowAi === true, aiConfigured: aiDocumentReadingAvailable(privacy), readWithoutAi: false });
-    if (decision === "ask_consent") return { rows: [], aiRead: 0, failed: [], needsAiConsent: true };
+    if (decision === "ask_consent") return { rows: [], aiRead: 0, pdfRead: 0, failed: [], needsAiConsent: true };
     if (decision === "ai_blocked") {
       aiBlocked = true;
       failed.push(file.originalname);
       continue;
     }
     if (!aiDocumentReadingAvailable(privacy)) {
+      aiUnavailable = true;
       failed.push(file.originalname);
       continue;
     }
@@ -206,5 +302,5 @@ export async function readInvoiceFiles(
     aiRead += result.rows.length;
     rows.push(...result.rows);
   }
-  return { rows, aiRead, failed, aiBlocked };
+  return { rows, aiRead, pdfRead, failed, aiBlocked, aiUnavailable };
 }

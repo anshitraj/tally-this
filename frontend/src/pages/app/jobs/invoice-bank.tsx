@@ -19,6 +19,8 @@ import {
   takePendingFiles,
   toCsv,
 } from "@/components/jobs/jobUi";
+import { InvoiceBankNextSteps } from "@/components/jobs/ReconNextSteps";
+import { getActiveClient } from "@/lib/activeClient";
 
 interface Item {
   key: string;
@@ -39,6 +41,8 @@ interface CompareResponse {
   invoiceCount: number;
   bankCount: number;
   aiRead: number;
+  /** Invoices read from the printed text of a PDF, without AI. */
+  pdfRead?: number;
   unreadable: string[];
   needsPassword?: boolean;
   wrongPassword?: boolean;
@@ -183,7 +187,7 @@ export default function InvoiceBankPage() {
           {stage === "error" && <Notice tone="error">{error}</Notice>}
           <div className="grid gap-3 sm:grid-cols-2">
             <DropZone size="sm" label="Bank statement" hint="PDF, Excel or CSV" files={bankFile ? [bankFile] : []} onFiles={files => chooseBank(files[0])} />
-            <DropZone size="sm" multiple label="Invoices" hint="Invoice list (Excel/CSV) or invoice PDFs and photos" files={invoiceFiles} onFiles={chooseInvoices} />
+            <DropZone size="sm" multiple label="Invoices" hint="Invoice PDFs, or an invoice list (Excel/CSV). Photos need the AI reader." files={invoiceFiles} onFiles={chooseInvoices} />
           </div>
           {locked && bankFile && (
             <PasswordPrompt fileName={bankFile.name} error={passwordError} onSubmit={unlock} onSkip={() => { setLocked(false); if (invoiceFiles.length > 0) void compare(bankFile, invoiceFiles, ""); }} />
@@ -225,6 +229,9 @@ export default function InvoiceBankPage() {
             </div>
             {reviewed > 0 && <p className="mt-4 text-sm text-muted-foreground">{reviewed} of {attention.length} reviewed.</p>}
             {skipped.length > 0 && <p className="mt-2 text-xs text-muted-foreground">{skipped.length} salary, cash, tax or bank-charge {skipped.length === 1 ? "entry was" : "entries were"} skipped — these usually have no invoice.</p>}
+            {(data.pdfRead ?? 0) > 0 && (
+              <p className="mt-3 text-xs text-muted-foreground">{data.pdfRead} {data.pdfRead === 1 ? "invoice was" : "invoices were"} read from PDF text — check the amounts before relying on them.</p>
+            )}
             {data.aiRead > 0 && (
               <p className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-800">
                 <Sparkles className="h-3.5 w-3.5" />{data.aiRead} invoices read by AI — pending review
@@ -236,6 +243,18 @@ export default function InvoiceBankPage() {
           {data.unreadable.length > 0 && (
             <Notice tone="warn">Could not read: {data.unreadable.join(", ")}. Upload a clearer copy or an invoice list.</Notice>
           )}
+
+          <InvoiceBankNextSteps
+            clientName={getActiveClient()?.name || "Client"}
+            items={items.map(item => ({
+              key: item.key,
+              bucket: item.bucket,
+              decision: ["approved", "rejected", "needs_info"].includes(item.status) ? item.status : "suggested",
+              why: item.why,
+              bank: item.bank,
+              invoice: item.invoice,
+            }))}
+          />
 
           {reviewOpen && (
             <ResultCard eyebrow="Review">

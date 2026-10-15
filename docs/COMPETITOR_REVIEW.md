@@ -105,3 +105,30 @@ The user prioritised reliable statement conversion/imports, complete marketplace
 
 No real samples were available from the user. Automated financial tests remain synthetic. The current [official GST return downloads](https://www.gst.gov.in/download/returns) were also inspected: the page displayed Returns Offline Tool V3.2.4 and linked its official package, containing separate B2B/B2CS/CDNR/CDNUR and B2B/B2C HSN CSV templates. The public example values are illustrative, not independently verified books. Downloading those templates does not prove that TallyThis's proprietary JSON is accepted by the utility or portal; no filing was performed.
 
+## GST reconciliation and CA outputs — 15 October 2026
+
+The user asked for a ClearGST-style check of what TallyThis was missing for a CA, and for every dead end to be fixed. Sources are the vendors' own help pages as read on this date; nothing was run in a paid account.
+
+| Capability | ClearTax (documented) | TallyPrime (help pages) | TallyThis now |
+| --- | --- | --- | --- |
+| Match groups for GSTR-2B vs purchase register | [Exact, Suggested, Mismatch, Missing](https://docs.cleartax.in/product-help-and-support/clear-finance-cloud/gst-compliance/gstr-2b-vs-pr-recon) | [Reconciliation report grouped by status, with "Potential Matches" where amounts agree but section, GSTIN or document number differs](https://help.tallysolutions.com/gstr-2b-reconciliation/) | Matched, probable (suggested), amounts differ, missing on either side, entered twice, ITC not available. Built; tested on synthetic fixtures only. |
+| Tolerance | ±₹1 on taxable or tax value | not stated | ₹1 per component, stated on the row ("agrees within ₹1, rounding"). |
+| Fetch GSTR-2B from the portal with credentials | Yes | Import of the downloaded JSON | No. Upload-based; no portal login. |
+| Several months, PAN-level (many GSTINs) | Multi-month and PAN level (higher plan) | Month by month | Several GSTR-2B files in one run. One GSTIN per run; files for different GSTINs are refused. |
+| Vendor communication | Email results to vendors with remarks | not stated | A message per supplier to copy or email, and a supplier sheet in Excel. No bulk sending, no contact master. |
+| Actions on a document | Claim (month, percentage), pend, reverse, ineligible, reject, link / delink | Accept / pending marks | Confirm, not a match, ask supplier, to be booked, not our purchase, and a manual link of two one-sided documents. No claim month or percentage. |
+| Feeds GSTR-3B Table 4 | Yes, with a calculation trail | not stated | ITC by tax head (IGST, CGST, SGST, cess) in the result and Excel; no Table 4 auto-fill. |
+| Bank reconciliation statement | not part of this page | not part of this page | Bank balance to books balance, with an optional Tally balance to prove it adds up, and the entries missing in Tally as vouchers. |
+
+What was missing before this pass, and is now built, in order of effect on a CA:
+
+1. **GSTR-2B ↔ Books** did not exist as a job. The only GSTR-2B screen compared uploaded 2B rows with invoices already imported into the old month-close tables, matched on an exact string, and read a JSON shape that is not the portal's. It is now a job on the same pattern as the other four, with a deterministic engine, a purchase-register reader that finds columns by their headings (Tally-style tax columns, Zoho-style headings, spreadsheet date serials), several months in one run, and an Excel working copy. When no heading is recognised, an optional AI step may name the columns from heading text and the share of GSTIN-, date- and amount-like cells (never the cells themselves); each suggestion is checked against the data, a low-confidence or mismatching one is dropped, and the result says which columns were matched that way. It is not used without an AI key, and in privacy mode only if the person allows it. It does not take part in matching.
+2. **Bank ↔ Tally** ended at a list of differences. It now ends at a reconciliation statement and the missing vouchers.
+3. **Invoice ↔ Bank** ended at "Not a match / Ask client". It now offers a copy-ready request for payments with no invoice, and an Excel file.
+4. **Reports** led with a CA pack that is blocked for anyone who only uses the four jobs ("Reconciliation has not been run yet"). It now leads with a month pack built from the saved jobs, and the older pack names each blocker with a link to fix it.
+5. **26AS TDS** accepted only a CSV with exact column names, and matched books lines to 26AS by TAN or name string, so a ledger with party names only showed everything as missing. It now reads the TRACES text file, Excel and CSV, finds headings anywhere in the first rows, and matches a name-only line through the TAN of the same tidied name. A PDF is refused with the way to get a readable copy.
+6. **Dead ends**: a blank white page on any failed reply (about twenty pages), a 404 with a developer's sentence and no link, empty pages with no action, a Statutory calendar that called every past date "overdue", an action that reported "CA pack ready" when the server had failed, and no way to find a page other than a 24-item flat list.
+
+Not built, and not claimed: portal login and automatic GSTR-2B download, Table 4 auto-fill, claim month and percentage, bulk email, e-invoice or e-way bill, filing, GSTR-1 preparation from a Tally sales register, and any statement that the output is accepted by the GST portal or by TallyPrime.
+
+Evidence still needed: real GSTR-2B JSON and Excel downloads for several periods (item-level and invoice-level layouts, credit notes, amendments, reverse charge), real purchase-register exports from TallyPrime, Busy and Zoho Books, and a real TRACES text file. The portal Excel and TRACES text layouts were reconstructed from public descriptions and synthetic samples, so a layout that differs will stop with a message rather than be guessed.

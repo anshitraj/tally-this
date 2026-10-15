@@ -73,6 +73,22 @@ router.get("/practice/clients", requirePermission("reports.read"), async (req, r
       links = r.rows as { id: number; client_company_id: number; client_name: string | null }[];
     } catch { /* table missing — demo */ }
 
+    // The client list is read on every page (switcher, search, jobs). It must not run the audit
+    // engine for each client, so a light read returns the names only.
+    if (req.query.light === "1") {
+      res.json({
+        ok: true,
+        source: links.length > 0 ? "links" : "demo",
+        clients: links.map(link => ({
+          companyId: link.client_company_id,
+          linkId: link.id,
+          name: link.client_name ?? `Client #${link.client_company_id}`,
+          source: "tally" as const,
+        })),
+      });
+      return;
+    }
+
     let clients: ClientSummary[];
     let source: "links" | "demo";
     if (links.length > 0) {
@@ -123,6 +139,27 @@ router.post("/practice/clients", requirePermission("uploads.create"), async (req
     res.json({ ok: true, client: { companyId: company.id, name, linkId: link.id } });
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : "add_client_failed" });
+  }
+});
+
+/** Rename a client in this CA's list. Only the CA's own link is changed, never the company row. */
+router.patch("/practice/clients/:linkId", requirePermission("uploads.create"), async (req, res): Promise<void> => {
+  try {
+    const caUserId = req.auth!.userId;
+    const linkId = Number(req.params.linkId);
+    const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+    if (!Number.isInteger(linkId)) { res.status(400).json({ ok: false, error: "invalid id" }); return; }
+    if (!name) { res.status(400).json({ ok: false, error: "Client name is required" }); return; }
+    if (name.length > 120) { res.status(400).json({ ok: false, error: "Client name is too long" }); return; }
+    const updated = await db.update(caClientLinksTable)
+      .set({ clientName: name })
+      .where(and(eq(caClientLinksTable.id, linkId), eq(caClientLinksTable.caUserId, caUserId)))
+      .returning({ id: caClientLinksTable.id });
+    if (updated.length === 0) { res.status(404).json({ ok: false, error: "link not found" }); return; }
+    await auditAction(req, "practice.client_renamed", "ca_client_link", linkId, { name });
+    res.json({ ok: true, client: { linkId, name } });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : "rename_client_failed" });
   }
 });
 

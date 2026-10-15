@@ -2,8 +2,10 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Scale, ChevronDown, ChevronRight, X } from "lucide-react";
 import PageHeader from "@/components/app/PageHeader";
+import { NoDataYet } from "@/components/app/EmptyPanel";
 import { PageTransition, EmptyState } from "@/components/app/finverify-ui";
 import { formatCurrencyFull, formatDate } from "@/lib/format";
+import { readJson } from "@/lib/api";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -51,12 +53,12 @@ export default function TrialBalancePage() {
 
   const { data, isLoading } = useQuery<TrialBalance>({
     queryKey: ["trial-balance"],
-    queryFn: () => fetch(`${BASE}/api/trial-balance`).then(r => r.json()),
+    queryFn: () => fetch(`${BASE}/api/trial-balance`).then(readJson),
   });
 
   const { data: drilldownData = [] } = useQuery<AccountTxn[]>({
     queryKey: ["trial-balance-drilldown", drilldown],
-    queryFn: () => fetch(`${BASE}/api/trial-balance/account/${encodeURIComponent(drilldown!)}/transactions`).then(r => r.json()),
+    queryFn: () => fetch(`${BASE}/api/trial-balance/account/${encodeURIComponent(drilldown!)}/transactions`).then(readJson),
     enabled: Boolean(drilldown),
   });
 
@@ -80,7 +82,9 @@ export default function TrialBalancePage() {
       {isLoading ? (
         <div className="py-12 text-center text-sm text-muted-foreground">Loading trial balance…</div>
       ) : !data || data.accounts.length === 0 ? (
-        <EmptyState icon={Scale} title="No ledger entries" description="Upload Tally or Zoho ledger export, then return here." />
+        <NoDataYet icon={Scale} title="No ledger entries yet" job={{ label: "Run a Tax audit on Tally data", href: "/app/tax-audit" }}>
+          Upload a Tally or Zoho ledger export and the trial balance builds itself from it.
+        </NoDataYet>
       ) : (
         <div className="space-y-4">
           {Object.entries(GROUP_LABELS).map(([key, label]) => {

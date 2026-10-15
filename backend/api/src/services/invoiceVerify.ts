@@ -16,7 +16,7 @@ export interface InvoiceRow {
   total: number;
   tax: number | null;
   rowNumber: number;
-  label: "AI extracted — pending review" | "Imported from spreadsheet";
+  label: "AI extracted — pending review" | "Read from PDF — pending review" | "Imported from spreadsheet";
 }
 
 export function parseInvoiceCsv(text: string): InvoiceRow[] {

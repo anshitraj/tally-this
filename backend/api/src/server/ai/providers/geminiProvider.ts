@@ -89,6 +89,9 @@ async function requestGeminiParts(
           responseMimeType: "application/json",
           // Small print on statements needs full-resolution reading.
           mediaResolution: "MEDIA_RESOLUTION_HIGH",
+          ...(config.thinkingLevel && /^gemini-3/.test(config.model) ? { thinkingConfig: { thinkingLevel: config.thinkingLevel } } : {}),
+          // Gemini 2.5 Flash reasons at length by default; reading a table does not need it.
+          ...(config.thinkingLevel && /^gemini-2[.]5-flash/.test(config.model) ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
         },
       }),
     });

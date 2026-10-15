@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { BrandMark } from "@/components/app/finverify-ui";
 import { BankLogos } from "@/components/app/BankLogos";
+import { LogoStrip } from "@/components/app/BrandLogo";
 import { DEMO_JOBS, ProductDemo } from "@/components/marketing/ProductDemo";
 import { DropZone, setPendingFiles } from "@/components/jobs/jobUi";
 import { getUser } from "@/lib/auth";
@@ -63,6 +64,17 @@ const SOLUTIONS = [
       "Download a payment review report",
     ],
     href: "/app/jobs/invoice-bank",
+  },
+  {
+    name: "GSTR-2B ↔ Books",
+    title: "Know your ITC.\nChase the right suppliers.",
+    text: "Match GSTR-2B with your purchase register. See which invoices the GST portal supports, what is at risk, and which suppliers to follow up with.",
+    points: [
+      "Upload GSTR-2B and your purchase register",
+      "Review amount differences and missing invoices",
+      "Send supplier messages and download Excel",
+    ],
+    href: "/app/jobs/gstr-2b",
   },
 ];
 const FAQS = [
@@ -262,9 +274,16 @@ export default function LandingPage() {
           <div className="fv-site-container">
             <p className="fv-micro">BRING THE STATEMENTS YOU ALREADY HAVE</p>
             <BankLogos />
+            <p className="fv-logo-group-title">MARKETPLACE REPORTS AND ACCOUNTING EXPORTS</p>
+            <LogoStrip
+              label="Marketplace and accounting sources"
+              names={["Amazon", "Flipkart", "Meesho", "Myntra", "JioMart", "Tally", "Zoho Books"]}
+              size="sm"
+            />
             <p className="fv-source-note">
-              Bank statement uploads, not connected bank accounts. Logos belong
-              to their respective owners.
+              Bank statement uploads, not connected bank accounts. Marketplace
+              and accounting names only say which kind of file you upload. Logos
+              belong to their respective owners.
             </p>
           </div>
         </section>
@@ -310,7 +329,7 @@ export default function LandingPage() {
             <div className="fv-section-heading fv-solutions-heading">
               <div>
                 <span className="fv-micro">
-                  FOUR JOBS. ONE SIMPLE WAY TO WORK.
+                  FIVE JOBS. ONE SIMPLE WAY TO WORK.
                 </span>
                 <h2>
                   From a pile of files
@@ -339,15 +358,16 @@ export default function LandingPage() {
                   id={`solution-tab-${index}`}
                   tabIndex={solution === index ? 0 : -1}
                   onKeyDown={(event) => {
+                    const count = SOLUTIONS.length;
                     const next =
                       event.key === "ArrowRight"
-                        ? (index + 1) % 4
+                        ? (index + 1) % count
                         : event.key === "ArrowLeft"
-                          ? (index + 3) % 4
+                          ? (index + count - 1) % count
                           : event.key === "Home"
                             ? 0
                             : event.key === "End"
-                              ? 3
+                              ? count - 1
                               : null;
                     if (next !== null) {
                       event.preventDefault();

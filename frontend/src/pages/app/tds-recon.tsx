@@ -1,9 +1,11 @@
 import { useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { FileCheck, AlertTriangle, Upload, Loader2 } from "lucide-react";
+import { FileCheck, AlertTriangle, Upload, Loader2, Download } from "lucide-react";
 import PageHeader from "@/components/app/PageHeader";
 import { PageTransition } from "@/components/app/finverify-ui";
+import { Notice, downloadText, toCsv } from "@/components/jobs/jobUi";
 import { useToast } from "@/hooks/use-toast";
+import { readJson } from "@/lib/api";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -13,6 +15,7 @@ interface ReconRow {
 }
 interface ReconResult {
   ok: boolean; source: "demo" | "upload";
+  notes?: string[];
   rows: ReconRow[];
   totals: { as26: number; books: number; difference: number; matched: number; mismatched: number };
 }
@@ -37,7 +40,7 @@ export default function TdsReconPage() {
 
   const { data: demo, isLoading } = useQuery<ReconResult>({
     queryKey: ["tds-recon"],
-    queryFn: () => fetch(`${BASE}/api/tax-audit/tds-recon`).then(r => r.json()),
+    queryFn: () => fetch(`${BASE}/api/tax-audit/tds-recon`).then(readJson),
   });
 
   const matchMutation = useMutation({
@@ -54,7 +57,8 @@ export default function TdsReconPage() {
     onError: (e: Error) => toast({ title: "Could not reconcile", description: e.message, variant: "destructive" }),
   });
 
-  const data = uploaded ?? demo;
+  // A reply of the wrong shape is treated as no reply, so the page shows its empty state.
+  const data = [uploaded, demo].find(result => result && Array.isArray(result.rows) && result.totals) as ReconResult | undefined;
 
   return (
     <PageTransition className="mx-auto max-w-5xl">
@@ -66,21 +70,21 @@ export default function TdsReconPage() {
       {data?.source === "demo" && (
         <div className="mb-4 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
           <AlertTriangle className="h-4 w-4 shrink-0" />
-          Demo reconciliation. Upload your <strong>26AS</strong> and <strong>books TDS</strong> CSVs (columns: deductor, TAN, section, amount) to match real data.
+          This is a sample. Upload your <strong>Form 26AS</strong> and the <strong>TDS from your books</strong> to see your own result.
         </div>
       )}
 
       <div className="mb-5 flex flex-wrap items-end gap-3 rounded-2xl border border-border bg-card p-4">
-        <input ref={as26Ref} type="file" accept=".csv" className="hidden" onChange={e => setAs26File(e.target.files?.[0] ?? null)} />
-        <input ref={booksRef} type="file" accept=".csv" className="hidden" onChange={e => setBooksFile(e.target.files?.[0] ?? null)} />
+        <input ref={as26Ref} type="file" accept=".txt,.csv,.xlsx,.xls" className="hidden" onChange={e => setAs26File(e.target.files?.[0] ?? null)} />
+        <input ref={booksRef} type="file" accept=".csv,.xlsx,.xls,.txt" className="hidden" onChange={e => setBooksFile(e.target.files?.[0] ?? null)} />
         <div>
-          <div className="mb-1 text-xs font-semibold text-muted-foreground">Form 26AS (CSV)</div>
+          <div className="mb-1 text-xs font-semibold text-muted-foreground">Form 26AS (TRACES text, Excel or CSV)</div>
           <button type="button" onClick={() => as26Ref.current?.click()} className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm hover:bg-muted">
             <Upload className="h-4 w-4" /> {as26File ? as26File.name.slice(0, 22) : "Choose 26AS file"}
           </button>
         </div>
         <div>
-          <div className="mb-1 text-xs font-semibold text-muted-foreground">Books / 26Q (CSV)</div>
+          <div className="mb-1 text-xs font-semibold text-muted-foreground">TDS in your books (Excel or CSV)</div>
           <button type="button" onClick={() => booksRef.current?.click()} className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm hover:bg-muted">
             <Upload className="h-4 w-4" /> {booksFile ? booksFile.name.slice(0, 22) : "Choose books file"}
           </button>
@@ -93,8 +97,19 @@ export default function TdsReconPage() {
         >
           {matchMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCheck className="h-4 w-4" />} Reconcile
         </button>
-        {uploaded && <button type="button" onClick={() => setUploaded(null)} className="text-xs font-medium text-muted-foreground hover:underline">Reset to demo</button>}
+        {uploaded && <button type="button" onClick={() => setUploaded(null)} className="text-xs font-medium text-muted-foreground hover:underline">Back to the sample</button>}
+        <p className="basis-full text-xs text-muted-foreground">
+          In TRACES, download Form 26AS as text or Excel. The books file needs a party name and the TDS amount; a TAN and section help but are not required.
+        </p>
       </div>
+
+      {(uploaded?.notes ?? []).length > 0 && (
+        <div className="mb-4">
+          <Notice tone="info">
+            {(uploaded?.notes ?? []).map(note => <p key={note}>{note}</p>)}
+          </Notice>
+        </div>
+      )}
 
       {isLoading ? (
         <div className="py-12 text-center text-sm text-muted-foreground">Loading…</div>
@@ -105,6 +120,25 @@ export default function TdsReconPage() {
             <div className="rounded-2xl border border-border bg-card p-4"><div className="text-2xl font-bold text-red-600">{data?.totals.mismatched ?? 0}</div><div className="text-xs text-muted-foreground">Mismatched</div></div>
             <div className="rounded-2xl border border-border bg-card p-4"><div className="text-2xl font-bold">₹{inr(data?.totals.difference ?? 0)}</div><div className="text-xs text-muted-foreground">Net difference (26AS − Books)</div></div>
           </div>
+
+          {data && data.rows.length > 0 && (
+            <div className="flex justify-end">
+              <button
+                type="button"
+                className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm hover:bg-muted"
+                onClick={() => downloadText(
+                  "tds-26as-reconciliation.csv",
+                  toCsv(
+                    ["Deductor", "TAN", "Section", "26AS", "Books", "Difference", "Status"],
+                    data.rows.map(r => [r.deductor, r.tan, r.section, r.as26, r.books, r.difference, r.status]),
+                  ),
+                  "text/csv",
+                )}
+              >
+                <Download className="h-4 w-4" /> Download CSV
+              </button>
+            </div>
+          )}
 
           <div className="overflow-x-auto rounded-2xl border border-border">
             <table className="w-full text-sm">
@@ -134,6 +168,10 @@ export default function TdsReconPage() {
               </tbody>
             </table>
           </div>
+          <p className="text-xs leading-5 text-muted-foreground">
+            Short credit in books: 26AS shows more TDS than your books, so the credit may not be claimed. Not in 26AS or excess in books: your books
+            show credit that 26AS does not, so the deductor may not have filed or booked it. Potential risk — needs CA review.
+          </p>
         </div>
       )}
     </PageTransition>

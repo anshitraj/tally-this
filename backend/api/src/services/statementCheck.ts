@@ -77,8 +77,18 @@ export function checkRunningBalance(
   };
 }
 
-/** Oldest first. Statements printed newest-first are reversed; same-day order is kept. */
+/**
+ * Oldest first. Statements printed newest-first are reversed; same-day order is kept.
+ * The direction is the way most dates move, so one misread date cannot turn a whole statement around.
+ */
 export function chronological<T extends { date: string }>(rows: T[]): T[] {
-  if (rows.length > 1 && rows[0].date > rows[rows.length - 1].date) return [...rows].reverse();
-  return rows;
+  if (rows.length < 2) return rows;
+  let later = 0;
+  let earlier = 0;
+  for (let index = 1; index < rows.length; index += 1) {
+    if (rows[index].date > rows[index - 1].date) later += 1;
+    else if (rows[index].date < rows[index - 1].date) earlier += 1;
+  }
+  const newestFirst = earlier !== later ? earlier > later : rows[0].date > rows[rows.length - 1].date;
+  return newestFirst ? [...rows].reverse() : rows;
 }

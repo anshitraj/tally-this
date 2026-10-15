@@ -1,138 +1,170 @@
-import { motion } from "framer-motion";
-import { Puzzle, CheckCircle, Clock, Plug, UploadCloud } from "lucide-react";
+import { useState } from "react";
+import { useLocation } from "wouter";
+import { ArrowRight, CheckCircle2, Loader2, Plug, ShieldCheck } from "lucide-react";
 import PageHeader from "@/components/app/PageHeader";
+import { BrandLogo, LogoStrip } from "@/components/app/BrandLogo";
+import { Notice, getJson } from "@/components/jobs/jobUi";
 
-const INTEGRATIONS = [
+interface TallyStatus {
+  running?: boolean;
+  companies?: string[];
+  message?: string;
+}
+
+const SOURCES: Array<{
+  title: string;
+  formats: string;
+  detail: string;
+  logos: string[];
+  job: { label: string; href: string };
+}> = [
   {
-    name: "CSV Upload",
-    handles: "Bank statements, invoices, expenses, payroll, gateway exports",
-    status: "Available",
-    complexity: "Low",
-    notes: "Runs locally in prototype mode with row and column mapping previews.",
+    title: "Bank statements",
+    formats: "PDF · Excel · CSV · photos",
+    detail: "Read row by row and checked against the bank’s own running balance.",
+    logos: ["State Bank of India", "HDFC Bank", "ICICI Bank", "Axis Bank", "Kotak Mahindra Bank", "Punjab National Bank"],
+    job: { label: "Bank → Tally", href: "/app/jobs/bank-to-tally" },
   },
   {
-    name: "Excel Upload",
-    handles: "Tally exports, Zoho exports, payroll sheets, gateway settlements",
-    status: "Upload-based",
-    complexity: "Low",
-    notes: "Metadata capture is available. Full XLSX parsing can be enabled with an XLSX parser.",
+    title: "Tally exports",
+    formats: "XML · Excel · CSV · PDF",
+    detail: "Bank ledger, Day Book or Purchase Register, exported from TallyPrime.",
+    logos: ["Tally"],
+    job: { label: "Bank ↔ Tally", href: "/app/jobs/bank-tally" },
   },
   {
-    name: "PDF/Image Invoice Upload",
-    handles: "Invoice images, scanned PDFs, vendor bills",
-    status: "Upload-based",
-    complexity: "Medium",
-    notes: "Extraction-ready placeholder. Does not claim completed OCR without a configured extractor.",
+    title: "Marketplace reports",
+    formats: "Excel · CSV",
+    detail: "Sales, returns and TCS, split into B2B, B2C and HSN.",
+    logos: ["Amazon", "Flipkart", "Meesho", "Myntra", "JioMart"],
+    job: { label: "E-commerce GST", href: "/app/jobs/ecommerce-gst" },
   },
   {
-    name: "Tally Export Upload",
-    handles: "Ledger entries, vouchers, trial balance exports",
-    status: "Upload-based",
-    complexity: "Medium",
-    notes: "XML/CSV upload remains supported for teams that do not want a local connector.",
+    title: "GST portal files",
+    formats: "GSTR-2B JSON · Excel",
+    detail: "Matched with your purchase register, with ITC at risk listed by supplier.",
+    logos: [],
+    job: { label: "GSTR-2B ↔ Books", href: "/app/jobs/gstr-2b" },
   },
   {
-    name: "Zoho Export Upload",
-    handles: "Invoices, vendor bills, chart of accounts exports",
-    status: "Upload-based",
-    complexity: "Medium",
-    notes: "No Zoho Books API connection is active yet.",
+    title: "Invoices",
+    formats: "PDF · Excel · CSV",
+    detail: "Matched with payments in the bank statement.",
+    logos: [],
+    job: { label: "Invoice ↔ Bank", href: "/app/jobs/invoice-bank" },
   },
   {
-    name: "Direct Tally Connector",
-    handles: "Local Tally Day Book, ledgers, vouchers, voucher lines",
-    status: "Available",
-    complexity: "Medium",
-    notes: "Available on Tax Audit. Requires Tally running as a local HTTP server, usually port 9000; no bank or GST approval required.",
-  },
-  {
-    name: "Zoho Books API",
-    handles: "Invoices, bills, payments, contacts",
-    status: "Coming soon",
-    complexity: "Medium",
-    notes: "OAuth/API setup planned for future versions.",
-  },
-  {
-    name: "Razorpay / Cashfree / Stripe APIs",
-    handles: "Settlements, fees, refunds, chargebacks",
-    status: "Coming soon",
-    complexity: "Medium",
-    notes: "Current support is upload-based settlement CSV review only.",
-  },
-  {
-    name: "GST/GSP Integration",
-    handles: "GST 2B/3B checks, GSTIN validation, filing references",
-    status: "Coming soon",
-    complexity: "High",
-    notes: "Future work. Potential risks still require CA review.",
-  },
-  {
-    name: "Account Aggregator Bank Feed",
-    handles: "Consent-based bank transaction feed",
-    status: "Coming soon",
-    complexity: "High",
-    notes: "Prototype does not connect to live bank feeds.",
-  },
-  {
-    name: "Gmail / WhatsApp Collection",
-    handles: "Invoice and document collection",
-    status: "Coming soon",
-    complexity: "Medium",
-    notes: "Planned document intake workflow; not active in this prototype.",
+    title: "Other accounting software",
+    formats: "Excel · CSV",
+    detail: "A purchase register or invoice list from Zoho Books or any billing software.",
+    logos: ["Zoho Books", "QuickBooks"],
+    job: { label: "GSTR-2B ↔ Books", href: "/app/jobs/gstr-2b" },
   },
 ];
 
-function statusClass(status: string) {
-  if (status === "Available") return "fv-status-verified";
-  if (status === "Upload-based") return "fv-status-review";
-  return "fv-status-missing";
-}
-
 export default function IntegrationsPage() {
+  const [, navigate] = useLocation();
+  const [checking, setChecking] = useState(false);
+  const [status, setStatus] = useState<TallyStatus | null>(null);
+
+  const check = async () => {
+    setChecking(true);
+    const response = await getJson<TallyStatus>("/api/jobs/tally/status");
+    setChecking(false);
+    setStatus(response.data);
+  };
+
+  const connected = Boolean(status?.running && (status.companies?.length ?? 0) > 0);
+
   return (
-    <div className="p-6 max-w-6xl mx-auto">
+    <div className="fv-standard-page">
       <PageHeader
-        title="Integrations"
-        subtitle="Upload-based core with a local Tally connector; GST and bank sync remain partnership-based"
+        title="Connections"
+        subtitle="TallyThis works from the files you upload. There is no login to your bank, marketplace or GST account."
       />
 
-      <div className="bg-primary/5 border border-primary/20 rounded-xl p-4 mb-6 flex items-start gap-3">
-        <UploadCloud className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
-        <p className="text-sm text-muted-foreground">
-          TallyThis supports upload-based workflows and a local Tally connector for customer-run Tally gateways.
-          GST, bank, gateway, and Zoho API sync are not live unless separately marked available.
-        </p>
+      <section className="fv-reveal mt-6 rounded-2xl border border-border bg-card p-5 sm:p-6" aria-label="Send to Tally">
+        <div className="flex flex-wrap items-start gap-4">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[var(--fv-soft)] text-[var(--fv-leaf)]">
+            <Plug className="h-5 w-5" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-3">
+              <h2 className="text-lg font-semibold">Send to Tally</h2>
+              <BrandLogo name="Tally" size="sm" />
+            </div>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Post reviewed vouchers straight into the company open in TallyPrime. This works when TallyThis runs on the same computer or
+              network as Tally.
+            </p>
+
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <button type="button" className="fv-button-primary h-11" onClick={() => void check()} disabled={checking}>
+                {checking ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                {checking ? "Checking…" : status ? "Check again" : "Check connection"}
+              </button>
+              {connected && (
+                <span className="text-sm font-medium text-emerald-800">
+                  Connected · {status?.companies?.slice(0, 2).join(", ")}
+                  {(status?.companies?.length ?? 0) > 2 ? ` and ${(status?.companies?.length ?? 0) - 2} more` : ""}
+                </span>
+              )}
+            </div>
+
+            {status && !connected && (
+              <div className="mt-4">
+                <Notice tone="warn">
+                  <p className="font-medium">{status.message || "Tally did not answer."}</p>
+                  <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs">
+                    <li>Open TallyPrime and the company you want to post into.</li>
+                    <li>Press F1 (Help) → Settings → Connectivity.</li>
+                    <li>Set “TallyPrime acts as” to Server, with port 9000.</li>
+                    <li>Come back and check again.</li>
+                  </ol>
+                </Notice>
+              </div>
+            )}
+            {connected && (
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button type="button" className="fv-button-secondary" onClick={() => navigate("/app/jobs/bank-to-tally")}>
+                  Convert a statement and send it
+                  <ArrowRight className="h-4 w-4" />
+                </button>
+              </div>
+            )}
+            <p className="mt-4 text-xs text-muted-foreground">
+              You can always download the Tally XML or Excel instead and import it yourself.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <h2 className="mb-3 mt-9 text-lg font-semibold">What you can upload</h2>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {SOURCES.map(source => (
+          <article key={source.title} className="fv-reveal flex flex-col rounded-2xl border border-border bg-card p-5">
+            <div className="flex items-baseline justify-between gap-3">
+              <h3 className="font-semibold">{source.title}</h3>
+              <span className="shrink-0 font-mono text-[11px] text-muted-foreground">{source.formats}</span>
+            </div>
+            <p className="mt-1.5 text-sm text-muted-foreground">{source.detail}</p>
+            {source.logos.length > 0 && <LogoStrip className="is-compact !justify-start !mt-4" names={source.logos} size="sm" muted label={`${source.title} sources`} />}
+            <div className="mt-auto pt-4">
+              <button type="button" className="fv-button-secondary" onClick={() => navigate(source.job.href)}>
+                Open {source.job.label}
+                <ArrowRight className="h-4 w-4" />
+              </button>
+            </div>
+          </article>
+        ))}
       </div>
 
-      <div className="grid md:grid-cols-2 gap-4">
-        {INTEGRATIONS.map((integration, i) => (
-          <motion.div
-            key={integration.name}
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.03 * i }}
-            className="bg-card border border-border rounded-xl p-5"
-          >
-            <div className="flex items-start justify-between gap-3 mb-3">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
-                  {integration.name === "Direct Tally Connector" ? <Plug className="w-4 h-4" /> : integration.status === "Coming soon" ? <Clock className="w-4 h-4" /> : integration.status === "Available" ? <CheckCircle className="w-4 h-4" /> : <Puzzle className="w-4 h-4" />}
-                </div>
-                <div>
-                  <div className="text-sm font-semibold">{integration.name}</div>
-                  <div className="text-xs text-muted-foreground">Setup complexity: {integration.complexity}</div>
-                </div>
-              </div>
-              <span className={`px-2 py-1 rounded-md border text-[11px] font-medium ${statusClass(integration.status)}`}>
-                {integration.status}
-              </span>
-            </div>
-            <div className="text-xs text-muted-foreground mb-2">
-              <span className="font-medium text-foreground">Handles:</span> {integration.handles}
-            </div>
-            <p className="text-xs text-muted-foreground">{integration.notes}</p>
-          </motion.div>
-        ))}
+      <div className="mt-9 flex items-start gap-3 rounded-2xl border border-border bg-card p-5 text-sm text-muted-foreground">
+        <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-[var(--fv-leaf)]" />
+        <p>
+          Not connected today: bank accounts, the GST portal, marketplace seller accounts and Zoho Books’ own API. Each would need your
+          authorisation, so nothing is read from them behind your back. Names and logos only say which kind of file you uploaded.
+        </p>
       </div>
     </div>
   );

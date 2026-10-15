@@ -3,9 +3,11 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import { AlertTriangle, CheckCircle, Shield } from "lucide-react";
 import PageHeader from "@/components/app/PageHeader";
+import { NoDataYet } from "@/components/app/EmptyPanel";
 import StatusBadge from "@/components/app/StatusBadge";
 import { formatCurrencyFull, severityColor } from "@/lib/format";
 import { useToast } from "@/hooks/use-toast";
+import { readJson } from "@/lib/api";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -44,11 +46,11 @@ export default function GstTdsRisksPage() {
 
   const { data = [], isLoading } = useQuery<RiskFlag[]>({
     queryKey: ["risks"],
-    queryFn: () => fetch(`${BASE}/api/risks`).then(r => r.json()),
+    queryFn: () => fetch(`${BASE}/api/risks`).then(readJson),
   });
   const { data: gstRecords = [], isLoading: gstLoading } = useQuery<GstRecord[]>({
     queryKey: ["gstRecords"],
-    queryFn: () => fetch(`${BASE}/api/gst-records`).then(r => r.json()),
+    queryFn: () => fetch(`${BASE}/api/gst-records`).then(readJson),
   });
 
   const resolveMutation = useMutation({
@@ -111,7 +113,9 @@ export default function GstTdsRisksPage() {
         {gstLoading ? (
           <div className="p-6 text-sm text-muted-foreground text-center">Loading GST/TDS records...</div>
         ) : gstRecords.length === 0 ? (
-          <div className="p-6 text-sm text-muted-foreground text-center">No structured GST/TDS records yet. Upload GST/TDS files to create records.</div>
+          <NoDataYet title="No GST or TDS records yet" bare job={{ label: "Match GSTR-2B with books", href: "/app/jobs/gstr-2b" }}>
+            Upload GSTR-2B, GSTR-3B or TDS files to list them here, or reconcile GSTR-2B with your purchase register in one step.
+          </NoDataYet>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">

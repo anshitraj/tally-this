@@ -18,6 +18,7 @@ import {
   takePendingFiles,
 } from "@/components/jobs/jobUi";
 import { getActiveClient } from "@/lib/activeClient";
+import { PlatformLogos } from "@/components/app/BrandLogo";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 interface Sale {
@@ -293,7 +294,12 @@ export default function EcommerceGstPage() {
           </TabsList>
           <TabsContent value={resultView} className="space-y-4 pt-2">
           <ResultCard
-            eyebrow={`${titleCase(pack.platform)} · ${files.length} ${files.length === 1 ? "report" : "reports"}`}
+            eyebrow={
+              <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1">
+                <PlatformLogos platform={pack.platform} />
+                <span>{titleCase(pack.platform)} · {files.length} {files.length === 1 ? "report" : "reports"}</span>
+              </span>
+            }
             actions={resultView === "report" ?
               <>
                 {attention > 0

@@ -11,8 +11,8 @@ import { checkRunningBalance, type StatementCheck } from "./statementCheck";
 
 type ColumnKind = "serial" | "date" | "valueDate" | "narration" | "ref" | "debit" | "credit" | "amount" | "drcr" | "balance";
 
-interface Item { text: string; raw: string; left: number; right: number; y: number }
-interface Row { page: number; y: number; items: Item[] }
+export interface Item { text: string; raw: string; left: number; right: number; y: number }
+export interface Row { page: number; y: number; items: Item[] }
 interface Column { kind: ColumnKind; left: number; right: number; center: number; label: string }
 
 interface Layout {
@@ -27,9 +27,9 @@ interface Layout {
   drcr: Column | null;
 }
 
-interface PdfTextItem { str?: string; transform?: number[]; width?: number }
-interface PdfPage { getTextContent(): Promise<{ items: PdfTextItem[] }> }
-interface PdfDocument { numPages: number; getPage(pageNumber: number): Promise<PdfPage> }
+export interface PdfTextItem { str?: string; transform?: number[]; width?: number }
+export interface PdfPage { getTextContent(): Promise<{ items: PdfTextItem[] }> }
+export interface PdfDocument { numPages: number; getPage(pageNumber: number): Promise<PdfPage> }
 
 interface DraftTxn {
   page: number;
@@ -67,11 +67,13 @@ const DATE_PATTERNS = [
   /^\d{4}-\d{2}-\d{2}$/,
 ];
 
-function isDate(text: string) {
+export function isDate(text: string) {
   return DATE_PATTERNS.some(pattern => pattern.test(text));
 }
 
-function money(text: string): { value: number; suffix: "cr" | "dr" | null } | null {
+export function money(raw: string): { value: number; suffix: "cr" | "dr" | null } | null {
+  // Many statements print the currency in every amount: "INR 1,18,000.00", "Rs. 500.00", "₹2,400.50".
+  const text = raw.trim().replace(/^(?:inr|rs\.?|₹)\s*/i, "");
   if (!MONEY.test(text)) return null;
   const suffix = /dr\.?$/i.test(text) ? "dr" : /cr\.?$/i.test(text) ? "cr" : null;
   const value = Number(text.replace(/(cr|dr)\.?$/i, "").replace(/[,\s]/g, ""));
@@ -88,7 +90,7 @@ function center(item: { left: number; right: number }) {
 
 // ── Reading the PDF ────────────────────────────────────────────────────────
 
-async function loadRows(doc: PdfDocument): Promise<Row[]> {
+export async function loadRows(doc: PdfDocument): Promise<Row[]> {
   const rows: Row[] = [];
   for (let pageNumber = 1; pageNumber <= doc.numPages; pageNumber += 1) {
     const page = await doc.getPage(pageNumber);
@@ -304,7 +306,7 @@ function splitDates(cells: Cells, layout: Layout): { date: string | null; valueD
   return { date: normalizeDate(sorted[0].text), valueDate: null };
 }
 
-function rowText(row: Row) {
+export function rowText(row: Row) {
   return row.items.map(item => item.text).join(" ");
 }
 
@@ -604,4 +606,36 @@ export async function renderPdfPages(buffer: Buffer, password?: string, maxPages
   } finally {
     await parser.destroy().catch(() => undefined);
   }
+}
+
+export interface PdfPageRenderer {
+  pageCount: number;
+  /** Images of the given 1-based pages, in page order. Calls are served one at a time. */
+  render(pages: number[]): Promise<Buffer[]>;
+  close(): Promise<void>;
+}
+
+/** One opened document that renders any pages on request, so a long scan is parsed once. */
+export async function openPdfRenderer(buffer: Buffer, password?: string): Promise<PdfPageRenderer> {
+  const parser = new PDFParse({ data: new Uint8Array(buffer), password: password || undefined });
+  let pageCount = 0;
+  try {
+    pageCount = (await parser.getInfo()).total;
+  } catch (err) {
+    await parser.destroy().catch(() => undefined);
+    throw err;
+  }
+  let queue: Promise<unknown> = Promise.resolve();
+  return {
+    pageCount,
+    render(pages) {
+      const run = queue.then(async () => {
+        const shots = await parser.getScreenshot({ scale: 2, imageDataUrl: false, imageBuffer: true, partial: pages });
+        return [...shots.pages].sort((a, b) => a.pageNumber - b.pageNumber).map(page => Buffer.from(page.data));
+      });
+      queue = run.catch(() => undefined);
+      return run;
+    },
+    close: () => parser.destroy().catch(() => undefined),
+  };
 }
