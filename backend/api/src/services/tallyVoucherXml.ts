@@ -130,7 +130,7 @@ const LEDGER_RULES: LedgerRule[] = [
   // Statutory dues deducted from salaries are paid out of a payable, not booked as a fresh expense.
   rule(/epfo|\bepf\b|provident fund|pf challan|pf contribution/, "PF Payable"),
   rule(/esic|\besi\b/, "ESI Payable"),
-  rule(/ptax|p\.tax|prof(essional|\.)? ?tax|\bpt challan/, "Professional Tax Payable"),
+  rule(/\bptax\b|\bp\.tax\b|prof(essional|\.)? ?tax|\bpt challan/, "Professional Tax Payable"),
   rule(/salary|salaries|payroll|wages/, "Salary Expenses"),
   // Settlement ledgers hold money a gateway or marketplace pays you. Paying out through a gateway
   // handle (vil.payu@, shop.rzp@) is a purchase, so the merchant name decides the ledger.
@@ -140,7 +140,7 @@ const LEDGER_RULES: LedgerRule[] = [
   rule(MARKETPLACES, "Suspense", { direction: "out" }),
   rule(/\brent\b|lease/, "Rent"),
   rule(/electricity|bescom|msedcl|tata power|adani elec|power bill|bses/, "Electricity Expenses"),
-  rule(/airtel|jio|vodafone|\bvi\b|bsnl|broadband|internet|mobile bill/, "Telephone & Internet"),
+  rule(/airtel|\bjio\b|jiofiber|vodafone|\bvi\b|bsnl|broadband|internet|mobile bill/, "Telephone & Internet"),
   rule(/facebook|meta ads|google ads|advert|marketing/, "Advertisement Expenses"),
   rule(/google ?(cloud|workspace|one)|g ?suite|workspace|aws|amazon web|microsoft|zoho|adobe|github|atlassian|slack|notion|software|saas/, "Software Expenses"),
   rule(/\bca fees|consult|professional|legal|audit fee/, "Professional Fees"),
@@ -172,8 +172,21 @@ export interface LedgerSuggestion {
   sure: boolean;
 }
 
+/**
+ * The words a rule may look at. A UPI narration also names the payer's bank code and the app behind
+ * the UPI handle ("UPI/DR/52580/KRISHNA/JIOP/**979@PTAXIS/..."): Jio Payments Bank and Paytm-Axis
+ * say nothing about what the money was for, and "ptaxis" is not professional tax. The handle's own
+ * name before the "@" stays, so "goog-payments@" still tells a Google Pay cashback.
+ */
+export function ruleText(narration: string): string {
+  return narration
+    .toLowerCase()
+    .replace(/@[a-z0-9.\-]+/g, "@")
+    .replace(/^(upi\/(?:dr|cr|rev)\/\d+\/[^/]*)\/[a-z]{4}\//, "$1/");
+}
+
 export function suggestLedgerDetail(narration: string, direction?: "in" | "out"): LedgerSuggestion {
-  const text = narration.toLowerCase();
+  const text = ruleText(narration);
   if (INTEREST.test(text)) return { ledger: direction === "out" ? "Interest Paid" : "Interest Received", sure: true };
   for (const candidate of LEDGER_RULES) {
     if (candidate.direction && direction && candidate.direction !== direction) continue;
