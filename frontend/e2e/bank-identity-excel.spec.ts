@@ -51,8 +51,9 @@ test("unknown bank can be corrected and the reviewed Excel output is downloadabl
   await page.getByRole("button", { name: "Download Excel" }).click();
   expect((await download).suggestedFilename()).toBe("TallyThis_Bank_Transactions.xlsx");
   expect(excelPayload?.bankName).toBe("ICICI Bank");
-  expect(excelPayload?.rows?.[0].ledgerChoice).toBe("Suspense");
-  expect(excelPayload?.rows?.[0].ledgerConfirmed).toBe(false);
+  // A sure rule's ledger is used in exports; only unsettled parties go to Suspense.
+  expect(excelPayload?.rows?.[0].ledgerChoice).toBe("Office Expenses");
+  expect(excelPayload?.rows?.[0].ledgerConfirmed).toBe(true);
   expect(excelPayload?.balanceCheck).toBe("needs_check");
   await page.getByRole("tab", { name: "Review", exact: true }).click();
   await expect(page.getByText("Check the statement totals")).toBeVisible();

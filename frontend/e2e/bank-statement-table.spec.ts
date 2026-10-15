@@ -167,13 +167,18 @@ for (const width of [1280, 390]) {
     await expect(table).not.toContainText("RAVI SHARMA");
     expect((await download(page, /^Tally XML/)).suggestedFilename()).toBe("statement.xml");
     expect(payloads.xml.transactions).toHaveLength(3);
-    expect(payloads.xml.transactions.every((row: { ledgerName: string }) => row.ledgerName === "Suspense")).toBe(true);
-    expect(payloads.xml.transactions[1]).toMatchObject({ rowNumber: 2, debit: 2000, credit: null, voucherType: "Payment" });
-    expect(payloads.xml.mappings.every((row: { ledgerName: string }) => row.ledgerName === "Suspense")).toBe(true);
+    // Ledgers already settled (remembered for the client, or a sure rule) go in; the rest stays in Suspense.
+    expect(payloads.xml.transactions.map((row: { ledgerName: string }) => row.ledgerName)).toEqual(["Sundry Debtors", "Cash", "Suspense"]);
+    expect(payloads.xml.transactions[1]).toMatchObject({ rowNumber: 2, debit: 2000, credit: null, voucherType: "Contra" });
+    expect(Object.fromEntries(payloads.xml.mappings.map((row: { counterparty: string; ledgerName: string }) => [row.counterparty, row.ledgerName]))).toEqual({
+      "RAVI SHARMA": "Sundry Debtors",
+      "ATM WDL MAIN ROAD": "Cash",
+      "ACME JEWELLERS": "Suspense",
+    });
     await expect(viewer.getByText("Tally XML downloaded · 3 vouchers.", { exact: false })).toBeVisible();
     await download(page, /^Excel/);
     expect(payloads.excel.rows).toHaveLength(3);
-    expect(payloads.excel.rows.map((row: { ledgerChoice: string }) => row.ledgerChoice)).toEqual(["Suspense", "Suspense", "Suspense"]);
+    expect(payloads.excel.rows.map((row: { ledgerChoice: string }) => row.ledgerChoice)).toEqual(["Sundry Debtors", "Cash", "Suspense"]);
     await viewer.getByLabel("Search transactions").fill("");
 
     // Behind the viewer, the results page still shows the bank, with nothing to review.
@@ -204,7 +209,8 @@ test("AI review is opt-in and unconfirmed suggestions never enter XML", async ({
   const xml = page.waitForEvent("download");
   await page.getByRole("button", { name: "Download Tally XML", exact: true }).click();
   await xml;
-  expect(payloads.xml.transactions.every((row: { ledgerName: string }) => row.ledgerName === "Suspense")).toBe(true);
+  // The AI's pick for ACME is only a suggestion until it is chosen, so that row stays in Suspense.
+  expect(payloads.xml.transactions[2]).toMatchObject({ ledgerName: "Suspense", debit: 300 });
   await page.getByLabel("Ledger for ACME JEWELLERS", { exact: true }).selectOption("Office Expenses");
   const approvedXml = page.waitForEvent("download");
   await page.getByRole("button", { name: "Download Tally XML", exact: true }).click();
