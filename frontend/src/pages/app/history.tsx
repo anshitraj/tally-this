@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useRoute } from "wouter";
-import { ArrowLeft, ChevronRight, FileSpreadsheet, GitCompare, History as HistoryIcon, Layers, LifeBuoy, Receipt, Search, ShoppingBag, ShieldCheck, Sparkles, type LucideIcon } from "lucide-react";
+import { ArrowLeft, ChevronRight, FileCheck2, FileSpreadsheet, GitCompare, History as HistoryIcon, Layers, LifeBuoy, Receipt, Search, ShoppingBag, ShieldCheck, Sparkles, type LucideIcon } from "lucide-react";
 import {
   BigStat,
   Choice,
@@ -19,6 +19,7 @@ import {
   type StatementCheck,
 } from "@/components/jobs/jobUi";
 import { StatementViewer, type DownloadItem } from "@/components/jobs/BankStatementTable";
+import { Gstr2bSavedView } from "@/components/jobs/Gstr2bSavedView";
 import { getActiveClient } from "@/lib/activeClient";
 import { getUser } from "@/lib/auth";
 import { upgradeMailto, usePrivacy } from "@/lib/privacy";
@@ -57,6 +58,7 @@ const KINDS: Record<string, { label: string; icon: LucideIcon }> = {
   bank_tally_reconciliation: { label: "Bank ↔ Tally", icon: GitCompare },
   ecommerce_gst: { label: "E-commerce GST", icon: ShoppingBag },
   bank_invoice_reconciliation: { label: "Invoice ↔ Bank", icon: Receipt },
+  gstr_2b_reconciliation: { label: "GSTR-2B ↔ Books", icon: FileCheck2 },
   import_records: { label: "Data import", icon: Layers },
   full_month_close: { label: "Month-end check", icon: Layers },
 };
@@ -67,6 +69,7 @@ const FILTERS = [
   { value: "bank_tally_reconciliation", label: "Bank ↔ Tally" },
   { value: "ecommerce_gst", label: "E-commerce GST" },
   { value: "bank_invoice_reconciliation", label: "Invoice ↔ Bank" },
+  { value: "gstr_2b_reconciliation", label: "GSTR-2B ↔ Books" },
   { value: "other", label: "Other" },
 ] as const;
 
@@ -102,6 +105,10 @@ function summaryLine(row: HistoryRow) {
       return attention == null ? "" : `${info.counts?.confirmed ?? 0} matched · ${attention} need attention`;
     }
     case "bank_invoice_reconciliation": {
+      const entries = info.entries ?? 0;
+      return `${info.matched ?? 0} matched · ${Math.max(entries - (info.matched ?? 0), 0)} need attention`;
+    }
+    case "gstr_2b_reconciliation": {
       const entries = info.entries ?? 0;
       return `${info.matched ?? 0} matched · ${Math.max(entries - (info.matched ?? 0), 0)} need attention`;
     }
@@ -345,6 +352,7 @@ export function HistoryDetailPage() {
             <ComparisonView artifact={latest(detail.run.run_type === "bank_tally_reconciliation" ? "bank_tally_comparison" : "invoice_bank_comparison")} fileName={displayTitle(detail.run)} />
           )}
           {detail.run.run_type === "ecommerce_gst" && <EcommerceView artifact={latest("ecommerce_gst")} />}
+          {detail.run.run_type === "gstr_2b_reconciliation" && <Gstr2bSavedView runId={detail.run.id} data={latest("gstr2b_comparison")?.json_data} />}
           {!KINDS_WITH_VIEW.has(detail.run.run_type) && <GenericView detail={detail} />}
         </>
       )}
@@ -352,7 +360,7 @@ export function HistoryDetailPage() {
   );
 }
 
-const KINDS_WITH_VIEW = new Set(["bank_to_tally", "bank_tally_reconciliation", "bank_invoice_reconciliation", "ecommerce_gst"]);
+const KINDS_WITH_VIEW = new Set(["bank_to_tally", "bank_tally_reconciliation", "bank_invoice_reconciliation", "ecommerce_gst", "gstr_2b_reconciliation"]);
 
 function Missing() {
   return <Notice tone="warn">The saved result for this item is not available.</Notice>;

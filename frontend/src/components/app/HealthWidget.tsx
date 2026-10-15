@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Activity, CheckCircle2, AlertCircle } from "lucide-react";
+import { readJson } from "@/lib/api";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -48,7 +49,7 @@ function Tile({ label, value, ms }: { label: string; value: string | boolean | u
 export default function HealthWidget() {
   const { data, isLoading, isError } = useQuery<HealthPayload>({
     queryKey: ["health"],
-    queryFn: () => fetch(`${BASE}/api/health`).then(r => r.json()),
+    queryFn: () => fetch(`${BASE}/api/health`).then(readJson),
     refetchInterval: 60_000,
     retry: 1,
   });

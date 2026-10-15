@@ -18,8 +18,23 @@ export default function DocsPage() {
       />
 
       <Section title="What you can do">
-        <p>Bank Statement → Tally reads a statement and builds receipt and payment vouchers. Bank ↔ Tally compares one bank file with one Tally export. E-commerce GST normalizes marketplace CSVs into a draft pack. Invoice ↔ Bank suggests payment matches for review.</p>
+        <p>Bank Statement → Tally reads a statement and builds receipt and payment vouchers. Bank ↔ Tally compares one bank file with one Tally export and works out a bank reconciliation statement. E-commerce GST normalizes marketplace CSVs into a draft pack. Invoice ↔ Bank suggests payment matches for review. GSTR-2B ↔ Books compares the GST portal's GSTR-2B with your purchase register.</p>
         <p>The current product is upload-based. Direct Tally, GST portal, and bank connections are not live. A local Tally connector exists for customers who run Tally on their own machine.</p>
+      </Section>
+
+      <Section title="GSTR-2B ↔ Books">
+        <p>Upload GSTR-2B (JSON or Excel from the GST portal; several months can be added together) and your purchase register (Excel or CSV from Tally or any billing software). Documents are matched by supplier GSTIN and invoice number. A match needs both to agree and the amounts to agree within ₹1; anything found by a looser rule, such as a different invoice number or a different GSTIN, is only suggested until you confirm it.</p>
+        <p>The result lists what is in your books but not in GSTR-2B (ITC not supported), what is in GSTR-2B but not in your books, amount differences, documents entered twice, and documents GSTR-2B itself marks as ITC not available. Each supplier with missing invoices gets a message you can copy or email. The Excel file has the summary by tax head, every list and a vendor-wise sheet.</p>
+        <p>This compares two files. It does not file anything, does not decide whether ITC may be claimed, and is not a GST portal check. Potential risk — needs CA review.</p>
+      </Section>
+
+      <Section title="Reconciliation statement and the month pack">
+        <p>After Bank ↔ Tally, the reconciliation statement starts from the bank's closing balance and adds or subtracts the entries that differ to reach the balance as per books. Type in the Tally ledger balance to see whether it adds up. Entries missing in Tally can be downloaded as vouchers to import.</p>
+        <p>Reports builds one Excel file for a client and month from the jobs saved in TallyThis: what was done, and every item that still needs a decision. Incognito jobs are never saved, so they are never in it.</p>
+      </Section>
+
+      <Section title="Finding your way">
+        <p>Press Ctrl K (or ⌘K) anywhere to search jobs, pages and clients. The menu keeps the four everyday jobs on top and everything else under Advanced, grouped by purpose. If a session ends you are sent to sign in and brought back to the same page.</p>
       </Section>
 
       <Section title="Runs">

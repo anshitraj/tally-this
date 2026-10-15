@@ -4,9 +4,11 @@ import { useLocation } from "wouter";
 import { motion } from "framer-motion";
 import { GitMerge, ArrowRight, FolderOpen } from "lucide-react";
 import PageHeader from "@/components/app/PageHeader";
+import { NoDataYet } from "@/components/app/EmptyPanel";
 import StatusBadge from "@/components/app/StatusBadge";
 import { formatCurrencyFull, formatDate } from "@/lib/format";
 import { APP_ROUTES } from "@/lib/routes";
+import { readJson } from "@/lib/api";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -43,12 +45,12 @@ export default function LedgerMatchPage() {
 
   const { data: workspaces = [] } = useQuery<WorkspaceRun[]>({
     queryKey: ["workspaces-tally"],
-    queryFn: () => fetch(`${BASE}/api/workflow/runs?runType=bank_tally_reconciliation`).then(r => r.json()),
+    queryFn: () => fetch(`${BASE}/api/workflow/runs?runType=bank_tally_reconciliation`).then(readJson),
   });
 
   const { data = [], isLoading } = useQuery<LedgerEntry[]>({
     queryKey: ["ledger", activeRunId],
-    queryFn: () => fetch(`${BASE}/api/ledger${activeRunId ? `?runId=${activeRunId}` : ""}`).then(r => r.json()),
+    queryFn: () => fetch(`${BASE}/api/ledger${activeRunId ? `?runId=${activeRunId}` : ""}`).then(readJson),
   });
 
   const matched = data.filter(e => e.status === "matched").length;
@@ -128,8 +130,9 @@ export default function LedgerMatchPage() {
               ) : data.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="px-4 py-12 text-center">
-                    <GitMerge className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
-                    <div className="text-muted-foreground">No ledger entries</div>
+                    <NoDataYet icon={GitMerge} title="No ledger entries yet" bare job={{ label: "Compare bank with Tally", href: "/app/jobs/bank-tally" }}>
+                      Upload a Tally or Zoho ledger export, or compare a bank statement with Tally directly.
+                    </NoDataYet>
                   </td>
                 </tr>
               ) : data.map(e => (

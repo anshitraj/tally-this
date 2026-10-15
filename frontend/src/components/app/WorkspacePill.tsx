@@ -8,6 +8,7 @@ import { useQuery } from "@tanstack/react-query";
 import { FolderOpen, ChevronDown, Plus } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useLocation } from "wouter";
+import { readJson } from "@/lib/api";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 const LS_KEY = "finverify.activeWorkspace";
@@ -44,7 +45,7 @@ export default function WorkspacePill() {
 
   const { data: runs = [] } = useQuery<WorkflowRun[]>({
     queryKey: ["workflow-runs-all"],
-    queryFn: () => fetch(`${BASE}/api/workflow/runs`).then(r => r.json()),
+    queryFn: () => fetch(`${BASE}/api/workflow/runs`).then(readJson),
     refetchInterval: 30_000,
   });
 

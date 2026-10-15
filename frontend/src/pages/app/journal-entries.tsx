@@ -6,6 +6,7 @@ import { PageTransition, EmptyState } from "@/components/app/finverify-ui";
 import StatusBadge from "@/components/app/StatusBadge";
 import { formatCurrencyFull, formatDate } from "@/lib/format";
 import { useToast } from "@/hooks/use-toast";
+import { readJson } from "@/lib/api";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -34,12 +35,12 @@ export default function JournalEntriesPage() {
 
   const { data: entries = [] } = useQuery<JE[]>({
     queryKey: ["journal-entries"],
-    queryFn: () => fetch(`${BASE}/api/journal-entries`).then(r => r.json()),
+    queryFn: () => fetch(`${BASE}/api/journal-entries`).then(readJson),
   });
 
   const { data: templates = [] } = useQuery<Template[]>({
     queryKey: ["je-templates"],
-    queryFn: () => fetch(`${BASE}/api/journal-entries/templates`).then(r => r.json()),
+    queryFn: () => fetch(`${BASE}/api/journal-entries/templates`).then(readJson),
   });
 
   const createMutation = useMutation({

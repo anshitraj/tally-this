@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Activity, CheckCircle2 } from "lucide-react";
 import { formatDate } from "@/lib/format";
+import { readJson } from "@/lib/api";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -15,7 +16,7 @@ interface ActionHistoryItem {
 export default function ActionHistory({ items: providedItems }: { items?: ActionHistoryItem[] }) {
   const { data = [], isLoading } = useQuery<ActionHistoryItem[]>({
     queryKey: ["action-history"],
-    queryFn: () => fetch(`${BASE}/api/action-history`).then(r => r.json()),
+    queryFn: () => fetch(`${BASE}/api/action-history`).then(readJson),
     enabled: !providedItems,
   });
   const items = providedItems ?? data;

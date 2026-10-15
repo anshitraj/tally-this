@@ -39,6 +39,9 @@ function modeFromAddress(): Mode {
 }
 
 function appRoute() {
+  // Someone sent back here by an ended session returns to the page they were on.
+  const back = new URLSearchParams(window.location.search).get("next");
+  if (back && /^\/app(\/|\?|$)/.test(back)) return back;
   // A file dropped on the home page before sign-in goes straight to its job.
   const job = peekPendingJob();
   return job ? `/app/jobs/${job}` : "/app/overview";
@@ -106,7 +109,11 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [code, setCode] = useState("");
   const [newPassword, setNewPassword] = useState("");
-  const [info, setInfo] = useState("");
+  const [info, setInfo] = useState(() =>
+    new URLSearchParams(window.location.search).get("reason") === "expired"
+      ? "Your session ended, so we signed you out to keep your books safe. Sign in to carry on where you were."
+      : "",
+  );
   const [error, setError] = useState(() => (new URLSearchParams(window.location.search).get("error") ? "That sign-in could not be completed. Please try again." : ""));
   const [busy, setBusy] = useState(false);
   const [demoBusy, setDemoBusy] = useState(false);
@@ -281,7 +288,7 @@ export default function LoginPage() {
     step === "code" || step === "reset" ? info
     : step === "forgot" ? "Enter your email and we will send you a code."
     : isSignup ? "Free to start. No card needed."
-    : "Welcome back. Pick up where you left off.";
+    : info || "Welcome back. Pick up where you left off.";
   const submitLabel =
     step === "code" ? "Confirm and continue"
     : step === "forgot" ? "Send code"

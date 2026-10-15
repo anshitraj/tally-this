@@ -3,6 +3,7 @@ import { AlertTriangle, CheckCircle2, ChevronDown, FileText, Loader2, Lock, Shie
 import { getActiveClient, setActiveClient, type ActiveClient } from "@/lib/activeClient";
 import { isPrivacyOn, loadPlan, upgradeMailto, usePrivacy } from "@/lib/privacy";
 import { IncognitoIcon } from "@/components/app/IncognitoIcon";
+import { CountUp } from "@/components/app/CountUp";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 
@@ -14,31 +15,57 @@ export interface PracticeClient {
   name: string;
 }
 
+// The client list is needed by the menu, the search box and most pages at once. One shared read
+// keeps them in step and asks the server once, not once per component.
+let clientList: { rows: PracticeClient[]; source: string } | null = null;
+let clientRead: Promise<void> | null = null;
+const clientListeners = new Set<() => void>();
+
+function readClients(force = false): Promise<void> {
+  if (clientRead && !force) return clientRead;
+  clientRead = fetch(`${BASE}/api/practice/clients?light=1`)
+    .then(response => response.json())
+    .then(data => {
+      const rows = (data.clients ?? []).filter((client: PracticeClient) => (client.companyId ?? 0) > 0);
+      clientList = { rows, source: data.source ?? "" };
+      if (!getActiveClient() && rows[0]) {
+        setActiveClient({ id: rows[0].companyId, name: rows[0].name, accounting: "Tally", linkId: rows[0].linkId });
+      }
+    })
+    .catch(() => undefined)
+    .finally(() => {
+      clientRead = null;
+      clientListeners.forEach(listener => listener());
+    });
+  return clientRead;
+}
+
+/** Call after a client is added, renamed or removed so every list updates. */
+export function refreshClients() {
+  return readClients(true);
+}
+
+// A different person signing in must never see the previous person's clients.
+if (typeof window !== "undefined") {
+  window.addEventListener("finverify-session", () => {
+    clientList = null;
+    clientRead = null;
+    clientListeners.forEach(listener => listener());
+  });
+}
+
 export function useClients() {
-  const [clients, setClients] = useState<PracticeClient[]>([]);
+  const [, rerender] = useState(0);
   const [active, setActive] = useState<ActiveClient | null>(() => getActiveClient());
-  const [source, setSource] = useState<string>("");
 
   useEffect(() => {
-    let cancelled = false;
-    fetch(`${BASE}/api/practice/clients`)
-      .then(response => response.json())
-      .then(data => {
-        if (cancelled) return;
-        const rows = (data.clients ?? []).filter((client: PracticeClient) => (client.companyId ?? 0) > 0);
-        setClients(rows);
-        setSource(data.source ?? "");
-        if (!getActiveClient() && rows[0]) {
-          const next = { id: rows[0].companyId, name: rows[0].name, accounting: "Tally" as const, linkId: rows[0].linkId };
-          setActiveClient(next);
-          setActive(next);
-        }
-      })
-      .catch(() => undefined);
+    const update = () => rerender(value => value + 1);
+    clientListeners.add(update);
+    if (!clientList) void readClients();
     const sync = () => setActive(getActiveClient());
     window.addEventListener("finverify-client", sync);
     return () => {
-      cancelled = true;
+      clientListeners.delete(update);
       window.removeEventListener("finverify-client", sync);
     };
   }, []);
@@ -48,7 +75,7 @@ export function useClients() {
     setActive(client);
   };
 
-  return { clients, active, source, choose };
+  return { clients: clientList?.rows ?? [], active, source: clientList?.source ?? "", choose };
 }
 
 export function downloadBlob(filename: string, blob: Blob) {
@@ -96,6 +123,41 @@ export async function postFiles<T>(path: string, fields: Record<string, File | F
     return { ok: response.ok && data.ok !== false, status: response.status, data };
   } catch {
     return { ok: false, status: 0, data: { ok: false, message: "Could not reach TallyThis. Check your connection and try again." } as T & { ok?: boolean; message?: string } };
+  }
+}
+
+/**
+ * A long scan is read in the background: the upload answers with a job id and this waits for the
+ * finished reply, reporting progress. Returns null when the caller no longer wants the result.
+ */
+export async function waitForStatementJob<T>(
+  jobId: string,
+  options: { cancelled: () => boolean; onProgress: (percent: number, step: string) => void },
+): Promise<{ ok: boolean; status: number; data: T & { ok?: boolean; message?: string } } | null> {
+  const failed = (status: number, message: string) => ({ ok: false, status, data: { ok: false, message } as T & { ok?: boolean; message?: string } });
+  let misses = 0;
+  for (;;) {
+    await new Promise(resolve => window.setTimeout(resolve, 1500));
+    if (options.cancelled()) return null;
+    try {
+      const response = await fetch(`${BASE}/api/jobs/bank-statement/progress/${encodeURIComponent(jobId)}`);
+      const data = await response.json().catch(() => null);
+      if (options.cancelled()) return null;
+      if (response.status === 404) return failed(404, data?.message || "This upload is no longer available. Please upload the statement again.");
+      if (response.ok && data?.state === "working") {
+        misses = 0;
+        options.onProgress(Number(data.percent) || 0, String(data.step || "Reading your statement"));
+        continue;
+      }
+      if (response.ok && data?.state === "done") {
+        const status = Number(data.httpStatus) || 200;
+        return { ok: status < 400 && data.result?.ok !== false, status, data: data.result };
+      }
+    } catch {
+      // A dropped request is retried; the read itself carries on in the background.
+    }
+    misses += 1;
+    if (misses >= 5) return failed(0, "Could not reach TallyThis. Check your connection and try again.");
   }
 }
 
@@ -343,23 +405,27 @@ export function DropZone({
 }
 
 /** One request, several plain-language steps so the wait feels like progress. */
-export function Working({ steps }: { steps: string[] }) {
+export function Working({ steps, progress }: { steps: string[]; progress?: { percent: number; step: string } | null }) {
   const [index, setIndex] = useState(0);
   useEffect(() => {
     const timer = window.setInterval(() => setIndex(current => Math.min(current + 1, steps.length - 1)), 1800);
     return () => window.clearInterval(timer);
   }, [steps.length]);
-  const percent = Math.round(((index + 1) / (steps.length + 1)) * 100);
+  // A long scan reports where it really is; everything else shows the usual steps.
+  const live = progress != null;
+  const percent = live ? Math.max(3, Math.min(99, Math.round(progress.percent))) : Math.round(((index + 1) / (steps.length + 1)) * 100);
   return (
-    <div className="rounded-2xl border border-border bg-card p-6">
+    <div className="rounded-2xl border border-border bg-card p-6" role="status" aria-live="polite">
       <div className="flex items-center gap-3">
         <Loader2 className="h-5 w-5 animate-spin text-[var(--fv-accent)]" />
-        <div className="text-sm font-semibold">{steps[index]}</div>
+        <div className="text-sm font-semibold">{live ? progress.step : steps[index]}</div>
+        {live && <div className="ml-auto text-sm tabular-nums text-muted-foreground">{percent}%</div>}
       </div>
       <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-muted">
         <div className="h-full rounded-full bg-[var(--fv-accent)] transition-all duration-700" style={{ width: `${percent}%` }} />
       </div>
-      <ol className="mt-4 grid gap-1.5 text-xs text-muted-foreground sm:grid-cols-2">
+      {live && <p className="mt-4 text-xs text-muted-foreground">This is a long statement, so it is read a few pages at a time. It can take several minutes. Keep this page open.</p>}
+      <ol className={cn("mt-4 grid gap-1.5 text-xs text-muted-foreground sm:grid-cols-2", live && "hidden")}>
         {steps.map((step, i) => (
           <li key={step} className={cn("flex items-center gap-2", i < index && "text-emerald-700", i === index && "font-semibold text-foreground")}>
             {i < index ? <CheckCircle2 className="h-3.5 w-3.5" /> : <span className="h-3.5 w-3.5 rounded-full border border-current" />}
@@ -389,7 +455,7 @@ export function ProgressBar({ percent, step }: { percent: number; step: string }
 
 export function ResultCard({ eyebrow, children, actions }: { eyebrow?: ReactNode; children: ReactNode; actions?: ReactNode }) {
   return (
-    <section className="rounded-xl border border-border bg-card p-4 sm:p-5">
+    <section className="fv-reveal rounded-xl border border-border bg-card p-4 sm:p-5">
       {eyebrow && <div className="mb-3 text-xs font-medium text-muted-foreground">{eyebrow}</div>}
       {children}
       {actions && <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">{actions}</div>}
@@ -404,7 +470,7 @@ export function BigStat({ value, label, tone = "neutral" }: { value: ReactNode; 
         "text-2xl font-semibold tabular-nums",
         tone === "good" && "text-emerald-700",
         tone === "attention" && "text-amber-600",
-      )}>{value}</div>
+      )}><CountUp value={value} /></div>
       <div className="mt-1 text-sm text-muted-foreground">{label}</div>
     </div>
   );

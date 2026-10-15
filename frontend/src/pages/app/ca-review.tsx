@@ -6,6 +6,7 @@ import PageHeader from "@/components/app/PageHeader";
 import StatusBadge from "@/components/app/StatusBadge";
 import { severityColor } from "@/lib/format";
 import { useToast } from "@/hooks/use-toast";
+import { readJson } from "@/lib/api";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -38,7 +39,7 @@ export default function CaReviewPage() {
 
   const { data = [], isLoading } = useQuery<CaReviewItem[]>({
     queryKey: ["caReview"],
-    queryFn: () => fetch(`${BASE}/api/ca-review`).then(r => r.json()),
+    queryFn: () => fetch(`${BASE}/api/ca-review`).then(readJson),
   });
 
   const actionMutation = useMutation({

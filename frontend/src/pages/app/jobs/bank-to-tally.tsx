@@ -25,6 +25,7 @@ import {
   postDownload,
   takePendingFiles,
   toCsv,
+  waitForStatementJob,
   type StatementCheck,
 } from "@/components/jobs/jobUi";
 import { StatementViewer, type DownloadItem, type RowLedger, type VoucherType } from "@/components/jobs/BankStatementTable";
@@ -62,6 +63,11 @@ interface LedgerGroup {
 interface NormalizeResponse {
   ok: boolean;
   message: string;
+  /** A long scan is read in the background: poll for the finished reply with this id. */
+  pending?: boolean;
+  jobId?: string;
+  percent?: number;
+  step?: string;
   needsPassword?: boolean;
   wrongPassword?: boolean;
   needsAiConsent?: boolean;
@@ -116,6 +122,11 @@ export default function BankToTallyPage() {
   const [aiReview, setAiReview] = useState(false);
   const [aiMessage, setAiMessage] = useState("");
   const jobVersion = useRef(0);
+  // Where a long scan is up to, while it is being read in the background.
+  const [readProgress, setReadProgress] = useState<{ percent: number; step: string } | null>(null);
+  // Long lists show a first page and grow on request, so thousands of parties never freeze the page.
+  const [partyLimit, setPartyLimit] = useState(50);
+  const [rowLimit, setRowLimit] = useState(50);
   const [bankLedger, setBankLedger] = useState("Bank Account");
   const [bankOverride, setBankOverride] = useState<string | null>(null);
   const [otherBank, setOtherBank] = useState("");
@@ -154,6 +165,10 @@ export default function BankToTallyPage() {
 
   const runFile = async (picked: File, pdfPassword?: string, allowAi = false) => {
     jobVersion.current += 1;
+    const version = jobVersion.current;
+    setReadProgress(null);
+    setPartyLimit(50);
+    setRowLimit(50);
     setAiReview(false);
     setAiMessage("");
     setSuggesting(false);
@@ -163,12 +178,25 @@ export default function BankToTallyPage() {
     setError("");
     setGenerated(null);
     passwordRef.current = pdfPassword;
-    const response = await postFiles<NormalizeResponse>("/api/jobs/bank-statement/normalize", {
+    let response = await postFiles<NormalizeResponse>("/api/jobs/bank-statement/normalize", {
       file: picked,
       fileName: picked.name,
       password: pdfPassword,
       allowAi: allowAi ? "1" : undefined,
+      async: "1",
     });
+    // Spreadsheets and ordinary PDFs answer straight away. A long scan answers with a job to wait for.
+    if (response.ok && response.data.pending && response.data.jobId) {
+      setReadProgress({ percent: response.data.percent ?? 3, step: response.data.step ?? "Reading your statement" });
+      const finished = await waitForStatementJob<NormalizeResponse>(response.data.jobId, {
+        cancelled: () => version !== jobVersion.current,
+        onProgress: (percent, step) => setReadProgress({ percent, step }),
+      });
+      // Another upload, or Upload another statement, took over while this one was being read.
+      if (!finished) return;
+      response = finished;
+    }
+    setReadProgress(null);
     if (!response.ok) {
       if (response.data.needsPassword) {
         setStage("password");
@@ -542,6 +570,7 @@ export default function BankToTallyPage() {
     setBankPickerOpen(false);
     setTotalsConfirmed(false);
     setViewerOpen(false);
+    setReadProgress(null);
     passwordRef.current = undefined;
   };
 
@@ -595,7 +624,7 @@ export default function BankToTallyPage() {
         </div>
       )}
 
-      {stage === "working" && <Working steps={STEPS} />}
+      {stage === "working" && <Working steps={STEPS} progress={readProgress} />}
 
       {stage === "password" && file && (
         <PasswordPrompt
@@ -739,10 +768,15 @@ export default function BankToTallyPage() {
                         )}
                       </div>
                       <div className="mt-3 divide-y divide-border rounded-xl border border-border">
-                        {groupsToReview.map(group => (
+                        {groupsToReview.slice(0, partyLimit).map(group => (
                           <LedgerRow key={group.key} group={{ ...group, direction: directions.get(group.key) ?? group.direction }} value={ledgers[group.key] ?? group.ledger} options={options} onPick={ledger => pick(group.key, ledger)} />
                         ))}
                       </div>
+                      {groupsToReview.length > partyLimit && (
+                        <button type="button" className="mt-3 text-sm font-semibold text-[var(--fv-accent-dark)] hover:underline" onClick={() => setPartyLimit(limit => limit + 100)}>
+                          Show {Math.min(100, groupsToReview.length - partyLimit)} more of {groupsToReview.length - partyLimit} remaining
+                        </button>
+                      )}
                     </div>
                   )}
                   {rowsToReview.length > 0 && (
@@ -750,7 +784,7 @@ export default function BankToTallyPage() {
                       <h2 className="font-semibold">Double-check {rowsToReview.length} {rowsToReview.length === 1 ? "row" : "rows"}</h2>
                       <p className="mt-1 text-xs text-muted-foreground">These rows did not follow the running balance or were hard to read. Compare with the statement.</p>
                       <div className="mt-3 divide-y divide-border rounded-xl border border-border">
-                        {rowsToReview.map(txn => (
+                        {rowsToReview.slice(0, rowLimit).map(txn => (
                           <div key={txn.rowNumber} className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between">
                             <div className="min-w-0 text-sm">
                               <div className="font-medium">{fmtDate(txn.date)} · {txn.debit != null ? `Paid ${inr(txn.debit)}` : `Received ${inr(txn.credit)}`}</div>
@@ -773,6 +807,11 @@ export default function BankToTallyPage() {
                           </div>
                         ))}
                       </div>
+                      {rowsToReview.length > rowLimit && (
+                        <button type="button" className="mt-3 text-sm font-semibold text-[var(--fv-accent-dark)] hover:underline" onClick={() => setRowLimit(limit => limit + 100)}>
+                          Show {Math.min(100, rowsToReview.length - rowLimit)} more of {rowsToReview.length - rowLimit} remaining
+                        </button>
+                      )}
                     </div>
                   )}
                   {needsTotalsCheck && (
@@ -856,10 +895,15 @@ export default function BankToTallyPage() {
             <div>
               <div className="mb-2 text-sm font-semibold">All parties ({groups.length})</div>
               <div className="max-h-96 divide-y divide-border overflow-y-auto rounded-xl border border-border bg-card">
-                {groups.map(group => (
+                {groups.slice(0, partyLimit).map(group => (
                   <LedgerRow key={group.key} group={{ ...group, direction: directions.get(group.key) ?? group.direction }} value={ledgers[group.key] ?? group.ledger} options={options} onPick={ledger => pick(group.key, ledger)} compact />
                 ))}
               </div>
+              {groups.length > partyLimit && (
+                <button type="button" className="mt-2 text-sm font-semibold text-[var(--fv-accent-dark)] hover:underline" onClick={() => setPartyLimit(limit => limit + 100)}>
+                  Show {Math.min(100, groups.length - partyLimit)} more of {groups.length - partyLimit} remaining
+                </button>
+              )}
             </div>
             <div className="flex flex-wrap gap-2">
               {resultView === "export" && <button type="button" className="fv-button-secondary" onClick={exportCsv}>Download transactions (CSV)</button>}

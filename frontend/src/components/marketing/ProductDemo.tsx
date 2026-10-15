@@ -85,6 +85,24 @@ export const DEMO_JOBS = [
     description:
       "See unpaid invoices and payments that still need an invoice, then export.",
   },
+  {
+    title: "GSTR-2B ↔ Books",
+    file: "gstr-2b.json + purchase-register.xlsx",
+    output: "itc-reconciliation.xlsx",
+    total: "412 invoices",
+    matched: "391 matched",
+    attention: "21 need attention",
+    column: "GSTR-2B",
+    rows: [
+      ["Alpha Traders · INV-1042", "₹18,000", "Matched"],
+      ["Beta Metals · BM-558", "₹36,000", "Amount differs"],
+      ["Delta Stationers · DS-77", "₹900", "Not in GSTR-2B"],
+    ],
+    choice: "Ask supplier",
+    final: "ITC review ready",
+    description:
+      "See which purchase invoices GSTR-2B supports, and which suppliers to follow up.",
+  },
 ] as const;
 
 /** A local, illustrative timeline. It never calls APIs or changes accounting data. */

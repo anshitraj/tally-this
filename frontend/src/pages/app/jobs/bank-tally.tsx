@@ -22,6 +22,8 @@ import {
   toCsv,
   type StatementCheck,
 } from "@/components/jobs/jobUi";
+import { BankTallyNextSteps } from "@/components/jobs/ReconNextSteps";
+import { getActiveClient } from "@/lib/activeClient";
 
 interface Side {
   date: string;
@@ -47,6 +49,8 @@ interface CompareResponse {
   privacy?: boolean;
   needsAiConsent?: boolean;
   bank?: { bankName: string | null; periodLabel: string | null; count: number; source?: string; check?: StatementCheck | null };
+  /** How the Tally file was read, with plain remarks (a ledger chosen, totals that did not add up). */
+  tally?: { source?: string; count?: number; notes?: string[] };
   comparison: { items: CompareItem[]; counts: Record<string, number> };
   needsPassword?: boolean;
   wrongPassword?: boolean;
@@ -212,12 +216,12 @@ export default function BankTallyPage() {
           {stage === "error" && <Notice tone="error">{error}</Notice>}
           <div className="grid gap-3 sm:grid-cols-2">
             <DropZone size="sm" label="Bank statement" hint="PDF, Excel or CSV" files={bankFile ? [bankFile] : []} onFiles={files => choose("bank", files[0])} />
-            <DropZone size="sm" label="Tally export" hint="Bank ledger from Tally · Excel or CSV" accept=".xlsx,.xls,.csv" files={tallyFile ? [tallyFile] : []} onFiles={files => choose("tally", files[0])} />
+            <DropZone size="sm" label="Tally export" hint="Bank ledger or Day Book from Tally · PDF, Excel, XML or CSV" accept=".pdf,.xlsx,.xls,.csv,.xml,.html,.htm,.txt" files={tallyFile ? [tallyFile] : []} onFiles={files => choose("tally", files[0])} />
           </div>
           {locked && bankFile && (
             <PasswordPrompt fileName={bankFile.name} error={passwordError} onSubmit={unlock} onSkip={() => { setLocked(false); if (tallyFile) void compare(bankFile, tallyFile, ""); }} />
           )}
-          <p className="text-center text-xs text-muted-foreground">We compare as soon as both files are in. In Tally: open the bank ledger → Export → Excel.</p>
+          <p className="text-center text-xs text-muted-foreground">We compare as soon as both files are in. In Tally: open the bank ledger or Day Book → Export, or Print to PDF.</p>
         </div>
       )}
 
@@ -254,6 +258,11 @@ export default function BankTallyPage() {
           </ResultCard>
 
           {data.privacy && <Notice tone="success">Incognito: this file and result aren’t saved to your workspace. Download the report before leaving.</Notice>}
+          {(data.tally?.notes ?? []).length > 0 && (
+            <Notice tone={(data.tally?.notes ?? []).some(note => /potential risk|could not be added|no printed total/i.test(note)) ? "warn" : "info"}>
+              {(data.tally?.notes ?? []).map(note => <p key={note}>{note}</p>)}
+            </Notice>
+          )}
           {error && <Notice tone="error" onClose={() => setError("")}>{error}</Notice>}
 
           {reviewOpen && (
@@ -297,6 +306,14 @@ export default function BankTallyPage() {
               )}
             </ResultCard>
           )}
+
+          <BankTallyNextSteps
+            items={items}
+            bankName={data.bank?.bankName ?? null}
+            periodLabel={data.bank?.periodLabel ?? null}
+            bankClosing={data.bank?.check?.printedClosing ?? data.bank?.check?.closingBalance ?? null}
+            clientName={getActiveClient()?.name || "Client"}
+          />
 
           <MoreOptions>
             <div className="text-sm text-muted-foreground">{data.bank?.count ?? 0} bank rows and {data.comparison.counts.tally ?? 0} Tally rows were compared.</div>

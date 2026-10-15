@@ -5,6 +5,7 @@ import { ShieldCheck, X, AlertTriangle, FileSpreadsheet, ChevronRight, Upload, L
 import PageHeader from "@/components/app/PageHeader";
 import { PageTransition } from "@/components/app/finverify-ui";
 import { useToast } from "@/hooks/use-toast";
+import { readJson } from "@/lib/api";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -91,7 +92,7 @@ export default function TaxAuditPage() {
 
   const { data, isLoading } = useQuery<TaxAuditIndex>({
     queryKey: ["tax-audit", client],
-    queryFn: () => fetch(`${BASE}/api/tax-audit${clientQs}`).then(r => r.json()),
+    queryFn: () => fetch(`${BASE}/api/tax-audit${clientQs}`).then(readJson),
   });
 
   const importMutation = useMutation({
@@ -139,7 +140,7 @@ export default function TaxAuditPage() {
 
   const { data: detail } = useQuery<{ ok: boolean; check: CheckDetail }>({
     queryKey: ["tax-audit-detail", openCheck, client],
-    queryFn: () => fetch(`${BASE}/api/tax-audit/${openCheck}${clientQs}`).then(r => r.json()),
+    queryFn: () => fetch(`${BASE}/api/tax-audit/${openCheck}${clientQs}`).then(readJson),
     enabled: Boolean(openCheck),
   });
 

@@ -9,6 +9,7 @@ import { ConfidenceBar, EmptyState, PageTransition } from "@/components/app/finv
 import ReconciliationGuide from "@/components/reconciliation/ReconciliationGuide";
 import { formatCurrencyFull, formatDate } from "@/lib/format";
 import { useToast } from "@/hooks/use-toast";
+import { readJson } from "@/lib/api";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -86,7 +87,7 @@ export default function ReconciliationPage() {
 
   const { data: folders = [] } = useQuery<ReconciliationFolder[]>({
     queryKey: ["reconciliation-runs"],
-    queryFn: () => fetch(`${BASE}/api/reconciliation/runs`).then(r => r.json()),
+    queryFn: () => fetch(`${BASE}/api/reconciliation/runs`).then(readJson),
   });
 
   useEffect(() => {
@@ -99,7 +100,7 @@ export default function ReconciliationPage() {
 
   const { data = [], isLoading } = useQuery<ReconciliationMatch[]>({
     queryKey: ["reconciliation", activeRunId ?? "all"],
-    queryFn: () => fetch(`${BASE}/api/reconciliation${activeRunId ? `?runId=${encodeURIComponent(activeRunId)}` : ""}`).then(r => r.json()),
+    queryFn: () => fetch(`${BASE}/api/reconciliation${activeRunId ? `?runId=${encodeURIComponent(activeRunId)}` : ""}`).then(readJson),
   });
 
   const runMutation = useMutation({
@@ -338,6 +339,12 @@ export default function ReconciliationPage() {
           icon={Zap}
           title="No matches yet"
           description="Run reconciliation to generate suggested matches from existing bank, invoice, and ledger records."
+          action={
+            <button type="button" className="fv-button-primary" onClick={() => setConfirmRunOpen(true)} disabled={runMutation.isPending}>
+              <Zap className="h-4 w-4" />
+              Open preflight and run
+            </button>
+          }
         />
       ) : (
         <div className="space-y-4">

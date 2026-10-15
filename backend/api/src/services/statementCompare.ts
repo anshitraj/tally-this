@@ -66,11 +66,18 @@ export function parseTallyLedgerCsv(text: string): TallyRow[] {
   const creditIdx = headerIndex(headers, ["credit"]);
   const narrationIdx = headerIndex(headers, ["narration", "description"]);
   const rows: TallyRow[] = [];
+  // Tally prints the date once for a run of vouchers on the same day, so an empty date cell
+  // belongs to the date above. Dropping those rows would silently lose real entries.
+  let carriedDate: string | null = null;
   for (let i = headerAt + 1; i < lines.length; i += 1) {
     const cells = parseCsvLine(lines[i]);
-    const date = normalizeDate(cells[dateIdx] ?? "");
-    const ledgerName = (cells[ledgerIdx] ?? "").trim();
-    if (!date || !ledgerName) continue;
+    const dateCell = (cells[dateIdx] ?? "").trim();
+    const cellDate = normalizeDate(dateCell);
+    if (cellDate) carriedDate = cellDate;
+    const date = cellDate ?? (dateCell === "" ? carriedDate : null);
+    const ledgerName = (cells[ledgerIdx] ?? "").trim().replace(/^(to|by)\s+/i, "");
+    // Balances and totals are not entries.
+    if (!date || !ledgerName || /^(opening|closing)\s+balance\b|^(grand\s+)?total\b|^carried\s+(over|forward)\b|^brought\s+forward\b/i.test(ledgerName)) continue;
     const debit = normalizeAmount(cells[debitIdx] ?? "");
     const credit = normalizeAmount(cells[creditIdx] ?? "");
     if ((debit == null || debit === 0) && (credit == null || credit === 0)) continue;

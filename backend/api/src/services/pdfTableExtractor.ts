@@ -38,6 +38,8 @@ interface GenericFallback {
 
 const MIN_ACCEPTABLE_ROWS = 1;
 const AI_MAX_ROWS = 500;
+// Text beyond this is never sent, so a longer document is refused instead of being half read.
+const AI_MAX_CHARS = 18_000;
 
 function isAIFallbackEnabled() {
   if (process.env.PDF_AI_FALLBACK === "false") return false;
@@ -263,7 +265,8 @@ function extractGstrRows(text: string): Record<string, unknown>[] {
 }
 
 async function extractByAI(text: string, sourceType: string): Promise<Record<string, unknown>[]> {
-  const sample = text.slice(0, 18_000);
+  if (text.length > AI_MAX_CHARS) throw new Error("ai_input_too_long: this document is longer than the text-reading fallback accepts");
+  const sample = text;
   const schemaHint = (() => {
     const s = sourceType.toLowerCase();
     if (["bank", "bank_statement"].includes(s)) return `keys: Date, Narration, Debit, Credit, Balance, Reference (UTR/cheque/transaction id). Either Debit OR Credit must be set per row.`;
@@ -307,9 +310,10 @@ JSON:`;
     parsed = JSON.parse(arrMatch[0]);
   }
   if (!Array.isArray(parsed)) throw new Error("ai_response_not_array");
-  return parsed
-    .filter((row): row is Record<string, unknown> => row !== null && typeof row === "object" && !Array.isArray(row))
-    .slice(0, AI_MAX_ROWS);
+  const found = parsed.filter((row): row is Record<string, unknown> => row !== null && typeof row === "object" && !Array.isArray(row));
+  // At the cap the answer was most likely cut off; keeping the first rows would look complete and be wrong.
+  if (found.length >= AI_MAX_ROWS) throw new Error("ai_output_truncated: more rows than the text-reading fallback returns");
+  return found;
 }
 
 export async function extractHybrid(

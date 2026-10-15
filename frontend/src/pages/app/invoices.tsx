@@ -3,9 +3,11 @@ import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { Search, Download, FileText } from "lucide-react";
 import PageHeader from "@/components/app/PageHeader";
+import { NoDataYet } from "@/components/app/EmptyPanel";
 import StatusBadge from "@/components/app/StatusBadge";
 import { formatCurrencyFull, formatDate, exportToCsv } from "@/lib/format";
 import InvoiceExtractionReviewPanel from "@/components/invoices/InvoiceExtractionReviewPanel";
+import { readJson } from "@/lib/api";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -31,7 +33,7 @@ export default function InvoicesPage() {
 
   const { data = [], isLoading } = useQuery<Invoice[]>({
     queryKey: ["invoices"],
-    queryFn: () => fetch(`${BASE}/api/invoices`).then(r => r.json()),
+    queryFn: () => fetch(`${BASE}/api/invoices`).then(readJson),
   });
 
   const filtered = data.filter(inv => {
@@ -140,8 +142,9 @@ export default function InvoicesPage() {
               ) : filtered.length === 0 ? (
                 <tr>
                   <td colSpan={9} className="px-4 py-12 text-center">
-                    <FileText className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
-                    <div className="text-muted-foreground">No invoices found</div>
+                    <NoDataYet icon={FileText} title="No invoices yet" bare job={{ label: "Match invoices with the bank", href: "/app/jobs/invoice-bank" }}>
+                      Upload invoice PDFs or an invoice list. They are read here for review, or matched with payments straight away.
+                    </NoDataYet>
                   </td>
                 </tr>
               ) : filtered.map(inv => (

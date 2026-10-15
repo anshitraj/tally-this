@@ -2,8 +2,10 @@ import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { CreditCard } from "lucide-react";
 import PageHeader from "@/components/app/PageHeader";
+import { NoDataYet } from "@/components/app/EmptyPanel";
 import StatusBadge from "@/components/app/StatusBadge";
 import { formatCurrencyFull, formatDate } from "@/lib/format";
+import { readJson } from "@/lib/api";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -31,7 +33,7 @@ const PROVIDER_COLORS: Record<string, string> = {
 export default function GatewaySettlementsPage() {
   const { data = [], isLoading } = useQuery<GatewaySettlement[]>({
     queryKey: ["gateway"],
-    queryFn: () => fetch(`${BASE}/api/gateway-settlements`).then(r => r.json()),
+    queryFn: () => fetch(`${BASE}/api/gateway-settlements`).then(readJson),
   });
 
   const totalGross = data.reduce((s, e) => s + e.grossAmount, 0);
@@ -87,8 +89,9 @@ export default function GatewaySettlementsPage() {
               ) : data.length === 0 ? (
                 <tr>
                   <td colSpan={9} className="px-4 py-12 text-center">
-                    <CreditCard className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
-                    <div className="text-muted-foreground">No settlements found</div>
+                    <NoDataYet icon={CreditCard} title="No settlements yet" bare>
+                      Upload a Razorpay, Cashfree or Stripe settlement report and each payout is listed here, ready to match with the bank.
+                    </NoDataYet>
                   </td>
                 </tr>
               ) : data.map(e => (

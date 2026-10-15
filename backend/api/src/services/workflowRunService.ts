@@ -15,6 +15,7 @@ export type WorkflowRunType =
   | "bank_invoice_reconciliation"
   | "bank_gateway_reconciliation"
   | "bank_payroll_reconciliation"
+  | "gstr_2b_reconciliation"
   | "gst_tds_review"
   | "invoice_ai_extraction"
   | "full_month_close"
@@ -89,6 +90,13 @@ const DEFAULT_STEPS: Record<WorkflowRunType, RunStep[]> = {
     { label: "Saving report", status: "pending", percent: 90 },
     { label: "Completed", status: "pending", percent: 100 },
   ],
+  gstr_2b_reconciliation: [
+    { label: "Reading GSTR-2B", status: "pending", percent: 20 },
+    { label: "Reading purchase register", status: "pending", percent: 45 },
+    { label: "Matching suppliers and invoices", status: "pending", percent: 75 },
+    { label: "Saving result", status: "pending", percent: 90 },
+    { label: "Completed", status: "pending", percent: 100 },
+  ],
   gst_tds_review: [
     { label: "Loading GST/TDS records", status: "pending", percent: 20 },
     { label: "Generating risk flags", status: "pending", percent: 60 },
@@ -129,6 +137,7 @@ function runTitle(runType: WorkflowRunType, meta?: Record<string, string>): stri
     bank_invoice_reconciliation: "Bank + Invoice reconciliation",
     bank_gateway_reconciliation: "Gateway settlement matching",
     bank_payroll_reconciliation: "Payroll matching",
+    gstr_2b_reconciliation: "GSTR-2B ↔ Books",
     gst_tds_review: "GST/TDS review pack",
     invoice_ai_extraction: "Invoice AI extraction",
     full_month_close: "Full month close",

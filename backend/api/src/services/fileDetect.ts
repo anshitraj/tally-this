@@ -115,8 +115,16 @@ export type FileKind = "bank_statement" | "tally_export" | "marketplace_report" 
 export function detectFileKind(file: UploadedFile): { kind: FileKind; platform?: MarketplacePlatform } {
   const name = file.originalname.toLowerCase();
   if (isDocumentFile(file)) {
+    if (extensionOf(name) === "pdf" && /tally|day[-_ ]?book|ledger|voucher|vch/i.test(name)) return { kind: "tally_export" };
     if (/invoice|bill|inv[-_ ]?\d/i.test(name)) return { kind: "invoice_document" };
     return { kind: "bank_statement" };
+  }
+  // Tally's own XML and HTML exports are not spreadsheets, so they are recognised by their markup.
+  const ext = extensionOf(name);
+  if (ext === "xml" || ext === "html" || ext === "htm") {
+    const head = file.buffer.subarray(0, 4096).toString("utf8");
+    if (/<ENVELOPE\b|<TALLYMESSAGE\b|<VOUCHER\b/i.test(head) || /tally|day[-_ ]?book|ledger|voucher/i.test(name)) return { kind: "tally_export" };
+    return { kind: "unknown" };
   }
   let text = "";
   try {

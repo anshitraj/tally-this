@@ -3,9 +3,13 @@ import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import {
   ArrowUpRight,
+  CalendarClock,
+  FileCheck2,
+  FileSearch,
   FileSpreadsheet,
   GitCompare,
   Receipt,
+  Scale,
   ShoppingBag,
   type LucideIcon,
 } from "lucide-react";
@@ -59,11 +63,20 @@ export const AUTOMATIONS: Array<{
   },
 ];
 
+/** Quieter than the four jobs above: the checks a CA reaches for at month end. */
+const MORE_TOOLS: Array<{ label: string; href: string; icon: LucideIcon }> = [
+  { label: "GSTR-2B ↔ Books", href: "/app/jobs/gstr-2b", icon: FileCheck2 },
+  { label: "26AS TDS", href: "/app/tds-recon", icon: Scale },
+  { label: "Tax audit", href: "/app/tax-audit", icon: FileSearch },
+  { label: "Due dates", href: "/app/statutory-calendar", icon: CalendarClock },
+];
+
 const RUN_LABELS: Record<string, string> = {
   bank_to_tally: "Bank → Tally",
   bank_tally_reconciliation: "Bank ↔ Tally",
   ecommerce_gst: "E-commerce GST",
   bank_invoice_reconciliation: "Invoice ↔ Bank",
+  gstr_2b_reconciliation: "GSTR-2B ↔ Books",
 };
 
 interface RunRow {
@@ -194,11 +207,12 @@ export default function OverviewPage() {
           busy={busy}
           label="Drop your files here, or browse"
           hint="Bank statements, Tally exports, marketplace reports or invoices"
+          accept=".pdf,.csv,.xlsx,.xls,.xml,.html,.htm,.png,.jpg,.jpeg,.webp"
           onFiles={onDrop}
         />
         <div className="fv-upload-footer">
           <span>We’ll identify the file and open the right job.</span>
-          <span>PDF · Excel · CSV · Photos</span>
+          <span>PDF · Excel · CSV · XML · Photos</span>
         </div>
         {notice && (
           <div className="mt-3">
@@ -236,6 +250,19 @@ export default function OverviewPage() {
                 0{index + 1}
                 <ArrowUpRight size={17} />
               </span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="fv-more-tools" aria-label="More tools">
+        <span>More for CAs</span>
+        {MORE_TOOLS.map(tool => {
+          const Icon = tool.icon;
+          return (
+            <button key={tool.href} type="button" onClick={() => navigate(tool.href)}>
+              <Icon size={15} />
+              {tool.label}
             </button>
           );
         })}

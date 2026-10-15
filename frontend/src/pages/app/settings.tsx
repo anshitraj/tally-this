@@ -5,6 +5,7 @@ import { Building2, Bell, Shield, Users, Save, Database, FileText, History, Tras
 import PageHeader from "@/components/app/PageHeader";
 import { useToast } from "@/hooks/use-toast";
 import { getUser } from "@/lib/auth";
+import { readJson } from "@/lib/api";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -66,23 +67,23 @@ export default function SettingsPage() {
   const user = getUser();
   const { data: team = [] } = useQuery<PlatformUser[]>({
     queryKey: ["platformUsers"],
-    queryFn: () => fetch(`${BASE}/api/users`).then(r => r.json()),
+    queryFn: () => fetch(`${BASE}/api/users`).then(readJson),
   });
   const { data: auditLogs = [] } = useQuery<AuditLog[]>({
     queryKey: ["auditLogs"],
-    queryFn: () => fetch(`${BASE}/api/audit-logs?limit=5`).then(r => r.json()),
+    queryFn: () => fetch(`${BASE}/api/audit-logs?limit=5`).then(readJson),
   });
   const { data: documents = [] } = useQuery<DocumentRecord[]>({
     queryKey: ["documents"],
-    queryFn: () => fetch(`${BASE}/api/documents`).then(r => r.json()),
+    queryFn: () => fetch(`${BASE}/api/documents`).then(readJson),
   });
   const { data: security } = useQuery<SecurityPosture>({
     queryKey: ["securityPosture"],
-    queryFn: () => fetch(`${BASE}/api/security/posture`).then(r => r.json()),
+    queryFn: () => fetch(`${BASE}/api/security/posture`).then(readJson),
   });
   const { data: companyRecord } = useQuery<CompanyRecord | null>({
     queryKey: ["company"],
-    queryFn: () => fetch(`${BASE}/api/company`).then(r => r.json()),
+    queryFn: () => fetch(`${BASE}/api/company`).then(readJson),
   });
 
   const [company, setCompany] = useState({

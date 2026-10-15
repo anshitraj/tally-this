@@ -62,7 +62,7 @@ test("the landing page explains the product and renders every bank logo", async 
   await expect
     .poll(() =>
       page
-        .locator("#banks .fv-bank-logo img")
+        .locator("#banks .fv-logo img")
         .evaluateAll((images) =>
           images.every(
             (image) =>
@@ -96,8 +96,10 @@ test("solution tabs support keyboard navigation and explain distinct jobs", asyn
   );
   await page.keyboard.press("ArrowRight");
   await expect(page.getByRole("tabpanel")).toContainText("GST-ready data.");
-  await page.keyboard.press("End");
+  await page.keyboard.press("ArrowRight");
   await expect(page.getByRole("tabpanel")).toContainText("Know what’s paid.");
+  await page.keyboard.press("End");
+  await expect(page.getByRole("tabpanel")).toContainText("Know your ITC.");
   await page.keyboard.press("Home");
   await expect(page.getByRole("tabpanel")).toContainText("Your Tally entries.");
 });
@@ -240,24 +242,37 @@ test("reports keep specialist exports available and handle blockers", async ({
       json: { blockers: ["Review 2 open items before exporting."] },
     }),
   );
+  await page.route("**/api/reports/jobs-overview**", (route) =>
+    route.fulfill({
+      json: { ok: true, month: "2026-10", monthLabel: "October 2026", jobs: 3, openItems: 2, runs: [] },
+    }),
+  );
   await page.goto("/app/reports");
+  // The first thing offered is the month pack built from the saved jobs.
+  await expect(
+    page.getByRole("button", { name: "Download month pack", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("2 items still need a decision")).toBeVisible();
+  // The older month-close pack and the specialist exports wait under More options.
   await expect(
     page.getByRole("button", { name: "Download CA review pack", exact: true }),
-  ).toBeVisible();
-  await expect(page.getByRole("button", { name: "Download Excel workbook", exact: true })).toBeVisible();
+  ).toBeHidden();
   await expect(
     page.getByRole("button", { name: "Download Invoices as CSV" }),
   ).toBeHidden();
-  await page
-    .getByRole("button", { name: "Download CA review pack", exact: true })
-    .click();
-  await expect(
-    page.getByText("Review 2 open items before exporting.", { exact: true }),
-  ).toBeVisible();
   await page.locator(".fv-report-advanced summary").click();
+  await expect(page.getByRole("button", { name: "Download Excel workbook", exact: true })).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Download Invoices as CSV" }),
   ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Download CA review pack", exact: true })
+    .click();
+  // The blocker is shown with a way to fix it, not as a dead end.
+  await expect(
+    page.getByText("Review 2 open items before exporting.", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Open CA review" })).toBeVisible();
   await page.getByRole("button", { name: /Looking for a Tally file/ }).click();
   await expect(page).toHaveURL(/\/app\/history/);
 });

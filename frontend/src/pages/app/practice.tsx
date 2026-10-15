@@ -5,6 +5,7 @@ import { ShieldCheck, AlertTriangle, ArrowUpRight, Building2, Plus, X, Loader2 }
 import PageHeader from "@/components/app/PageHeader";
 import { PageTransition } from "@/components/app/finverify-ui";
 import { useToast } from "@/hooks/use-toast";
+import { readJson } from "@/lib/api";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -45,7 +46,7 @@ export default function PracticePage() {
 
   const { data, isLoading } = useQuery<PracticeData>({
     queryKey: ["practice-clients"],
-    queryFn: () => fetch(`${BASE}/api/practice/clients`).then(r => r.json()),
+    queryFn: () => fetch(`${BASE}/api/practice/clients`).then(readJson),
   });
 
   const addMutation = useMutation({

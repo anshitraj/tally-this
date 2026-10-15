@@ -20,9 +20,14 @@ import { buildGstDraftJson, mergeEcommercePacks, normalizeMarketplaceCsv, salesT
 import { compareInvoicesWithBank, parseInvoiceCsv, type InvoiceRow } from "../services/invoiceVerify";
 import { advanceRun, createWorkflowRun, finishRun, saveRunArtifact, type WorkflowRunType } from "../services/workflowRunService";
 import { detectFileKind, detectMarketplace, readBankStatementFile, readInvoiceFiles, sheetToCsvText, type UploadedFile } from "../services/fileReaders";
+import { TALLY_FORMATS, readTallyExportFile, type TallyRead } from "../services/tallyExport";
+import { peekPdfKind } from "../services/documentPeek";
+import { extensionOf } from "../services/fileDetect";
 import type { StatementCheck } from "../services/statementCheck";
 import { privacyGate, type PrivacyGate } from "../services/privacy";
-import { AI_BLOCKED_MESSAGE, AI_CONSENT_MESSAGE, historyCutoff, historyMonths, outsideWindowMessage } from "../services/privacyPolicy";
+import { AI_BLOCKED_MESSAGE, AI_CONSENT_MESSAGE, historyCutoff, historyMonths, outsideWindowMessage, truthy } from "../services/privacyPolicy";
+import { MAX_UPLOAD_BYTES } from "../lib/uploadLimit";
+import { findReadJob, finishedWithin, releaseReadJob, startReadJob, type JobOutcome } from "../services/readJobs";
 import { aiLedgerPicks, groupLedgers } from "../services/ledgerSuggest";
 import { supportEmail } from "../lib/brand";
 import { BANK_NAMES } from "../services/bankDirectory";
@@ -33,7 +38,7 @@ import { buildEcommerceSalesXml } from "../services/ecommerceSalesXml";
 import * as XLSX from "xlsx";
 
 const router: IRouter = Router();
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 20 } });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_UPLOAD_BYTES, files: 20 } });
 
 const PLATFORMS = new Set(["amazon", "flipkart", "meesho", "myntra", "jiomart", "glowroad", "shop101", "paytm", "snapdeal", "ajio", "citymall", "limeroad", "generic"]);
 
@@ -107,7 +112,7 @@ async function rememberedMappings(companyId: number, clientId: string): Promise<
 }
 
 /** Bank side of a job: an uploaded file (any format) or pasted CSV text. */
-async function bankFromRequest(req: Request, field: string, textField: string, gate: PrivacyGate): Promise<{
+async function bankFromRequest(req: Request, field: string, textField: string, gate: PrivacyGate, onProgress?: (percent: number, step: string) => void): Promise<{
   summary: BankStatementSummary | null;
   message: string;
   needsPassword?: boolean;
@@ -124,6 +129,7 @@ async function bankFromRequest(req: Request, field: string, textField: string, g
       userId: req.auth?.userId ?? null,
       privacy: gate.privacy,
       allowAi: gate.allowAi,
+      onProgress,
     });
     return {
       summary: read.ok ? read.summary : null,
@@ -155,7 +161,13 @@ router.post("/jobs/detect", requirePermission("uploads.read"), upload.array("fil
     res.status(400).json({ ok: false, message: "Choose a file." });
     return;
   }
-  const detected = files.map(file => ({ fileName: file.originalname, ...detectFileKind(file) }));
+  const detected = await Promise.all(files.map(async file => {
+    const byName = detectFileKind(file);
+    // A PDF is a bank statement, a Tally report or an invoice; its first pages say which.
+    if (extensionOf(file.originalname) !== "pdf") return { fileName: file.originalname, ...byName };
+    const peek = await peekPdfKind(file.buffer);
+    return { fileName: file.originalname, ...(peek === "unknown" ? byName : { kind: peek } as typeof byName) };
+  }));
   const kinds = new Set(detected.map(item => item.kind));
   let job: string | null = null;
   if (kinds.has("bank_statement") && kinds.has("tally_export")) job = "bank-tally";
@@ -169,16 +181,12 @@ router.post("/jobs/detect", requirePermission("uploads.read"), upload.array("fil
 
 // ── Bank Statement → Tally ─────────────────────────────────────────────────
 
-router.post("/jobs/bank-statement/normalize", requirePermission("uploads.create"), upload.single("file"), async (req, res): Promise<void> => {
-  const companyId = await resolveBooksCompanyId(req, res);
-  if (companyId == null) return;
-  const gate = await privacyGate(req, res);
-  if (!gate) return;
+/** Reads the uploaded statement and builds the reply the page needs. A long scan takes minutes, so this can run as a job. */
+async function normalizeStatement(req: Request, companyId: number, gate: PrivacyGate, report?: (percent: number, step: string) => void): Promise<JobOutcome> {
   const fileName = req.file?.originalname || textBody(req.body?.fileName) || "statement.csv";
-  const bank = await bankFromRequest(req, "file", "text", gate);
+  const bank = await bankFromRequest(req, "file", "text", gate, report);
   if (!bank.summary) {
-    res.status(422).json({ ok: false, message: bank.message, needsPassword: bank.needsPassword ?? false, wrongPassword: bank.wrongPassword ?? false, needsAiConsent: bank.needsAiConsent ?? false });
-    return;
+    return { status: 422, body: { ok: false, message: bank.message, needsPassword: bank.needsPassword ?? false, wrongPassword: bank.wrongPassword ?? false, needsAiConsent: bank.needsAiConsent ?? false } };
   }
   const summary = bank.summary;
   const clientId = Number(req.body?.clientId) || null;
@@ -198,19 +206,62 @@ router.post("/jobs/bank-statement/normalize", requirePermission("uploads.create"
     jsonData: { ...summary, source: bank.source, check: bank.check, ledgerGroups },
   });
   if (!gate.privacy) await auditAction(req, "job.bank_statement_parsed", "workflow_run", null, { runId, fileName, rows: summary.transactions.length, clientId, source: bank.source });
-  res.json({
-    ok: true,
-    privacy: gate.privacy,
-    runId,
-    ...summary,
-    source: bank.source,
-    check: bank.check ?? null,
-    reviewCount: reviewCount(summary.transactions),
-    bankOptions: BANK_NAMES,
-    ledgerGroups,
-    ledgerOptions: LEDGER_OPTIONS,
-    progress: { runId, status: "completed", progressPercent: 100, currentStep: "Ready", steps: ["Upload", "Read", "Check", "Ready"] },
-  });
+  return {
+    status: 200,
+    body: {
+      ok: true,
+      privacy: gate.privacy,
+      runId,
+      ...summary,
+      source: bank.source,
+      check: bank.check ?? null,
+      reviewCount: reviewCount(summary.transactions),
+      bankOptions: BANK_NAMES,
+      ledgerGroups,
+      ledgerOptions: LEDGER_OPTIONS,
+      progress: { runId, status: "completed", progressPercent: 100, currentStep: "Ready", steps: ["Upload", "Read", "Check", "Ready"] },
+    },
+  };
+}
+
+router.post("/jobs/bank-statement/normalize", requirePermission("uploads.create"), upload.single("file"), async (req, res): Promise<void> => {
+  const companyId = await resolveBooksCompanyId(req, res);
+  if (companyId == null) return;
+  const gate = await privacyGate(req, res);
+  if (!gate) return;
+  // The page asks for a job so a long scan never holds one request open. Privacy mode keeps the
+  // result out of server memory beyond the request, so it always answers directly.
+  if (truthy(req.body?.async) && !gate.privacy) {
+    const job = startReadJob({ companyId, userId: req.auth?.userId ?? null }, report => normalizeStatement(req, companyId, gate, report));
+    // Spreadsheets and ordinary PDFs finish within a moment and are answered in this same reply.
+    const early = await finishedWithin(job, 2500);
+    if (early) {
+      releaseReadJob(job.id);
+      res.status(early.status).json(early.body);
+      return;
+    }
+    res.status(202).json({ ok: true, pending: true, jobId: job.id, percent: job.percent, step: job.step });
+    return;
+  }
+  const outcome = await normalizeStatement(req, companyId, gate);
+  res.status(outcome.status).json(outcome.body);
+});
+
+// Progress of a statement read started by the route above. A finished result is handed over once.
+router.get("/jobs/bank-statement/progress/:id", requirePermission("uploads.read"), async (req, res): Promise<void> => {
+  const companyId = await resolveBooksCompanyId(req, res);
+  if (companyId == null) return;
+  const job = findReadJob(String(req.params.id), { companyId, userId: req.auth?.userId ?? null });
+  if (!job) {
+    res.status(404).json({ ok: false, message: "This upload is no longer available. Please upload the statement again." });
+    return;
+  }
+  if (job.state === "working" || !job.outcome) {
+    res.json({ ok: true, state: "working", percent: job.percent, step: job.step });
+    return;
+  }
+  releaseReadJob(job.id);
+  res.json({ ok: true, state: "done", httpStatus: job.outcome.status, result: job.outcome.body });
 });
 
 const VOUCHER_TYPES = new Set(["Receipt", "Payment", "Contra"]);
@@ -410,20 +461,38 @@ router.post(
     const gate = await privacyGate(req, res);
     if (!gate) return;
     const tallyFile = filesOf(req, "tally")[0];
-    const tallyText = tallyFile ? sheetToCsvText(tallyFile) : textBody(req.body?.tallyText);
+    const tallyText = tallyFile ? "" : textBody(req.body?.tallyText);
     const bankFileName = filesOf(req, "bank")[0]?.originalname || textBody(req.body?.bankFileName) || "bank";
-    if (!tallyText.trim()) {
-      res.status(400).json({ ok: false, message: "Upload the Tally export (Excel or CSV)." });
+    if (!tallyFile && !tallyText.trim()) {
+      res.status(400).json({ ok: false, message: `Upload the Tally export (${TALLY_FORMATS}).` });
       return;
+    }
+    // Excel, CSV, PDF and HTML are checked before the bank statement is read, so a file Tally
+    // cannot be read from fails at once. Tally XML needs the bank's name to pick its ledger.
+    let tallyRead: TallyRead | null = null;
+    const tallyIsXml = tallyFile ? /\.xml$/i.test(tallyFile.originalname) : false;
+    if (tallyFile && !tallyIsXml) {
+      tallyRead = await readTallyExportFile(tallyFile);
+      if (!tallyRead.ok) {
+        res.status(422).json({ ok: false, message: tallyRead.message });
+        return;
+      }
     }
     const bank = await bankFromRequest(req, "bank", "bankText", gate);
     if (!bank.summary) {
       res.status(422).json({ ok: false, message: bank.message, needsPassword: bank.needsPassword ?? false, wrongPassword: bank.wrongPassword ?? false, needsAiConsent: bank.needsAiConsent ?? false });
       return;
     }
-    const tally = parseTallyLedgerCsv(tallyText);
+    if (tallyFile && !tallyRead) {
+      tallyRead = await readTallyExportFile(tallyFile, { bankName: bank.summary.bankName });
+      if (!tallyRead.ok) {
+        res.status(422).json({ ok: false, message: tallyRead.message });
+        return;
+      }
+    }
+    const tally = tallyRead ? tallyRead.rows : parseTallyLedgerCsv(tallyText);
     if (tally.length === 0) {
-      res.status(422).json({ ok: false, message: "No entries were found in the Tally export. Export the bank ledger from Tally as Excel and try again." });
+      res.status(422).json({ ok: false, message: `No entries were found in the Tally export. Export the bank ledger from Tally as ${TALLY_FORMATS} and try again.` });
       return;
     }
     const comparison = compareBankWithTally(bank.summary.transactions, tally);
@@ -444,6 +513,7 @@ router.post(
       privacy: gate.privacy,
       runId,
       bank: { bankName: bank.summary.bankName, periodLabel: bank.summary.periodLabel, count: bank.summary.transactions.length, source: bank.source, check: bank.check ?? null },
+      tally: { source: tallyRead?.source ?? "sheet", count: tally.length, notes: tallyRead?.notes ?? [] },
       comparison,
       progress: { progressPercent: 100, currentStep: "Review attention items", status: "completed" },
     });
@@ -515,7 +585,7 @@ router.get("/jobs/history", requirePermission("uploads.read"), async (req, res):
                 'summary', ra.json_data->'summary',
                 'platform', ra.json_data->>'platform')
               FROM run_artifacts ra
-              WHERE ra.run_id = wr.id AND ra.artifact_type IN ('bank_statement', 'bank_tally_comparison', 'invoice_bank_comparison', 'ecommerce_gst')
+              WHERE ra.run_id = wr.id AND ra.artifact_type IN ('bank_statement', 'bank_tally_comparison', 'invoice_bank_comparison', 'ecommerce_gst', 'gstr2b_comparison')
               ORDER BY ra.created_at ASC LIMIT 1) AS info
       FROM workflow_runs wr
       LEFT JOIN users u ON u.id = wr.created_by
@@ -524,7 +594,7 @@ router.get("/jobs/history", requirePermission("uploads.read"), async (req, res):
         AND NOT EXISTS (SELECT 1 FROM run_artifacts a WHERE a.run_id = wr.id AND a.artifact_type = 'ledger_mappings')
         AND wr.created_at >= ${cutoff}::timestamptz
         AND (${type} = '' OR wr.run_type = ${type}
-             OR (${type} = 'other' AND wr.run_type NOT IN ('bank_to_tally', 'bank_tally_reconciliation', 'ecommerce_gst', 'bank_invoice_reconciliation')))
+             OR (${type} = 'other' AND wr.run_type NOT IN ('bank_to_tally', 'bank_tally_reconciliation', 'ecommerce_gst', 'bank_invoice_reconciliation', 'gstr_2b_reconciliation')))
         AND (${search} = '' OR wr.title ILIKE ${pattern})
       ORDER BY wr.created_at DESC
       LIMIT ${limit + 1} OFFSET ${offset}
@@ -821,6 +891,8 @@ router.post(
     const invoiceFiles = filesOf(req, "invoices");
     let invoices: InvoiceRow[];
     let aiRead = 0;
+    let pdfRead = 0;
+    let aiUnavailable = false;
     let unreadable: string[] = [];
     if (invoiceFiles.length > 0) {
       const read = await readInvoiceFiles(invoiceFiles, { companyId, userId: req.auth?.userId ?? null, privacy: gate.privacy, allowAi: gate.allowAi });
@@ -834,6 +906,8 @@ router.post(
       }
       invoices = read.rows;
       aiRead = read.aiRead;
+      pdfRead = read.pdfRead;
+      aiUnavailable = read.aiUnavailable === true;
       unreadable = read.failed;
     } else {
       invoices = parseInvoiceCsv(textBody(req.body?.invoiceText));
@@ -842,7 +916,7 @@ router.post(
       res.status(422).json({
         ok: false,
         message: unreadable.length > 0
-          ? `No invoices could be read from ${unreadable.join(", ")}. Upload an invoice list (Excel/CSV) or clear invoice PDFs.`
+          ? `No invoices could be read from ${unreadable.join(", ")}. ${aiUnavailable ? "These look like scans or photos, which need the AI reader that is not switched on here. " : ""}Upload invoice PDFs saved from your billing software (not photos), or an invoice list as Excel/CSV.`
           : "Upload invoices: an invoice list (Excel/CSV) or the invoice PDFs.",
       });
       return;
@@ -857,10 +931,10 @@ router.post(
       title: "Invoice ↔ Bank",
       artifactType: "invoice_bank_comparison",
       artifactTitle: "Invoice ↔ Bank",
-      jsonData: { comparison, aiRead, unreadable, label: "Suggested matches need review. AI extracted values stay pending review." },
+      jsonData: { comparison, aiRead, pdfRead, unreadable, label: "Suggested matches need review. Values read from PDFs or by AI stay pending review." },
     });
-    if (!gate.privacy) await auditAction(req, "job.invoice_bank_compared", "workflow_run", null, { runId, invoices: invoices.length, bank: bank.summary.transactions.length, aiRead });
-    res.json({ ok: true, privacy: gate.privacy, runId, comparison, invoiceCount: invoices.length, bankCount: bank.summary.transactions.length, aiRead, unreadable, progress: { progressPercent: 100, currentStep: "Review matches", status: "completed" } });
+    if (!gate.privacy) await auditAction(req, "job.invoice_bank_compared", "workflow_run", null, { runId, invoices: invoices.length, bank: bank.summary.transactions.length, aiRead, pdfRead });
+    res.json({ ok: true, privacy: gate.privacy, runId, comparison, invoiceCount: invoices.length, bankCount: bank.summary.transactions.length, aiRead, pdfRead, unreadable, progress: { progressPercent: 100, currentStep: "Review matches", status: "completed" } });
   },
 );
 
