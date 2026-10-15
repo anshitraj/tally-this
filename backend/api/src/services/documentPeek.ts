@@ -9,8 +9,11 @@ export type PdfKind = "tally_export" | "invoice_document" | "bank_statement" | "
 /** Decides from text alone. Exported so it can be tested without a PDF. */
 export function kindFromText(text: string): PdfKind {
   const sample = text.slice(0, 6000);
-  const tallyColumns = /\bvch\.?\s*type\b|\bvoucher\s*type\b/i.test(sample) && /\bvch\.?\s*no\b|\bvoucher\s*(no|number)\b/i.test(sample);
-  if (tallyColumns && /\bparticulars\b/i.test(sample)) return "tally_export";
+  // Tally prints Particulars | Vch Type | Vch No. | Debit | Credit; other tools print Ledger Name | Voucher/Invoice | Amount | Dr/Cr.
+  const voucherColumns = /\b(?:vch|voucher)\.?\s*type\b|\b(?:vch|voucher)\.?\s*(?:no|number)\b|\bvoucher\s*\/\s*invoice\b/i.test(sample);
+  const ledgerColumn = /\bparticulars\b|\bledger\s*name\b/i.test(sample);
+  const sideColumns = /\bdebit\b|\bcredit\b|\bdr\s*\/\s*cr\b/i.test(sample);
+  if (voucherColumns && ledgerColumn && sideColumns) return "tally_export";
   if (/\bday\s*book\b|\bledger\s*vouchers?\b/i.test(sample) && /\bparticulars\b/i.test(sample) && /\bdebit\b/i.test(sample) && /\bcredit\b/i.test(sample)) return "tally_export";
   const bank = /\bwithdrawal|\bdeposit|\bnarration\b|\bchq\b|\bopening\s+balance\b|\bclosing\s+balance\b|statement\s+of\s+account|account\s+statement|\bifsc\b/i.test(sample);
   if (bank) return "bank_statement";

@@ -71,7 +71,9 @@ export function isDate(text: string) {
   return DATE_PATTERNS.some(pattern => pattern.test(text));
 }
 
-export function money(text: string): { value: number; suffix: "cr" | "dr" | null } | null {
+export function money(raw: string): { value: number; suffix: "cr" | "dr" | null } | null {
+  // Many statements print the currency in every amount: "INR 1,18,000.00", "Rs. 500.00", "₹2,400.50".
+  const text = raw.trim().replace(/^(?:inr|rs\.?|₹)\s*/i, "");
   if (!MONEY.test(text)) return null;
   const suffix = /dr\.?$/i.test(text) ? "dr" : /cr\.?$/i.test(text) ? "cr" : null;
   const value = Number(text.replace(/(cr|dr)\.?$/i, "").replace(/[,\s]/g, ""));

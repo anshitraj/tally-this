@@ -224,3 +224,82 @@ test("Tally XML with no bank-named ledger uses the ledger in most vouchers and s
   const none = await readTallyExportFile(file("export.xml", "<ENVELOPE><VOUCHER><DATE>20250712</DATE></VOUCHER></ENVELOPE>", "text/xml"));
   assert.equal(none.ok, false);
 });
+
+// ── One Amount column with a Dr/Cr column ───────────────────────────────────
+
+const AMOUNT_SHEET = [
+  "Tally-style Ledger Export - May 2026,,,,,,,",
+  "SYNTHETIC DEMO DATA - NOT REAL,,,,,,,",
+  "Date,Voucher Type,Voucher/Invoice,Ledger Name,Amount,Dr/Cr,Testing Note,",
+  "2026-05-03,Receipt,INV-2026-001,Acme Corp Services,\"INR 118,000.00\",Cr,Matched,",
+  "2026-05-04,Payment,INV-CCS-052,Cloud Hosting Expense,\"INR 23,600.00\",Dr,Matched once only,",
+  "2026-05-13,Journal,PAYROLL-MAY-2026,Salary Payable,\"INR 420,000.00\",Dr,Matched,",
+].join("\n");
+
+test("a ledger table with one Amount column and a Dr/Cr column is read, currency prefix and all", () => {
+  const rows = parseTallyLedgerCsv(AMOUNT_SHEET);
+  assert.deepEqual(rows.map(row => [row.date, row.ledgerName, row.voucherNumber, row.debit, row.credit]), [
+    ["2026-05-03", "Acme Corp Services", "INV-2026-001", null, 118000],
+    ["2026-05-04", "Cloud Hosting Expense", "INV-CCS-052", 23600, null],
+    ["2026-05-13", "Salary Payable", "PAYROLL-MAY-2026", 420000, null],
+  ]);
+});
+
+test("ERP 9 style Particulars with a separate To/By cell keeps the real ledger name", () => {
+  const csv = [
+    "Date,Particulars,,Vch Type,Vch No.,Debit,Credit",
+    "01-Apr-2025,By,ACME Corp,Receipt,1,50000.00,",
+    ",To,Beta Supplies,Payment,2,,20000.00",
+  ].join("\n");
+  assert.deepEqual(parseTallyLedgerCsv(csv).map(row => [row.ledgerName, row.debit, row.credit]), [
+    ["ACME Corp", 50000, null],
+    ["Beta Supplies", null, 20000],
+  ]);
+});
+
+test("a Tally PDF with centred headings over left-aligned cells and a Dr/Cr column is read", async () => {
+  const cell = (text: string, x: number): Cell => ({ text, x });
+  const money = (text: string, rightEdge: number): Cell => ({ text, x: rightEdge, right: true });
+  const lines: Line[] = [
+    { y: 40, cells: [cell("Tally-style Ledger Export - May 2026", 46)] },
+    { y: 70, cells: [cell("Date", 64), cell("Voucher Type", 125), cell("Voucher/Invoice", 214), cell("Ledger Name", 346), cell("Amount", 477), cell("Dr/Cr", 549), cell("Testing Note", 672)] },
+    { y: 90, cells: [cell("2026-05-03", 43), cell("Receipt", 114), cell("INV-2026-001", 199), cell("Acme Corp Services", 298), money("INR 118,000.00", 527), cell("Cr", 554), cell("Matched", 590)] },
+    { y: 108, cells: [cell("2026-05-04", 43), cell("Payment", 114), cell("INV-CCS-052", 199), cell("Cloud Hosting Expense", 298), money("INR 23,600.00", 527), cell("Dr", 554), cell("Matched once only", 590)] },
+    { y: 126, cells: [cell("2026-05-13", 43), cell("Journal", 114), cell("PAYROLL-MAY-2026", 199), cell("Salary Payable", 298), money("INR 420,000.00", 527), cell("Dr", 554), cell("Matched", 590)] },
+    { y: 160, cells: [cell("Intentional gap: Northstar receipt is missing from this ledger export.", 46)] },
+  ];
+  const read = await readTallyExportFile(file("ledger.pdf", await makePdf(lines), "application/pdf"));
+  assert.equal(read.ok, true, read.message);
+  assert.deepEqual(read.rows.map(row => [row.date, row.ledgerName, row.voucherNumber, row.debit, row.credit]), [
+    ["2026-05-03", "Acme Corp Services", "INV-2026-001", null, 118000],
+    ["2026-05-04", "Cloud Hosting Expense", "INV-CCS-052", 23600, null],
+    ["2026-05-13", "Salary Payable", "PAYROLL-MAY-2026", 420000, null],
+  ]);
+  assert.ok(!read.rows[2].narration.includes("Intentional"), "a footnote below the table is not narration");
+});
+
+test("a bank statement PDF that prints INR in every amount is read with its running balance proved", async () => {
+  const cell = (text: string, x: number): Cell => ({ text, x });
+  const amt = (text: string, rightEdge: number): Cell => ({ text, x: rightEdge, right: true });
+  const lines: Line[] = [
+    { y: 40, cells: [cell("Demo Bank Statement - May 2026", 46)] },
+    { y: 60, cells: [cell("Period: 01 May 2026 to 31 May 2026", 46)] },
+    { y: 90, cells: [cell("Date", 60), cell("Narration", 200), cell("Credit", 420), cell("Debit", 490), cell("Balance", 560)] },
+    { y: 110, cells: [cell("2026-05-01", 50), cell("OPENING BALANCE", 120), amt("INR 10,000.00", 600)] },
+    { y: 130, cells: [cell("2026-05-03", 50), cell("NEFT CR ACME CORP", 120), amt("INR 5,000.00", 460), amt("INR 15,000.00", 600)] },
+    { y: 150, cells: [cell("2026-05-04", 50), cell("NEFT DR CLOUDCRATE", 120), amt("INR 2,000.00", 530), amt("INR 13,000.00", 600)] },
+  ];
+  const { readStatementPdf } = await import("./pdfStatement");
+  const read = await readStatementPdf(await makePdf(lines), { fileName: "statement.pdf" });
+  assert.equal(read.status, "ok");
+  assert.deepEqual(read.summary!.transactions.map(txn => [txn.date, txn.debit, txn.credit, txn.balance]), [
+    ["2026-05-03", null, 5000, 15000],
+    ["2026-05-04", 2000, null, 13000],
+  ]);
+  assert.equal(read.check?.verified, true);
+});
+
+test("a PDF whose first pages say Ledger Name, Voucher Type and Dr/Cr is a Tally report", () => {
+  assert.equal(kindFromText("Tally-style Ledger Export Date Voucher Type Voucher/Invoice Ledger Name Amount Dr/Cr"), "tally_export");
+  assert.equal(detectFileKind(file("06_tally_ledger_export_may_2026.pdf", "%PDF", "application/pdf")).kind, "tally_export");
+});
