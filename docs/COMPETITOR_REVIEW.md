@@ -105,6 +105,21 @@ The user prioritised reliable statement conversion/imports, complete marketplace
 
 No real samples were available from the user. Automated financial tests remain synthetic. The current [official GST return downloads](https://www.gst.gov.in/download/returns) were also inspected: the page displayed Returns Offline Tool V3.2.4 and linked its official package, containing separate B2B/B2CS/CDNR/CDNUR and B2B/B2C HSN CSV templates. The public example values are illustrative, not independently verified books. Downloading those templates does not prove that TallyThis's proprietary JSON is accepted by the utility or portal; no filing was performed.
 
+## Purchase vouchers, GSTR-1/3B working and payroll — 15 October 2026
+
+The user asked for the gaps found in the CA-workflow review to be built: purchase bills into Tally with party and ledger mapping, GSTR-1 and GSTR-3B working from a Tally sales register, payroll with the employer's details, History that shows all of it, and a measurable way to test on real CA files. Sources for what Vyapar TaxOne, Vouchrit and Tally themselves advertise are the pages listed above; nothing was run in a paid account.
+
+| Capability | Competitor evidence (vendor pages, not tests) | TallyThis now | Not proved |
+| --- | --- | --- | --- |
+| Purchase bill → Tally Purchase voucher | [TaxOne](https://taxone.vyapar.com/data-entry-automation-feature) and [Vouchrit](https://www.vouchrit.com/) post purchase and sale entries to Tally; Tally has [its own AI invoice capture](https://tallysolutions.com/tally/tallyprime-ai-invoice-processing-indian-smes/) | PDF text, scans (AI, with consent) and purchase lists read; every bill checked in paise; supplier ledger and purchase ledger mapping remembered per client; Purchase XML with stable GUID; Send to Tally | Import into a live TallyPrime, GST register output, several rates on one invoice, repeat-import behaviour |
+| Sales register → GSTR-1 tables | Tally's own GSTR-1 report exports JSON; TaxOne and ClearGST offer return workflows | Register sorted into B2B, B2C Large/Small, notes, exports/SEZ, nil, HSN, documents; tables proved against the register | Portal or offline-utility acceptance, amendments, exports detail, multi-rate invoices without item lines |
+| GSTR-3B working | Tally and ClearGST fill 3B from 1 and 2B | 3.1, 3.2, 4 and 6.1 with the legal order of set-off, credit from a saved GSTR-2B ↔ Books result | Interest, late fee, RCM from books, reversals worked out; CA decides credit |
+| Payroll | Tally has payroll; TaxOne has no equivalent page in the sources read | Employer details kept per client; per-employee checks; PF/ESI/PT/TDS working with computed figures marked; bank payment check; Tally journal | ECR, challan, Form 24Q, state PT slabs, real salary-software layouts |
+
+What changed in the product: three new jobs under Advanced → More jobs (also offered on Home and in search), Home routes a dropped sales register, salary sheet or bill to the right job, every job ends with a "What next?" list, History and the month pack read the new run types, and the old Payroll page now redirects to the Payroll job.
+
+Evidence still needed: real redacted files from at least three CAs run through `measure-corpus` with hand-checked answers, and the acceptance runner `verify-tally-books` passing against a disposable TallyPrime company. TallyPrime was installed on the development machine but no company was open and computer control of it was declined, so that check has not run.
+
 ## GST reconciliation and CA outputs — 15 October 2026
 
 The user asked for a ClearGST-style check of what TallyThis was missing for a CA, and for every dead end to be fixed. Sources are the vendors' own help pages as read on this date; nothing was run in a paid account.

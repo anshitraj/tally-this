@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useRoute } from "wouter";
-import { ArrowLeft, ChevronRight, FileCheck2, FileSpreadsheet, GitCompare, History as HistoryIcon, Layers, LifeBuoy, Receipt, Search, ShoppingBag, ShieldCheck, Sparkles, type LucideIcon } from "lucide-react";
+import { ArrowLeft, Banknote, Calculator, ChevronRight, FileCheck2, FileSpreadsheet, FileText, GitCompare, History as HistoryIcon, Layers, LifeBuoy, Receipt, Search, ShoppingBag, ShieldCheck, Sparkles, type LucideIcon } from "lucide-react";
 import {
   BigStat,
   Choice,
@@ -20,6 +20,9 @@ import {
 } from "@/components/jobs/jobUi";
 import { StatementViewer, type DownloadItem } from "@/components/jobs/BankStatementTable";
 import { Gstr2bSavedView } from "@/components/jobs/Gstr2bSavedView";
+import { BillsResult, type Bill } from "@/components/jobs/BillsResult";
+import { GstSalesResult, type Gstr1Data } from "@/components/jobs/GstSalesResult";
+import { PayrollResult, type EmployeeData, type EmployerData, type StatutoryData, type BankCheckData } from "@/components/jobs/PayrollResult";
 import { getActiveClient } from "@/lib/activeClient";
 import { getUser } from "@/lib/auth";
 import { upgradeMailto, usePrivacy } from "@/lib/privacy";
@@ -39,6 +42,12 @@ interface RunInfo {
   matched?: number;
   summary?: { documents?: number; gst?: number; gross?: number; errors?: number } | null;
   platform?: string | null;
+  bills?: number;
+  employees?: number;
+  documents?: string | number | null;
+  period?: string | null;
+  employer?: string | null;
+  netPay?: string | number | null;
 }
 
 interface HistoryRow {
@@ -59,6 +68,9 @@ const KINDS: Record<string, { label: string; icon: LucideIcon }> = {
   ecommerce_gst: { label: "E-commerce GST", icon: ShoppingBag },
   bank_invoice_reconciliation: { label: "Invoice ↔ Bank", icon: Receipt },
   gstr_2b_reconciliation: { label: "GSTR-2B ↔ Books", icon: FileCheck2 },
+  bills_to_tally: { label: "Bills → Tally", icon: FileText },
+  gst_sales_register: { label: "Sales → GSTR-1 & 3B", icon: Calculator },
+  payroll_register: { label: "Payroll", icon: Banknote },
   import_records: { label: "Data import", icon: Layers },
   full_month_close: { label: "Month-end check", icon: Layers },
 };
@@ -70,6 +82,9 @@ const FILTERS = [
   { value: "ecommerce_gst", label: "E-commerce GST" },
   { value: "bank_invoice_reconciliation", label: "Invoice ↔ Bank" },
   { value: "gstr_2b_reconciliation", label: "GSTR-2B ↔ Books" },
+  { value: "bills_to_tally", label: "Bills → Tally" },
+  { value: "gst_sales_register", label: "Sales → GSTR-1 & 3B" },
+  { value: "payroll_register", label: "Payroll" },
   { value: "other", label: "Other" },
 ] as const;
 
@@ -111,6 +126,14 @@ function summaryLine(row: HistoryRow) {
     case "gstr_2b_reconciliation": {
       const entries = info.entries ?? 0;
       return `${info.matched ?? 0} matched · ${Math.max(entries - (info.matched ?? 0), 0)} need attention`;
+    }
+    case "bills_to_tally":
+      return info.bills != null ? `${info.bills} ${info.bills === 1 ? "bill" : "bills"}` : "";
+    case "gst_sales_register":
+      return [info.period, info.documents != null ? `${info.documents} documents` : null].filter(Boolean).join(" · ");
+    case "payroll_register": {
+      const net = info.netPay != null ? Number(info.netPay) / 100 : null;
+      return [info.employer, info.period, info.employees != null ? `${info.employees} employees` : null, net != null && Number.isFinite(net) ? `net ${inr(net)}` : null].filter(Boolean).join(" · ");
     }
     case "ecommerce_gst":
       return [info.platform ? titleCase(info.platform) : "Marketplace", info.summary?.documents != null ? `${info.summary.documents} invoices` : null, info.summary?.errors ? `${info.summary.errors} need review` : null].filter(Boolean).join(" · ");
@@ -353,6 +376,9 @@ export function HistoryDetailPage() {
           )}
           {detail.run.run_type === "ecommerce_gst" && <EcommerceView artifact={latest("ecommerce_gst")} />}
           {detail.run.run_type === "gstr_2b_reconciliation" && <Gstr2bSavedView runId={detail.run.id} data={latest("gstr2b_comparison")?.json_data} />}
+          {detail.run.run_type === "bills_to_tally" && <BillsSavedView runId={detail.run.id} artifact={latest("purchase_bills")} xml={latest("tally_xml")} />}
+          {detail.run.run_type === "gst_sales_register" && <GstSalesSavedView runId={detail.run.id} artifact={latest("gstr1_working")} />}
+          {detail.run.run_type === "payroll_register" && <PayrollSavedView runId={detail.run.id} artifact={latest("payroll_register")} />}
           {!KINDS_WITH_VIEW.has(detail.run.run_type) && <GenericView detail={detail} />}
         </>
       )}
@@ -360,10 +386,58 @@ export function HistoryDetailPage() {
   );
 }
 
-const KINDS_WITH_VIEW = new Set(["bank_to_tally", "bank_tally_reconciliation", "bank_invoice_reconciliation", "ecommerce_gst", "gstr_2b_reconciliation"]);
+const KINDS_WITH_VIEW = new Set(["bank_to_tally", "bank_tally_reconciliation", "bank_invoice_reconciliation", "ecommerce_gst", "gstr_2b_reconciliation", "bills_to_tally", "gst_sales_register", "payroll_register"]);
 
 function Missing() {
   return <Notice tone="warn">The saved result for this item is not available.</Notice>;
+}
+
+/** Saved bills open in the same editor as a fresh upload, so a fix can still be made and downloaded. */
+function BillsSavedView({ runId, artifact, xml }: { runId: string; artifact?: Artifact; xml?: Artifact }) {
+  if (!artifact?.json_data?.bills) return <Missing />;
+  const data = artifact.json_data;
+  const saved = xml?.json_data?.xml ? { xml: String(xml.json_data.xml), title: xml.title } : null;
+  return (
+    <BillsResult
+      bills={data.bills as Bill[]}
+      runId={runId}
+      recipientGstin={data.recipientGstin ?? null}
+      counts={data.counts}
+      notes={data.notes}
+      unreadable={data.unreadable}
+      savedXml={saved}
+    />
+  );
+}
+
+function GstSalesSavedView({ runId, artifact }: { runId: string; artifact?: Artifact }) {
+  if (!artifact?.json_data?.gstr1) return <Missing />;
+  const itcRunId: string | null = artifact.json_data.itcRunId ?? null;
+  return (
+    <GstSalesResult
+      gstr1={artifact.json_data.gstr1 as Gstr1Data}
+      threeB={null}
+      runId={runId}
+      itcRunId={itcRunId}
+      itcRuns={itcRunId ? [{ runId: itcRunId, title: "Saved GSTR-2B ↔ Books result", createdAt: "", period: null }] : []}
+    />
+  );
+}
+
+function PayrollSavedView({ runId, artifact }: { runId: string; artifact?: Artifact }) {
+  if (!artifact?.json_data?.employees) return <Missing />;
+  const data = artifact.json_data;
+  return (
+    <PayrollResult
+      employer={(data.employer ?? { name: "" }) as EmployerData}
+      month={data.month ?? null}
+      employees={data.employees as EmployeeData[]}
+      statutory={data.statutory as StatutoryData}
+      bank={(data.bank ?? null) as BankCheckData | null}
+      notes={data.notes}
+      runId={runId}
+    />
+  );
 }
 
 interface StatementTxn {

@@ -25,7 +25,6 @@ const JournalEntriesPage = lazy(() => import("@/pages/app/journal-entries"));
 const ReconciliationPage = lazy(() => import("@/pages/app/reconciliation"));
 const GstTdsRisksPage = lazy(() => import("@/pages/app/gst-tds-risks"));
 const Gstr2bReconPage = lazy(() => import("@/pages/app/gstr-2b-recon"));
-const PayrollPage = lazy(() => import("@/pages/app/payroll"));
 const GatewaySettlementsPage = lazy(() => import("@/pages/app/gateway-settlements"));
 const CaReviewPage = lazy(() => import("@/pages/app/ca-review"));
 const ReportsPage = lazy(() => import("@/pages/app/reports"));
@@ -43,6 +42,11 @@ const BankTallyPage = lazy(() => import("@/pages/app/jobs/bank-tally"));
 const EcommerceGstPage = lazy(() => import("@/pages/app/jobs/ecommerce-gst"));
 const InvoiceBankPage = lazy(() => import("@/pages/app/jobs/invoice-bank"));
 const Gstr2bJobPage = lazy(() => import("@/pages/app/jobs/gstr-2b"));
+const BillsTallyPage = lazy(() => import("@/pages/app/jobs/bills-tally"));
+const GstSalesPage = lazy(() => import("@/pages/app/jobs/gst-sales"));
+const PayrollJobPage = lazy(() => import("@/pages/app/jobs/payroll"));
+// Payroll rows imported earlier through the Upload center keep their own page.
+const PayrollImportedPage = lazy(() => import("@/pages/app/payroll"));
 const DocsPage = lazy(() => import("@/pages/app/docs"));
 const HistoryPage = lazy(() => import("@/pages/app/history"));
 const HistoryDetailPage = lazy(() => import("@/pages/app/history").then(module => ({ default: module.HistoryDetailPage })));
@@ -103,7 +107,8 @@ function AppArea() {
         <Route path="/app/gstr-2b-recon" component={Gstr2bReconPage} />
         <Route path="/app/reconciliation" component={ReconciliationPage} />
         <Route path="/app/gst-tds-risks" component={GstTdsRisksPage} />
-        <Route path="/app/payroll" component={PayrollPage} />
+        <Route path="/app/payroll"><Redirect to="/app/jobs/payroll" /></Route>
+        <Route path="/app/payroll-register" component={PayrollImportedPage} />
         <Route path="/app/gateway-settlements" component={GatewaySettlementsPage} />
         <Route path="/app/verify" component={VerifyPage} />
         <Route path="/app/action-items" component={ActionItemsPage} />
@@ -122,6 +127,9 @@ function AppArea() {
         <Route path="/app/jobs/ecommerce-gst" component={EcommerceGstPage} />
         <Route path="/app/jobs/invoice-bank" component={InvoiceBankPage} />
         <Route path="/app/jobs/gstr-2b" component={Gstr2bJobPage} />
+        <Route path="/app/jobs/bills-tally" component={BillsTallyPage} />
+        <Route path="/app/jobs/gst-sales" component={GstSalesPage} />
+        <Route path="/app/jobs/payroll" component={PayrollJobPage} />
         <Route path="/app/settings" component={SettingsPage} />
         <Route path="/app/docs" component={DocsPage} />
         <Route path="/app/ledger"><Redirect to="/app/ledger-match" /></Route>

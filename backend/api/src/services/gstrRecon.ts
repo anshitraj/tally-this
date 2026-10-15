@@ -162,7 +162,7 @@ export interface ReconOptions {
 
 // ── Small helpers ───────────────────────────────────────────────────────────
 
-const GSTIN_PATTERN = /^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+export const GSTIN_PATTERN = /^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 const CHECK_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 export function normalizeGstin(value: unknown): string {
@@ -240,7 +240,7 @@ export function toPaise(value: unknown, nearest = false): number | null {
   return negative ? -cents : cents;
 }
 
-function isoDate(value: unknown): string | null {
+export function isoDate(value: unknown): string | null {
   if (value == null || value === "") return null;
   if (value instanceof Date) {
     if (Number.isNaN(value.getTime())) return null;
@@ -449,10 +449,10 @@ export function parsePortalJson(text: string): PortalRead {
 
 // ── Tables: portal Excel/CSV and purchase registers ─────────────────────────
 
-type Cell = string | number | boolean | Date | null | undefined;
+export type Cell = string | number | boolean | Date | null | undefined;
 export type Table = Cell[][];
 
-function headerKey(value: Cell): string {
+export function headerKey(value: Cell): string {
   return String(value ?? "")
     .toLowerCase()
     .replace(/#/g, " no ")
@@ -462,7 +462,7 @@ function headerKey(value: Cell): string {
     .trim();
 }
 
-interface ColumnMap {
+export interface ColumnMap {
   gstin?: number;
   party?: number;
   docNo?: number;
@@ -484,7 +484,7 @@ interface ColumnMap {
 
 type SingleSlot = Exclude<keyof ColumnMap, "igst" | "cgst" | "sgst" | "cess">;
 
-function mapColumns(headers: Cell[]): ColumnMap {
+export function mapColumns(headers: Cell[]): ColumnMap {
   const map: ColumnMap = { igst: [], cgst: [], sgst: [], cess: [] };
   const score = new Map<SingleSlot, number>();
   const claim = (slot: SingleSlot, index: number, points: number) => {
@@ -546,7 +546,7 @@ function mappedCount(map: ColumnMap) {
 }
 
 /** Finds the header row among the first rows of a sheet; -1 when none looks like one. */
-function findHeaderRow(table: Table): number {
+export function findHeaderRow(table: Table): number {
   let best = -1;
   let bestScore = 0;
   for (let i = 0; i < Math.min(table.length, 25); i++) {
@@ -561,7 +561,7 @@ function findHeaderRow(table: Table): number {
   return bestScore >= 3 ? best : -1;
 }
 
-function textCell(value: Cell): string {
+export function textCell(value: Cell): string {
   if (value instanceof Date) return isoDate(value) ?? "";
   return String(value ?? "").trim();
 }
@@ -570,7 +570,7 @@ function textCell(value: Cell): string {
  * Register software often stores computed taxes with extra decimals (90.0045). Those are rounded
  * to the nearest paisa and counted, so the person is told; text that is not an amount stops the file.
  */
-function amountCell(value: Cell, label: string, row: number, stats: { rounded: number }): number {
+export function amountCell(value: Cell, label: string, row: number, stats: { rounded: number }): number {
   const raw = value instanceof Date ? "" : value;
   const exact = toPaise(raw);
   if (exact != null) return exact;
@@ -582,7 +582,7 @@ function amountCell(value: Cell, label: string, row: number, stats: { rounded: n
   return nearest;
 }
 
-function sumColumns(cells: Cell[], indexes: number[], label: string, row: number, stats: { rounded: number }): number {
+export function sumColumns(cells: Cell[], indexes: number[], label: string, row: number, stats: { rounded: number }): number {
   return indexes.reduce((total, index) => total + amountCell(cells[index], label, row, stats), 0);
 }
 
