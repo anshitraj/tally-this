@@ -36,10 +36,13 @@ function invoiceNumbers(lines: string[]): string[] {
     new RegExp(`\\b(?:tax\\s+)?invoice\\s*(?:no|number|num|#)\\.?\\s*[:#\\-]?\\s*${NUMBER_TOKEN}`, "i"),
     new RegExp(`\\b(?:bill|inv)\\s*(?:no|number)\\.?\\s*[:#\\-]?\\s*${NUMBER_TOKEN}`, "i"),
     new RegExp(`\\binv(?:oice)?\\s*[#:]\\s*${NUMBER_TOKEN}`, "i"),
+    // A title line that ends with the number: "TAX INVOICE - INV-2026-001".
+    new RegExp(`\\b(?:tax\\s+invoice|purchase\\s+invoice|vendor\\s+bill|invoice|bill\\s+of\\s+supply)\\b[^\\n]{0,40}?\\s[-–:#]\\s*${NUMBER_TOKEN}\\s*$`, "i"),
   ];
   const accept = (value: string | undefined) => {
     const token = (value ?? "").replace(/[.,;:]+$/, "");
-    if (!token || NOT_A_NUMBER.test(token) || !/\d/.test(token)) return;
+    // A date or a currency word is not a number.
+    if (!token || NOT_A_NUMBER.test(token) || !/\d/.test(token) || /^(inr|rs)$/i.test(token) || normalizeDate(token)) return;
     if (!found.includes(token)) found.push(token);
   };
   lines.forEach((line, index) => {
@@ -77,16 +80,19 @@ function invoiceDate(lines: string[]): string | null {
 }
 
 const BUYER_LABEL = /bill(?:ed)?\s*to|ship(?:ped)?\s*to|buyer|customer|consignee|recipient|sold\s*to|party\s*details/i;
+const SELLER_LABEL = /supplier|vendor|seller|sold\s*by|\bfrom\b/i;
 
 function gstins(lines: string[]): { seller: string | null; buyer: string | null } {
   let seller: string | null = null;
   let buyer: string | null = null;
   let buyerWindow = 0;
   for (const line of lines) {
-    if (BUYER_LABEL.test(line)) buyerWindow = 6;
+    // "Supplier / Vendor   Customer / Bill To" names both sides at once; their order then says which is which.
+    if (BUYER_LABEL.test(line) && !SELLER_LABEL.test(line)) buyerWindow = 6;
     const match = line.toUpperCase().match(GSTIN);
     if (match) {
       if (buyerWindow > 0 || /buyer|customer|recipient|consignee/i.test(line)) buyer ??= match[0];
+      else if (seller && match[0] !== seller) buyer ??= match[0];
       else seller ??= match[0];
     }
     if (buyerWindow > 0) buyerWindow -= 1;
@@ -97,13 +103,27 @@ function gstins(lines: string[]): { seller: string | null; buyer: string | null 
 const NAME_REJECT = /tax\s+invoice|invoice|original|duplicate|triplicate|bill\s+of\s+supply|gstin|gst\s*no|\bpan\b|phone|mobile|\btel\b|email|e-mail|www\.|@|page\s*\d|^\d|irn|ack\s*no|e-?way|cin\b|state\s*name|place\s+of\s+supply/i;
 const NAME_HINT = /\b(pvt|private|ltd|limited|llp|traders?|enterprises?|solutions?|services?|industries|corporation|company|co\.|stores?|agency|agencies|associates|technologies|systems|infotech|exports?|imports?|marketing|distributors?|suppliers?|works|sons|brothers|mart)\b/i;
 
+const ADDRESS_LINE = /^address\b|\bstreet\b|\broad\b|\bnagar\b|\bpark\b|\bfloor\b|\b\d{6}\b|^(?:supplier|vendor|customer|bill\s*to)\b/i;
+
+/** The business name printed just above its GSTIN: the 1st GSTIN is the seller's, the 2nd the buyer's. */
+function nameAboveGstin(lines: string[], nth: 0 | 1): string | null {
+  const at = lines.map((line, index) => (GSTIN.test(line.toUpperCase()) ? index : -1)).filter(index => index >= 0);
+  const index = at[nth];
+  if (index == null) return null;
+  const above = lines.slice(Math.max(0, index - 3), index).reverse().filter(line => line.length >= 3 && /[A-Za-z]{3}/.test(line) && !NAME_REJECT.test(line) && !ADDRESS_LINE.test(line));
+  return (above.find(line => NAME_HINT.test(line)) ?? above[0])?.slice(0, 120) ?? null;
+}
+
 function sellerName(lines: string[]): string | null {
-  const labelled = lines.findIndex(line => /^(sold\s*by|seller|supplier|from|vendor)\b\s*[:\-]?/i.test(line));
+  // A heading that names both sides ("Supplier / Vendor   Customer / Bill To") holds no name itself.
+  const labelled = lines.findIndex(line => /^(sold\s*by|seller|supplier|from|vendor)\b\s*[:\-]?/i.test(line) && !BUYER_LABEL.test(line));
   if (labelled >= 0) {
     const inline = lines[labelled].replace(/^(sold\s*by|seller|supplier|from|vendor)\b\s*[:\-]?\s*/i, "").trim();
     const value = inline || lines[labelled + 1]?.trim() || "";
     if (value && !NAME_REJECT.test(value)) return value.slice(0, 120);
   }
+  const byGstin = nameAboveGstin(lines, 0);
+  if (byGstin) return byGstin;
   const top = lines.slice(0, 12).filter(line => line.length >= 3 && /[A-Za-z]{3}/.test(line) && !NAME_REJECT.test(line));
   return (top.find(line => NAME_HINT.test(line)) ?? top[0])?.slice(0, 120) ?? null;
 }
@@ -113,9 +133,9 @@ function customerName(lines: string[]): string | null {
     const match = lines[index].match(/^(?:bill(?:ed)?\s*to|buyer|customer(?:\s*name)?|sold\s*to|consignee)\b\s*(?:\(.*?\))?\s*[:\-]?\s*(.*)$/i);
     if (!match) continue;
     const value = match[1].trim() || lines[index + 1]?.trim() || "";
-    if (value && !GSTIN.test(value.toUpperCase()) && !NAME_REJECT.test(value)) return value.slice(0, 120);
+    if (value && !GSTIN.test(value.toUpperCase()) && !NAME_REJECT.test(value) && !SELLER_LABEL.test(value)) return value.slice(0, 120);
   }
-  return null;
+  return nameAboveGstin(lines, 1);
 }
 
 const STRONG_TOTAL = /grand\s*total|invoice\s*(?:total|value|amount)|total\s*invoice\s*(?:value|amount)|net\s*(?:amount\s*)?payable|amount\s*payable|total\s*amount|total\s*payable|amount\s*due|balance\s*due|total\s*value/i;
@@ -149,6 +169,12 @@ function invoiceTax(lines: string[]): number | null {
     .map(line => moneyTokens(line).pop())
     .filter((value): value is number => value != null);
   if (total.length > 0) return Math.max(...total);
+  // "GST INR 18,000.00" on its own line under the subtotal.
+  const plain = lines
+    .filter(line => /^(?:total\s+)?(?:gst|tax)\b(?![^0-9]*%)/i.test(line) && !/in\s*words/i.test(line))
+    .map(line => moneyTokens(line).pop())
+    .filter((value): value is number => value != null);
+  if (plain.length > 0) return Math.max(...plain);
   let sum = 0;
   let seen = false;
   for (const kind of ["cgst", "sgst", "igst"]) {
@@ -164,6 +190,28 @@ function invoiceTax(lines: string[]): number | null {
   return seen ? Math.round(sum * 100) / 100 : null;
 }
 
+/**
+ * Invoices that print "Supplier / Vendor   Customer / Bill To" side by side come out of a PDF as two
+ * blocks in reading order, each ending at its "Address" line. A side with no GSTIN stays without one.
+ */
+function twoColumnParties(lines: string[]): { seller: { name: string | null; gstin: string | null }; buyer: { name: string | null; gstin: string | null } } | null {
+  const head = lines.findIndex(line => SELLER_LABEL.test(line) && BUYER_LABEL.test(line));
+  if (head < 0) return null;
+  const blocks: string[][] = [[]];
+  for (let index = head + 1; index < lines.length && blocks.length <= 2; index += 1) {
+    const line = lines[index];
+    if (/^(description|sl\.?\s*no|s\.?\s*no|item|particulars)\b/i.test(line)) break;
+    blocks[blocks.length - 1].push(line);
+    if (/^address\b/i.test(line)) blocks.push([]);
+  }
+  const read = (block: string[]) => ({
+    name: block.find(line => !GSTIN.test(line.toUpperCase()) && !/^(gstin|address|pan|state)\b/i.test(line) && /[A-Za-z]{3}/.test(line))?.slice(0, 120) ?? null,
+    gstin: block.map(line => line.toUpperCase().match(GSTIN)?.[0]).find(Boolean) ?? null,
+  });
+  if (blocks.length < 2 || blocks[0].length === 0 || blocks[1].length === 0) return null;
+  return { seller: read(blocks[0]), buyer: read(blocks[1]) };
+}
+
 /** Pure: invoice text in, at most one invoice out. */
 export function extractInvoicesFromText(text: string): InvoiceRow[] {
   const lines = text.split(/\r?\n/).map(clean).filter(Boolean);
@@ -174,12 +222,13 @@ export function extractInvoicesFromText(text: string): InvoiceRow[] {
   const total = invoiceTotal(lines);
   if (total == null) return [];
   const gst = gstins(lines);
+  const sides = twoColumnParties(lines);
   return [{
     invoiceNumber: numbers[0],
     invoiceDate: invoiceDate(lines),
-    vendorName: sellerName(lines) ?? "Unknown vendor",
-    vendorGstin: gst.seller,
-    customerName: customerName(lines),
+    vendorName: sides?.seller.name ?? sellerName(lines) ?? "Unknown vendor",
+    vendorGstin: sides ? sides.seller.gstin : gst.seller,
+    customerName: sides?.buyer.name ?? customerName(lines),
     total,
     tax: invoiceTax(lines),
     rowNumber: 1,
