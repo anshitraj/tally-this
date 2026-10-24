@@ -4,6 +4,7 @@ import { extractHybrid, type ExtractionMethod } from "./pdfTableExtractor";
 import { scanCsvTable } from "./bankStatement";
 import { recognizeStatement } from "./statementOcr";
 import { pageRanges, pagesNeedingOcr } from "./statementReadPlan";
+import { workerHeaders, workerUrl } from "./workerClient";
 
 export interface ParsedFileResult {
   parser: "csv" | "excel" | "pdf" | "image" | "unsupported";
@@ -158,7 +159,7 @@ function parseCsvLine(line: string): string[] {
 // it (pandas handles malformed files + Indian bank column aliases better than
 // the JS implementation). Falls back to the TS parser silently on any error.
 
-const PYTHON_WORKER_URL = process.env.PYTHON_WORKER_URL ?? "http://localhost:8091";
+const PYTHON_WORKER_URL = workerUrl();
 
 async function tryPythonWorker(
   file: Express.Multer.File,
@@ -171,7 +172,7 @@ async function tryPythonWorker(
     formData.append("source_type", sourceType);
 
     const url = `${PYTHON_WORKER_URL}/parse/${endpoint}`;
-    const res = await fetch(url, { method: "POST", body: formData, signal: AbortSignal.timeout(15_000) });
+    const res = await fetch(url, { method: "POST", headers: workerHeaders(), body: formData, signal: AbortSignal.timeout(15_000) });
     if (!res.ok) return null;
 
     const data = await res.json() as {
@@ -209,7 +210,7 @@ async function tryPythonPdfTable(file: Express.Multer.File, sourceType: string):
     formData.append("file", new Blob([new Uint8Array(file.buffer)], { type: file.mimetype || "application/pdf" }), file.originalname);
     formData.append("source_type", sourceType);
 
-    const res = await fetch(`${PYTHON_WORKER_URL}/parse/pdf-table`, { method: "POST", body: formData, signal: AbortSignal.timeout(15_000) });
+    const res = await fetch(`${PYTHON_WORKER_URL}/parse/pdf-table`, { method: "POST", headers: workerHeaders(), body: formData, signal: AbortSignal.timeout(15_000) });
     if (!res.ok) return null;
 
     const data = await res.json() as {

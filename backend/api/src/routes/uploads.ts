@@ -13,6 +13,7 @@ import { ingestParsedUpload, type UploadImportSummary } from "../services/upload
 import { runAndPersistReconciliation } from "../services/reconciliationRunner";
 
 import { attachBooksCompany } from "../services/companyScope";
+import { workerHeaders } from "../services/workerClient";
 
 const router: IRouter = Router();
 router.use(attachBooksCompany);
@@ -195,6 +196,7 @@ router.post("/uploads", requirePermission("uploads.create"), upload.single("file
 
         const workerRes = await fetch(`${pythonWorkerUrl}${workerEndpoint}`, {
           method: "POST",
+          headers: workerHeaders(),
           body: fd,
           signal: AbortSignal.timeout(30_000),
         });
@@ -684,7 +686,7 @@ router.post("/uploads/:id/reprocess", requirePermission("uploads.create"), async
         fd.append("source_type", batch.sourceType);
 
         const workerRes = await fetch(`${pythonWorkerUrl}${endpoint}`, {
-          method: "POST", body: fd, signal: AbortSignal.timeout(30_000),
+          method: "POST", headers: workerHeaders(), body: fd, signal: AbortSignal.timeout(30_000),
         });
         if (workerRes.ok) {
           const data = await workerRes.json() as { ok: boolean; rows?: unknown[]; extraction_method?: string; confidence?: number };

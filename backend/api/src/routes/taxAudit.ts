@@ -17,10 +17,12 @@ import { resolveBooksCompanyId } from "../services/companyScope";
 import { buildChecks, FY_END } from "../services/taxAuditEngine";
 import { loadData } from "../services/taxAuditData";
 import { runAndPersistReconciliation } from "../services/reconciliationRunner";
+import { workerHeaders, workerUrl } from "../services/workerClient";
+import { checkTallyTarget } from "../services/tallyTarget";
 
 const router: IRouter = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
-const PYTHON_WORKER_URL = process.env.PYTHON_WORKER_URL ?? "http://localhost:8091";
+const PYTHON_WORKER_URL = workerUrl();
 
 interface NormalizedLedger { name: string; group: string; opening_balance: number; closing_balance: number; prev_year_closing: number | null; prev_year_group: string | null; is_msme: boolean; msme_type: string | null; pan: string | null }
 interface NormalizedVoucher { date: string; type: string; number: string; party: string | null; narration: string | null; amount: number; mode: string | null }
@@ -153,7 +155,7 @@ router.post("/tax-audit/import", requirePermission("uploads.create"), upload.sin
     const form = new FormData();
     form.append("file", new Blob([new Uint8Array(file.buffer)], { type: file.mimetype || "application/xml" }), file.originalname);
     form.append("company_id", String(companyId));
-    const r = await fetch(`${PYTHON_WORKER_URL}/parse/tally`, { method: "POST", body: form, signal: AbortSignal.timeout(30_000) });
+    const r = await fetch(`${PYTHON_WORKER_URL}/parse/tally`, { method: "POST", headers: workerHeaders(), body: form, signal: AbortSignal.timeout(30_000) });
     if (!r.ok) { res.status(502).json({ ok: false, error: `Parser returned ${r.status}` }); return; }
     parsed = await r.json() as TallyParseResult;
   } catch {
@@ -183,9 +185,12 @@ router.post("/tax-audit/connector/sync", requirePermission("uploads.create"), as
   const b = (req.body ?? {}) as Record<string, unknown>;
   const company = typeof b.company === "string" ? b.company.trim() : "";
   if (!company) { res.status(400).json({ ok: false, error: "Tally company name is required" }); return; }
+  // The address is not taken on trust: this computer, or one an administrator allowed (services/tallyTarget.ts).
+  const target = checkTallyTarget(typeof b.host === "string" && b.host ? b.host : "localhost", b.port === undefined || b.port === "" ? 9000 : b.port);
+  if (!target.ok) { res.status(403).json({ ok: false, error: target.error }); return; }
   const payload = {
-    host: typeof b.host === "string" && b.host ? b.host : "localhost",
-    port: Number(b.port) || 9000,
+    host: target.host,
+    port: target.port,
     company,
     from_date: typeof b.fromDate === "string" ? b.fromDate : "",
     to_date: typeof b.toDate === "string" ? b.toDate : "",
@@ -195,7 +200,7 @@ router.post("/tax-audit/connector/sync", requirePermission("uploads.create"), as
   let parsed: TallyParseResult;
   try {
     const r = await fetch(`${PYTHON_WORKER_URL}/connector/tally-fetch`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
+      method: "POST", headers: workerHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(payload), signal: AbortSignal.timeout(70_000),
     });
     parsed = await r.json() as TallyParseResult;
