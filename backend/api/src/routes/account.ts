@@ -23,12 +23,12 @@ router.get("/account/plan", requirePermission("uploads.read"), async (req, res):
   });
 });
 
-/** Name and firm, asked right after a new account is made (email or Google/GitHub). */
+/** Name and firm. Either may be sent on its own; nothing is changed for a field that is left out. */
 router.post("/account/profile", requireAuth, async (req, res): Promise<void> => {
   const name = typeof req.body?.name === "string" ? req.body.name.trim().slice(0, 120) : "";
   const companyName = typeof req.body?.companyName === "string" ? req.body.companyName.trim().slice(0, 160) : "";
-  if (!name) {
-    res.status(400).json({ ok: false, error: "Enter your name." });
+  if (!name && !companyName) {
+    res.status(400).json({ ok: false, error: "Enter your name or your firm's name." });
     return;
   }
   const auth = req.auth!;
@@ -37,7 +37,7 @@ router.post("/account/profile", requireAuth, async (req, res): Promise<void> => 
     res.status(403).json({ ok: false, error: "Only the workspace owner can change the firm name." });
     return;
   }
-  await db.update(usersTable).set({ name }).where(eq(usersTable.id, auth.userId));
+  if (name) await db.update(usersTable).set({ name }).where(eq(usersTable.id, auth.userId));
   if (companyName) await db.update(companiesTable).set({ name: companyName }).where(eq(companiesTable.id, auth.companyId));
   await db.insert(auditLogsTable).values({
     companyId: auth.companyId,
@@ -46,10 +46,10 @@ router.post("/account/profile", requireAuth, async (req, res): Promise<void> => 
     action: "account.profile_updated",
     entityType: "user",
     entityId: auth.userId,
-    metadata: { companyRenamed: Boolean(companyName) },
+    metadata: { nameChanged: Boolean(name), companyRenamed: Boolean(companyName) },
     ipAddress: req.ip,
   });
-  res.json({ ok: true, name, companyName: companyName || null });
+  res.json({ ok: true, name: name || null, companyName: companyName || null });
 });
 
 export default router;

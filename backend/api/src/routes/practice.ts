@@ -126,6 +126,21 @@ router.post("/practice/clients", requirePermission("uploads.create"), async (req
     const gstin = typeof req.body?.gstin === "string" ? req.body.gstin.trim() : null;
     const pan = typeof req.body?.pan === "string" ? req.body.pan.trim() : null;
 
+    // The same client twice (a second click, a page reload, going through setup again) must not make a copy.
+    const already = await db.execute(sql`
+      SELECT id, client_company_id, client_name FROM ca_client_links
+      WHERE ca_user_id = ${caUserId} AND status = 'active' AND lower(btrim(client_name)) = lower(${name})
+      ORDER BY id LIMIT 1`);
+    const existing = already.rows[0] as { id: number; client_company_id: number; client_name: string } | undefined;
+    if (existing) {
+      res.status(409).json({
+        ok: false,
+        error: "You already have a client with this name.",
+        client: { companyId: existing.client_company_id, name: existing.client_name, linkId: existing.id },
+      });
+      return;
+    }
+
     const [company] = await db.insert(companiesTable).values({
       name, industry: typeof req.body?.industry === "string" && req.body.industry ? req.body.industry : "Unspecified",
       gstin, pan,
