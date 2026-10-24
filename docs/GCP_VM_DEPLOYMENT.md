@@ -48,8 +48,10 @@ Do these in order. Steps 1 and 2 are yours; the rest are scripted.
    - Cloudflare R2: delete the old API token and create a new one limited to the `finverify` bucket.
    - Gemini and Anthropic: create new keys and delete the old ones. Look at the usage pages for anything you did not do.
    - Any other key you ever put in a Railway variable (NVIDIA, OpenRouter, OAuth secrets).
+
+   What was actually done on 25 October 2026: the Neon password and the Gemini key were rotated (checked: the old Neon password is refused), the signing secret and worker token were made fresh, and the R2 token and the Anthropic key were kept because the owner judged them not exposed. If that judgement changes, replace them in `.env` and run `bash deploy/vm/set-secrets.sh --from-env .env`, then restart as shown under "Day to day".
    - Revoke Railway's access to your GitHub repository (GitHub, Settings, Applications) and run `railway logout` on this computer. The signing secret and the worker token do not need rotating by hand; they are made fresh in step 3.
-2. **Point DNS at the VM.** In Cloudflare add an `A` record: `api` → `35.240.201.229`, **DNS only** (grey cloud). Caddy cannot get its certificate through the proxy.
+2. **Point DNS at the VM.** The DNS for `tallythis.xyz` is hosted at Spaceship (its name servers are `launch1.spaceship.net` and `launch2.spaceship.net`). In Spaceship's DNS settings for the domain add an `A` record: host `api`, value `35.240.201.229`, TTL 30 minutes or shorter. If the DNS is ever moved to a provider with a proxy (Cloudflare's orange cloud, for example), keep this one record **DNS only**: the server gets its own certificate and cannot do that through a proxy.
 3. **Put the new secrets into Secret Manager.** In Git Bash from the repository folder:
    ```bash
    bash deploy/vm/set-secrets.sh
