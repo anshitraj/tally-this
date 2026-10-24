@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -50,6 +51,7 @@ func TestProductionRefusesToRunWithoutASigningSecret(t *testing.T) {
 func TestProductionRefusesTheDevelopmentAndShortSecrets(t *testing.T) {
 	for name, secret := range map[string]string{
 		"the published development value": developmentSecret,
+		"the sample in .env.example":      sampleSecret,
 		"a short secret":                  "short-secret",
 		"31 characters":                   strings.Repeat("x", 31),
 	} {
@@ -61,6 +63,29 @@ func TestProductionRefusesTheDevelopmentAndShortSecrets(t *testing.T) {
 				t.Fatalf("production must refuse %s", name)
 			}
 		})
+	}
+}
+
+// Whatever the sample in .env.example is changed to, production must keep refusing it.
+func TestProductionRefusesWhateverSampleSecretEnvExampleShows(t *testing.T) {
+	raw, err := os.ReadFile("../../../../.env.example")
+	if err != nil {
+		t.Skip("the repository's .env.example is not next to this package")
+	}
+	sample := ""
+	for _, line := range strings.Split(string(raw), "\n") {
+		if value, found := strings.CutPrefix(strings.TrimSpace(line), "JWT_SECRET="); found {
+			sample = strings.Trim(value, `"'`)
+		}
+	}
+	if sample == "" {
+		t.Skip(".env.example shows no sample secret, so there is nothing to refuse")
+	}
+	clearSecrets(t)
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("JWT_SECRET", sample)
+	if _, err := SigningSecret(); err == nil {
+		t.Fatalf("production accepted the sample secret from .env.example; add it to the refused values")
 	}
 }
 

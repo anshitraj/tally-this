@@ -39,8 +39,10 @@ export function tokenHash(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
-// Published in this repository, so it may only ever be used on a developer machine.
+// Published in this repository (the fallback below and the sample in .env.example), so they may only ever be used
+// on a developer machine. The sample is longer than 32 characters, so length alone would not catch a copied .env.example.
 const DEVELOPMENT_SECRET = "finverify-dev-session-secret-change-me";
+const PUBLISHED_SECRETS = new Set([DEVELOPMENT_SECRET, "replace-with-a-long-random-secret"]);
 const MIN_PRODUCTION_SECRET_LENGTH = 32;
 
 export function isProduction(env: Record<string, string | undefined> = process.env): boolean {
@@ -56,8 +58,8 @@ export function signingSecretProblem(env: Record<string, string | undefined> = p
   if (!isProduction(env)) return null;
   const secret = env.JWT_SECRET || env.SESSION_SECRET;
   if (!secret) return "JWT_SECRET or SESSION_SECRET must be set in production";
-  if (secret === DEVELOPMENT_SECRET || secret.length < MIN_PRODUCTION_SECRET_LENGTH) {
-    return "The production signing secret must be at least 32 characters and not the development value";
+  if (PUBLISHED_SECRETS.has(secret) || secret.length < MIN_PRODUCTION_SECRET_LENGTH) {
+    return "The production signing secret must be at least 32 characters and not a value published in this repository";
   }
   return null;
 }

@@ -185,6 +185,10 @@ func verifyToken(token string) (jwtClaims, bool) {
 // developmentSecret is published in this repository. It is only ever used on a developer machine.
 const developmentSecret = "finverify-dev-session-secret-change-me"
 
+// sampleSecret is the placeholder in .env.example. It is longer than the minimum, so length alone
+// would not catch a copied .env.example.
+const sampleSecret = "replace-with-a-long-random-secret"
+
 const minProductionSecretLength = 32
 
 // IsProduction reports whether this process is a production service.
@@ -214,8 +218,8 @@ func SigningSecret() (string, error) {
 	if secret == "" {
 		return "", errors.New("JWT_SECRET or SESSION_SECRET must be set in production")
 	}
-	if secret == developmentSecret || len(secret) < minProductionSecretLength {
-		return "", errors.New("the production signing secret must be at least 32 characters and not the development value")
+	if secret == developmentSecret || secret == sampleSecret || len(secret) < minProductionSecretLength {
+		return "", errors.New("the production signing secret must be at least 32 characters and not a value published in this repository")
 	}
 	return secret, nil
 }

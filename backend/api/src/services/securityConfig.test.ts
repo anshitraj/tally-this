@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
 import { isProduction, jwtSecret, signingSecretProblem } from "./auth";
 import { checkTallyTarget, tallyConnectorEnabled } from "./tallyTarget";
@@ -7,6 +9,9 @@ import { validateServerEnv } from "../server/envValidation";
 
 const STRONG = "a-long-random-production-secret-0123456789abcdef";
 const DEV_VALUE = "finverify-dev-session-secret-change-me";
+const SAMPLE_VALUE = "replace-with-a-long-random-secret";
+// Tests run from backend/api (pnpm test); the sample file is at the repository root.
+const SAMPLE_ENV_FILE = path.resolve(process.cwd(), "../../.env.example");
 
 function withEnv<T>(vars: Record<string, string | undefined>, run: () => T): T {
   const saved: Record<string, string | undefined> = {};
@@ -45,6 +50,7 @@ test("production will not run without a strong signing secret", () => {
   for (const env of ["NODE_ENV", "APP_ENV"]) {
     assert.match(signingSecretProblem({ [env]: "production" }) ?? "", /must be set in production/, `${env}=production with no secret`);
     assert.match(signingSecretProblem({ [env]: "production", JWT_SECRET: DEV_VALUE }) ?? "", /at least 32/, "the published development value");
+    assert.match(signingSecretProblem({ [env]: "production", JWT_SECRET: SAMPLE_VALUE }) ?? "", /published in this repository/, "the sample in .env.example");
     assert.match(signingSecretProblem({ [env]: "production", JWT_SECRET: "short" }) ?? "", /at least 32/, "a short secret");
     assert.match(signingSecretProblem({ [env]: "production", JWT_SECRET: "x".repeat(31) }) ?? "", /at least 32/, "31 characters");
     assert.equal(signingSecretProblem({ [env]: "production", JWT_SECRET: STRONG }), null);
@@ -53,6 +59,15 @@ test("production will not run without a strong signing secret", () => {
   }
   assert.equal(isProduction({ NODE_ENV: " Production " }), true);
   assert.equal(isProduction({ NODE_ENV: "development" }), false);
+});
+
+// A sample longer than 32 characters passes the length rule, so it has to be refused by name. Whatever the
+// sample is changed to, this test follows it.
+test("production refuses whatever sample secret .env.example shows", { skip: !fs.existsSync(SAMPLE_ENV_FILE) }, () => {
+  const line = fs.readFileSync(SAMPLE_ENV_FILE, "utf8").split(/\r?\n/).find(text => text.trim().startsWith("JWT_SECRET="));
+  const sample = (line ?? "").trim().slice("JWT_SECRET=".length).replace(/^["']|["']$/g, "");
+  if (!sample) return; // a blank sample cannot be copied into production by accident
+  assert.match(signingSecretProblem({ NODE_ENV: "production", JWT_SECRET: sample }) ?? "", /published in this repository/);
 });
 
 test("signing refuses in production instead of using the published secret", () => {
