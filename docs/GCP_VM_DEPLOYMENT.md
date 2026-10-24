@@ -23,9 +23,9 @@ Browser ── https://www.tallythis.xyz (Vercel: the website, and a proxy for /
 
 | Thing | Value |
 | --- | --- |
-| Google Cloud project | `gen-lang-client-0585019595` (named Webcoin). Everything TallyThis made is called `tallythis-*`; nothing else in the project was touched. |
+| Google Cloud project | `gen-lang-client-0617032862` (named Railor). Everything TallyThis made is called `tallythis-*`; nothing else in the project was touched. |
 | VM | `tallythis-1`, zone `asia-southeast1-b` (Singapore, next to the Neon database), `e2-standard-4` (4 vCPU, 16 GB), 100 GB disk, Debian 12, deletion protection on |
-| Public address | `35.198.251.174`, a reserved address that stays with the VM |
+| Public address | `35.240.201.229`, a reserved address that stays with the VM |
 | Network | its own VPC `tallythis-vpc`; the project's `default` network is not used |
 | Service account | `tallythis-vm`: can read the seven `tallythis-*` secrets and write logs and metrics, nothing else |
 | Secrets | Google Secret Manager, stored in `asia-southeast1`, names start with `tallythis-` |
@@ -49,7 +49,7 @@ Do these in order. Steps 1 and 2 are yours; the rest are scripted.
    - Gemini and Anthropic: create new keys and delete the old ones. Look at the usage pages for anything you did not do.
    - Any other key you ever put in a Railway variable (NVIDIA, OpenRouter, OAuth secrets).
    - Revoke Railway's access to your GitHub repository (GitHub, Settings, Applications) and run `railway logout` on this computer. The signing secret and the worker token do not need rotating by hand; they are made fresh in step 3.
-2. **Point DNS at the VM.** In Cloudflare add an `A` record: `api` → `35.198.251.174`, **DNS only** (grey cloud). Caddy cannot get its certificate through the proxy.
+2. **Point DNS at the VM.** In Cloudflare add an `A` record: `api` → `35.240.201.229`, **DNS only** (grey cloud). Caddy cannot get its certificate through the proxy.
 3. **Put the new secrets into Secret Manager.** In Git Bash from the repository folder:
    ```bash
    bash deploy/vm/set-secrets.sh
