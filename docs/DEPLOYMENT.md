@@ -84,8 +84,13 @@ real values in Railway; do not upload `.env` files to GitHub.
 On **api**:
 
 - `NODE_ENV=production`, `APP_ENV=production`, `PORT=8080`, `ALLOW_DEMO_SEED=false`.
-- `DATABASE_URL`, a strong random `JWT_SECRET`, and the R2 variables above.
+- `DATABASE_URL`, a strong random `JWT_SECRET` (at least 32 characters and not a value
+  from this repository; the service exits at start-up in production otherwise), and
+  the R2 variables above.
 - `PYTHON_WORKER_URL=http://worker.railway.internal:8091`.
+- `WORKER_SERVICE_TOKEN`: one random value of at least 24 characters, identical on
+  `worker`. Leave `TALLY_CONNECTOR_ENABLED` unset: a cloud server cannot reach an
+  accountant's TallyPrime, and the connector is off by default in production.
 - `APP_URL`, `API_PUBLIC_URL`, and `CORS_ORIGIN`: the final **frontend HTTPS origin**
   because OAuth returns through Vercel's same-origin `/api` proxy.
 - `SUPPORT_EMAIL=contact@tallythis.xyz`.
@@ -93,14 +98,20 @@ On **api**:
 On **gateway**:
 
 - `NODE_ENV=production`, `APP_ENV=production`, `PORT=8090`, `GO_API_PORT=8090`.
-- The same `DATABASE_URL` and `JWT_SECRET` as api.
+- The same `DATABASE_URL` and `JWT_SECRET` as api (at least 32 characters). It only
+  checks the worker's public `/health`, so it does not need `WORKER_SERVICE_TOKEN`.
 - `TYPESCRIPT_API_URL=http://api.railway.internal:8080`.
 - `PYTHON_WORKER_URL=http://worker.railway.internal:8091`.
-- `CORS_ORIGIN`: the frontend origin.
+- `CORS_ORIGIN`: the frontend origin (comma-separated if there are several). In
+  production the gateway allows cross-origin browser requests only from these origins,
+  and from none if this is unset.
 
 On **worker**:
 
 - `PORT=8091`, `PYTHON_WORKER_PORT=8091`; keep this service private.
+- `WORKER_SERVICE_TOKEN`: the same random value as on api, at least 24 characters. The
+  image defaults to `APP_ENV=production`, where the worker refuses every request
+  except `/health` without the token.
 - AI keys/models are optional and belong only on the services using them. Ordinary
   file parsing and rule-based workflows work without an AI key. The API container
   includes Tesseract and Poppler for its local OCR fallback.
@@ -168,9 +179,13 @@ pnpm test:deployment
 pnpm --filter @workspace/api-server test
 ```
 
-Go: `cd backend/gateway && go test ./...`. Python: install
-`backend/worker/requirements.txt`, then run the worker tests from that folder.
-Run the existing frontend browser tests against a running dev or preview server.
+Go: `cd backend/gateway && go vet ./... && go test ./...`. Python: install
+`backend/worker/requirements.txt` and `pytest`, then run `python -m pytest tests -q`
+from `backend/worker`. Browser tests:
+`pnpm --filter @workspace/finverify-os exec playwright test` (it starts the dev server
+itself). `node scripts/audit-gate.mjs` checks dependency advisories. All of these run on
+every pull request in `.github/workflows/ci.yml`. What each one does and does not
+prove, and which checks need a real database or TallyPrime, is in [TESTING.md](TESTING.md).
 For the optional local Docker stack, fill the root `.env` and use
 `docker compose up --build`; it uses your configured Neon database, not a new local
 Postgres instance. API and worker stay private within the Compose network.
