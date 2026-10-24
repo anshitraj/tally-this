@@ -60,6 +60,11 @@ build_env() {
       failed=1
       continue
     fi
+    # A value made or pasted on Windows can end in a carriage return or newline that is not part of the secret.
+    # Trim those from the end only; anything inside the value is judged as it is.
+    while [ -n "$value" ] && [[ $value == *$'\r' || $value == *$'\n' ]]; do
+      value=${value%?}
+    done
     if ! safe_value "$value"; then
       echo "tallythis: secret '$secret_name' contains a space, quote, dollar sign, backslash or backtick, which a container env file cannot carry safely." >&2
       failed=1

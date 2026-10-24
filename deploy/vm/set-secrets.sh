@@ -30,7 +30,8 @@ safe_value() {
 echo "Internal secrets"
 for name in tallythis-jwt-secret tallythis-worker-service-token; do
   if [ "$rotate" -eq 1 ] || ! has_value "$name"; then
-    openssl rand -hex 32 | gc secrets versions add "$name" --data-file=- >/dev/null
+    # tr removes the line ending Windows' openssl adds: a secret must hold exactly the characters it is made of.
+    openssl rand -hex 32 | tr -d '\r\n' | gc secrets versions add "$name" --data-file=- >/dev/null
     echo "  $name: new random value stored"
   else
     echo "  $name: already has a value (use --rotate to replace it)"
@@ -46,6 +47,7 @@ ask() { # ask <secret-name> <what to paste>
   fi
   read -r -s value
   echo
+  value=${value//$'\r'/}   # a paste from a Windows window can carry a carriage return
   [ -z "$value" ] && return 0
   if ! safe_value "$value"; then
     echo "  Not stored: it contains a space, quote, dollar sign, backslash or backtick." >&2

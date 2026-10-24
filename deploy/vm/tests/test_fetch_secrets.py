@@ -170,6 +170,28 @@ def test_a_value_a_container_env_file_cannot_carry_is_refused_not_damaged(google
     assert bad not in leaked
 
 
+@pytest.mark.parametrize("ending", ["\r\n", "\r", "\n", "\r\n\r\n"])
+def test_a_line_ending_left_on_a_secret_by_windows_is_trimmed_not_refused(google, ending):
+    """Found on the first real run: openssl on Windows added a carriage return, and the secret was refused."""
+    handler, url = google
+    handler.secrets["tallythis-jwt-secret"] = "c" * 64 + ending
+    handler.secrets["tallythis-gemini-api-key"] = "AIzaFakeKeyForTests_-123" + ending
+    result, out = run_script(url)
+    assert result.returncode == 0, result.stderr
+    api = read_env(out, "api.env")
+    assert api["JWT_SECRET"] == "c" * 64, "the value is exactly the characters it was made of"
+    assert api["GEMINI_API_KEY"] == "AIzaFakeKeyForTests_-123"
+    assert "\r" not in (out / "api.env").read_text()
+
+
+def test_whitespace_inside_a_value_is_still_refused_even_with_a_line_ending(google):
+    handler, url = google
+    handler.secrets["tallythis-jwt-secret"] = "has space\r\n"
+    result, _ = run_script(url)
+    assert result.returncode != 0
+    assert "tallythis-jwt-secret" in result.stderr
+
+
 @pytest.mark.skipif(os.name == "nt", reason="file modes are not meaningful on Windows")
 def test_the_files_are_readable_by_their_owner_only(google):
     _, url = google
