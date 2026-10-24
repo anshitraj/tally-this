@@ -1,0 +1,20 @@
+[Unit]
+Description=TallyThis (gateway, API and worker behind Caddy)
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/tallythis/current
+# Fetch the secrets into memory first; if any required one is missing the stack does not start.
+ExecStartPre=/opt/tallythis/bin/fetch-secrets.sh
+ExecStart=/usr/bin/docker compose --project-directory /opt/tallythis/current --env-file /opt/tallythis/runtime.env --env-file /opt/tallythis/release.env -f /opt/tallythis/current/deploy/vm/compose.yaml up --remove-orphans
+ExecStop=/usr/bin/docker compose --project-directory /opt/tallythis/current --env-file /opt/tallythis/runtime.env --env-file /opt/tallythis/release.env -f /opt/tallythis/current/deploy/vm/compose.yaml down
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=300
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

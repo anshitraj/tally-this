@@ -1,0 +1,36 @@
+# The only door into the VM. Caddy gets and renews the HTTPS certificate by itself (Let's Encrypt), so the
+# hostname in SITE_ADDRESS must already point at the VM's address when this first starts.
+{
+	email {$ACME_EMAIL}
+	admin off
+}
+
+{$SITE_ADDRESS} {
+	encode zstd gzip
+
+	# Largest upload accepted. The application's own limit (MAX_UPLOAD_MB, 60 by default) answers first with a
+	# readable message; this one only stops anything far larger.
+	request_body {
+		max_size 80MB
+	}
+
+	reverse_proxy gateway:8090 {
+		# Send responses on as they are produced, and allow a long read (a big scan can take minutes).
+		flush_interval -1
+		transport http {
+			dial_timeout 5s
+			response_header_timeout 30m
+		}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		-Server
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

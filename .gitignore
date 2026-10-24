@@ -78,3 +78,7 @@ logs/
 
 # Real bank statements used for local testing. Never commit.
 /testing-pdf/
+
+# Settings for one particular Google Cloud deployment (project, domain, bucket). Never commit.
+/deploy/vm/config.sh
+/deploy/vm/runtime.env
