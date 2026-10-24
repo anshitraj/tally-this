@@ -1,15 +1,16 @@
 # TallyThis backend
 
-| Folder | Role | Railway service | Health check |
+| Folder | Role | Reached by | Health check |
 | --- | --- | --- | --- |
-| `api/` | TypeScript business logic, authentication, uploads, exports | `api` (private) | `/api/health` |
-| `gateway/` | Go API entry point and reconciliation routes | `gateway` (public) | `/api/health` |
-| `worker/` | Python file extraction and parsing | `worker` (private) | `/health` |
+| `api/` | TypeScript business logic, authentication, uploads, exports | the gateway (private) | `/api/health` |
+| `gateway/` | Go API entry point and reconciliation routes | Caddy, the only public service | `/api/health` |
+| `worker/` | Python file extraction and parsing | the API (private) | `/health` |
 
-Deploy each service from the **repository root**, with its
-`RAILWAY_DOCKERFILE_PATH` set to the Dockerfile shown in its `.env.example`.
-Only the gateway needs a public domain. Shared PostgreSQL schema and client types
-remain in `../lib/`; the TypeScript API must have that build context.
+All three run in Docker on one Google Cloud VM (see `../deploy/vm/` and
+[the runbook](../docs/GCP_VM_DEPLOYMENT.md)). Each image is built from the **repository
+root** with its own Dockerfile. Only Caddy faces the internet. The shared PostgreSQL schema,
+its migrations and client types are in `../lib/`; the TypeScript API must have that build
+context.
 
 Follow [the deployment guide](../docs/DEPLOYMENT.md) for service variables,
 Vercel proxy setup and database/storage requirements. Folder separation is not

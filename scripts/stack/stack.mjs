@@ -191,13 +191,15 @@ await waitFor("gateway", `http://127.0.0.1:${ports.gateway}/api/health`);
 
 // ── Website: what Vercel does for this project ──────────────────────────────
 // Static files from dist/public, the page rewrites listed in frontend/vercel.mjs, and /api/* passed to the backend.
-const pageRoutes = createVercelConfig("https://backend.invalid").rewrites
+const vercel = createVercelConfig("https://backend.invalid");
+const pageRoutes = vercel.rewrites
   .filter(rule => rule.destination === "/index.html")
   .map(rule => new RegExp(`^${rule.source.replace(":path*", ".*")}$`));
+const securityHeaders = Object.fromEntries(vercel.headers.flatMap(rule => rule.headers.map(header => [header.key, header.value])));
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".ico": "image/x-icon", ".txt": "text/plain; charset=utf-8", ".woff2": "font/woff2", ".woff": "font/woff", ".webmanifest": "application/manifest+json" };
 
 function serveFile(res, file) {
-  res.writeHead(200, { "Content-Type": TYPES[path.extname(file).toLowerCase()] ?? "application/octet-stream" });
+  res.writeHead(200, { "Content-Type": TYPES[path.extname(file).toLowerCase()] ?? "application/octet-stream", ...securityHeaders });
   fs.createReadStream(file).pipe(res);
 }
 
@@ -219,12 +221,12 @@ webServer = http.createServer((req, res) => {
   if (requested.startsWith(siteDir) && fs.existsSync(requested) && fs.statSync(requested).isFile()) return serveFile(res, requested);
   if (url.pathname === "/") return serveFile(res, path.join(siteDir, "index.html"));
   if (pageRoutes.some(pattern => pattern.test(url.pathname))) return serveFile(res, path.join(siteDir, "index.html"));
-  res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+  res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8", ...securityHeaders });
   res.end("404: NOT_FOUND");
 });
 await new Promise(resolve => webServer.listen(ports.web, "127.0.0.1", resolve));
 await waitFor("gateway", `${webOrigin}/api/health`, 30);
 
 fs.mkdirSync(path.join(root, ".stack"), { recursive: true });
-fs.writeFileSync(path.join(root, ".stack/state.json"), JSON.stringify({ mode, web: webOrigin, gateway: `http://127.0.0.1:${ports.gateway}`, api: `http://127.0.0.1:${ports.api}`, logs: logDir }, null, 2));
+fs.writeFileSync(path.join(root, ".stack/state.json"), JSON.stringify({ mode, database: databaseUrl, web: webOrigin, gateway: `http://127.0.0.1:${ports.gateway}`, api: `http://127.0.0.1:${ports.api}`, logs: logDir }, null, 2));
 console.log(`stack: ready (${mode}) at ${webOrigin}   logs: ${logDir}`);

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { Building2, Bell, Shield, Users, Save, Database, FileText, History, Trash2, Cpu } from "lucide-react";
@@ -96,15 +96,21 @@ export default function SettingsPage() {
     caEmail: "",
   });
 
+  // What the person has typed before the saved details arrive is theirs: loading never writes over it.
+  const edited = useRef(new Set<keyof typeof company>());
+  const change = (key: keyof typeof company, value: string) => {
+    edited.current.add(key);
+    setCompany(current => ({ ...current, [key]: value }));
+  };
+
   useEffect(() => {
     if (!companyRecord) return;
     setCompany(current => ({
-      ...current,
-      name: companyRecord.name ?? current.name,
-      gstin: companyRecord.gstin ?? "",
-      pan: companyRecord.pan ?? "",
-      financialYearStart: companyRecord.financialYearStart ?? current.financialYearStart,
-      caEmail: companyRecord.caEmail ?? "",
+      name: edited.current.has("name") ? current.name : companyRecord.name ?? current.name,
+      gstin: edited.current.has("gstin") ? current.gstin : companyRecord.gstin ?? "",
+      pan: edited.current.has("pan") ? current.pan : companyRecord.pan ?? "",
+      financialYearStart: edited.current.has("financialYearStart") ? current.financialYearStart : companyRecord.financialYearStart ?? current.financialYearStart,
+      caEmail: edited.current.has("caEmail") ? current.caEmail : companyRecord.caEmail ?? "",
     }));
   }, [companyRecord]);
 
@@ -132,6 +138,7 @@ export default function SettingsPage() {
       return body.company as CompanyRecord;
     },
     onSuccess: record => {
+      edited.current.clear();
       qc.setQueryData(["company"], record);
       qc.invalidateQueries({ queryKey: ["auditLogs"] });
       if (user) login({ user: { ...user, company: record.name }, token: getAuthToken() ?? undefined });
@@ -169,19 +176,21 @@ export default function SettingsPage() {
             { label: "PAN", key: "pan" as const },
           ].map(field => (
             <div key={field.key}>
-              <label className="text-xs font-medium text-muted-foreground block mb-1.5">{field.label}</label>
+              <label htmlFor={`company-${field.key}`} className="text-xs font-medium text-muted-foreground block mb-1.5">{field.label}</label>
               <input
+                id={`company-${field.key}`}
                 value={company[field.key]}
-                onChange={e => setCompany(c => ({ ...c, [field.key]: e.target.value }))}
+                onChange={e => change(field.key, e.target.value)}
                 className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
               />
             </div>
           ))}
           <div>
-            <label className="text-xs font-medium text-muted-foreground block mb-1.5">Financial year starts in</label>
+            <label htmlFor="company-financialYearStart" className="text-xs font-medium text-muted-foreground block mb-1.5">Financial year starts in</label>
             <select
+              id="company-financialYearStart"
               value={company.financialYearStart}
-              onChange={e => setCompany(c => ({ ...c, financialYearStart: e.target.value }))}
+              onChange={e => change("financialYearStart", e.target.value)}
               className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
             >
               {["January", "April", "July", "October"].map(month => <option key={month} value={month}>{month}</option>)}
@@ -198,11 +207,12 @@ export default function SettingsPage() {
       content: (
         <div className="grid md:grid-cols-2 gap-4">
           <div>
-            <label className="text-xs font-medium text-muted-foreground block mb-1.5">CA Email</label>
+            <label htmlFor="company-caEmail" className="text-xs font-medium text-muted-foreground block mb-1.5">CA Email</label>
             <input
+              id="company-caEmail"
               type="email"
               value={company.caEmail}
-              onChange={e => setCompany(c => ({ ...c, caEmail: e.target.value }))}
+              onChange={e => change("caEmail", e.target.value)}
               className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
             />
           </div>

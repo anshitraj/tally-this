@@ -40,14 +40,20 @@ returned Vercel `NOT_FOUND` at `/`, `/index.html`, `/favicon.svg` and `/app/over
 The authenticated project settings and deployment output were not available to this
 session, so an output mismatch versus a hostname assignment cannot yet be confirmed.
 
-## Connect Railway before enabling real jobs
+## Connect the backend before enabling real jobs
 
 The frontend calls relative `/api` URLs. Set **`BACKEND_ORIGIN`** in Vercel to
-its actual public HTTPS Railway **gateway** origin, without `/api`, for example
-`https://your-actual-gateway.up.railway.app`. `frontend/vercel.mjs` reads this at
-deployment time and inserts the `/api/:path*` proxy before application routes.
-Redeploy after changing the variable. Do not invent a hostname or add backend
-credentials to frontend variables.
+the backend's public HTTPS origin, without `/api`: `https://api.tallythis.xyz`.
+`frontend/vercel.mjs` reads this at deployment time and inserts the `/api/:path*`
+proxy before application routes. Redeploy after changing the variable (it only
+applies to a new deployment). Do not invent a hostname or add backend credentials
+to frontend variables.
+
+Vercel cuts a proxied request at 120 seconds, whatever host answers it. A scanned
+statement that the AI reads for longer than that fails when it goes through the
+website. This is a platform limit, not a bug in TallyThis; the fix (calling the
+backend directly from the browser, or running long reads in the background) is
+planned work.
 
 Leaving `BACKEND_ORIGIN` blank publishes the landing page only; sign-in, uploads,
 live data and exports require the backend. API requests never fall through to HTML.
@@ -55,7 +61,7 @@ Configure backend app/OAuth URLs against the final frontend domain.
 
 The reorganized repository uses **`frontend`** as the Vercel Root Directory.
 Change the old `artifacts/finverify-os` setting when deploying this branch.
-Complete Railway and storage instructions are in [DEPLOYMENT.md](DEPLOYMENT.md).
+Complete backend and storage instructions are in [DEPLOYMENT.md](DEPLOYMENT.md).
 
 References: [Vercel Vite SPA routing](https://vercel.com/docs/frameworks/frontend/vite#using-vite-to-make-spas),
 [shared monorepo sources](https://vercel.com/docs/monorepos/monorepo-faq#can-i-share-source-files-between-projects-are-shared-packages-supported),

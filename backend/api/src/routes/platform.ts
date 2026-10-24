@@ -582,9 +582,10 @@ router.get("/gst-records", requirePermission("risks.read"), async (req, res): Pr
   })));
 });
 
+// Settings pages show the person's own workspace, whichever client is open elsewhere in the app.
 router.get("/audit-logs", requirePermission("settings.manage_company"), async (req, res): Promise<void> => {
   const limit = Math.min(Number(req.query.limit ?? 30), 100);
-  const logs = await db.select().from(auditLogsTable).where(eq(auditLogsTable.companyId, getCompanyId(req))).orderBy(desc(auditLogsTable.createdAt)).limit(limit);
+  const logs = await db.select().from(auditLogsTable).where(eq(auditLogsTable.companyId, req.auth!.companyId)).orderBy(desc(auditLogsTable.createdAt)).limit(limit);
   res.json(logs.map(log => ({
     id: log.id,
     companyId: log.companyId,
@@ -600,7 +601,7 @@ router.get("/audit-logs", requirePermission("settings.manage_company"), async (r
 });
 
 router.get("/security/posture", requirePermission("settings.manage_company"), async (req, res): Promise<void> => {
-  const companyId = getCompanyId(req);
+  const companyId = req.auth!.companyId;
   const users = await db.select().from(usersTable).where(eq(usersTable.companyId, companyId));
   const documents = await db.select().from(documentsTable).where(eq(documentsTable.companyId, companyId));
   const auditLogs = await db.select().from(auditLogsTable).where(eq(auditLogsTable.companyId, companyId)).limit(1);

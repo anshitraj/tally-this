@@ -40,6 +40,8 @@ interface RunInfo {
   counts?: Record<string, number> | null;
   entries?: number;
   matched?: number;
+  /** Items that need a person: everything except matches and rows no invoice is expected for. */
+  attention?: number;
   summary?: { documents?: number; gst?: number; gross?: number; errors?: number } | null;
   platform?: string | null;
   bills?: number;
@@ -120,8 +122,9 @@ function summaryLine(row: HistoryRow) {
       return attention == null ? "" : `${info.counts?.confirmed ?? 0} matched · ${attention} need attention`;
     }
     case "bank_invoice_reconciliation": {
-      const entries = info.entries ?? 0;
-      return `${info.matched ?? 0} matched · ${Math.max(entries - (info.matched ?? 0), 0)} need attention`;
+      // The same count the job screen shows: rows that never have an invoice (salary, cash, tax) are set aside, not "attention".
+      const attention = info.attention ?? Math.max((info.entries ?? 0) - (info.matched ?? 0), 0);
+      return `${info.matched ?? 0} matched · ${attention} need attention`;
     }
     case "gstr_2b_reconciliation": {
       const entries = info.entries ?? 0;

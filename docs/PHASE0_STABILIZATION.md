@@ -2,6 +2,8 @@
 
 24 October 2026. Branch `phase0/stabilize`, built on local `main`.
 
+> **Written when the backend ran on Railway.** Railway has since been replaced by a Google Cloud VM ([GCP_VM_DEPLOYMENT.md](GCP_VM_DEPLOYMENT.md)); wherever this record says "Railway", read "the backend host". The checks and findings below are unchanged.
+
 Aim: close the authorisation, worker and Tally-connector gaps found in the code review, make the screens say only what the product does, and add regression protection. Not in scope and not done: a frontend rewrite, new services, a database change, removing any legacy feature, the Windows companion.
 
 Nothing here was deployed, and no production data was read or changed. Everything below was verified on a development machine; the "Not verified" list is part of the record.

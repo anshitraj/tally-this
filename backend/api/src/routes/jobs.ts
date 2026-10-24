@@ -607,6 +607,7 @@ router.get("/jobs/history", requirePermission("uploads.read"), async (req, res):
                 'counts', ra.json_data->'comparison'->'counts',
                 'entries', jsonb_array_length(COALESCE(ra.json_data->'comparison'->'items', '[]'::jsonb)),
                 'matched', (SELECT count(*) FROM jsonb_array_elements(COALESCE(ra.json_data->'comparison'->'items', '[]'::jsonb)) item WHERE item->>'bucket' IN ('matched', 'confirmed')),
+                'attention', (SELECT count(*) FROM jsonb_array_elements(COALESCE(ra.json_data->'comparison'->'items', '[]'::jsonb)) item WHERE item->>'bucket' NOT IN ('matched', 'confirmed', 'no_invoice_expected')),
                 'summary', ra.json_data->'summary',
                 'platform', ra.json_data->>'platform',
                 'bills', jsonb_array_length(COALESCE(ra.json_data->'bills', '[]'::jsonb)),

@@ -26,7 +26,7 @@ test.describe("setting up a new account", () => {
     await expect(page).toHaveURL(/\/app\/jobs\/bank-to-tally$/);
     await expect(page.getByRole("heading", { name: "Bank Statement → Tally" })).toBeVisible();
     // The chosen client is the one the job works on.
-    await expect(page.getByText("Sharma Traders").filter({ visible: true }).first()).toBeVisible();
+    await expect(page.getByLabel("Client", { exact: true }).locator("option:checked")).toHaveText("Sharma Traders");
     seen.expectNone();
   });
 

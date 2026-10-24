@@ -170,3 +170,27 @@ export const SALARY_SHEET = csv([
   ["E003", "Meena Joshi", "", "", "501000123458", 30, 15000, 6000, 4000, 25000, 1800, 0, 200, 0, 0, 23000],
   ["Total", "", "", "", "", "", 47000, 18800, 14000, 79800, 5040, 149, 600, 1000, 500, 72511],
 ]);
+
+/** A third valid GSTIN (checksum character computed), for a supplier who is in GSTR-2B but not in the books. */
+export const GAMMA_GSTIN = "07AAACG1234E1Z8";
+
+/** October 2026 GSTR-2B as the portal's JSON: two suppliers, each with one invoice. */
+export const GSTR2B_PORTAL_JSON = JSON.stringify({
+  data: {
+    gstin: SELLER_GSTIN,
+    rtnprd: "102026",
+    docdata: {
+      b2b: [
+        { ctin: BUYER_GSTIN, trdnm: "Beta Supplies", inv: [{ inum: "BS-77", dt: "06-10-2026", val: 23600, txval: 20000, igst: 3600, cgst: 0, sgst: 0, cess: 0, itcavl: "Y", rev: "N" }] },
+        { ctin: GAMMA_GSTIN, trdnm: "Gamma Traders", inv: [{ inum: "GX-1", dt: "09-10-2026", val: 11800, txval: 10000, igst: 0, cgst: 900, sgst: 900, cess: 0, itcavl: "Y", rev: "N" }] },
+      ],
+    },
+  },
+});
+
+/** The purchase register: Beta's bill (in GSTR-2B too) and Alpha's (the supplier has not reported it). */
+export const GSTR2B_BOOKS = csv([
+  ["Date", "Supplier Name", "Supplier GSTIN", "Supplier Invoice No.", "Taxable Value", "CGST", "SGST", "IGST", "Invoice Value"],
+  ["06-10-2026", "Beta Supplies", BUYER_GSTIN, "BS-77", 20000, 0, 0, 3600, 23600],
+  ["05-10-2026", "Alpha Traders", SELLER_GSTIN, "INV-001", 10000, 900, 900, 0, 11800],
+]);

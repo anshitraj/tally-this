@@ -36,6 +36,8 @@ export default defineConfig({
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     acceptDownloads: true,
+    // The result counts animate from 0; with reduced motion they show their final value at once.
+    reducedMotion: "reduce",
   },
   projects: [
     { name: "desktop", use: { ...devices["Desktop Chrome"] } },

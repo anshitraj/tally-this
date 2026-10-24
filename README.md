@@ -1,10 +1,11 @@
 # TallyThis
 
 Deployment: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. Frontend source is in
-**`frontend/`** (Vercel Root Directory); Railway services are in **`backend/api/`**,
-**`backend/gateway/`** and **`backend/worker/`**. Shared Neon database schema and
-API types remain in `lib/`. Set `BACKEND_ORIGIN` in Vercel to connect the public
-Railway gateway. Existing Vercel projects must update their old Root Directory.
+**`frontend/`** (Vercel Root Directory); the backend services are in **`backend/api/`**,
+**`backend/gateway/`** and **`backend/worker/`** and run in Docker on one Google Cloud VM
+([runbook](docs/GCP_VM_DEPLOYMENT.md), scripts in `deploy/vm/`). The database schema and its
+migrations are in `lib/db/`. Set `BACKEND_ORIGIN` in Vercel to the backend's HTTPS address
+(`https://api.tallythis.xyz`). Existing Vercel projects must update their old Root Directory.
 
 Support: [contact@tallythis.xyz](mailto:contact@tallythis.xyz). Website domain is pending confirmation (`tally.xyz` versus `tallythis.xyz`); no production DNS or mail service has been provisioned by these code changes.
 

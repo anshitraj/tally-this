@@ -52,12 +52,12 @@ It uses `frontend/` and three `backend/` services, keeps the existing Neon datab
 packages API runtime dependencies, preserves PDFKit font assets, and includes OCR
 tools in the API image. Compose now uses installed Node/Python/wget probes and its
 frontend Nginx configuration has explicit upload/timeout limits. See
-[DEPLOYMENT.md](DEPLOYMENT.md) for Vercel and Railway settings.
+[DEPLOYMENT.md](DEPLOYMENT.md) for the Vercel and Google Cloud settings.
 
 Remaining deployment work:
 
-- Run actual Linux container smoke tests and verify real upload limits through the Vercel/Railway proxy. Local Docker configuration validation does not prove image execution.
-- Keep Railway API and worker private, with only the gateway public. Verify the chosen hosts' ingress configuration.
+- The three images were built and smoke-tested on the Google Cloud VM and the stack answered health checks over HTTPS on 24 October 2026 ([GCP_VM_DEPLOYMENT.md](GCP_VM_DEPLOYMENT.md)). Still to verify: real upload limits through the Vercel proxy (Vercel does not publish the body-size limit for proxied requests) and a real customer flow through the public address.
+- Only Caddy faces the internet; the gateway, API and worker publish no ports. Re-check the firewall after any change to the VM.
 - Development Caddy configuration serves a Vite dev server and localhost. Production must serve built files and the confirmed hostname.
 - Validate Linux native dependencies, frozen-lockfile installs, runtime toolchains, non-root execution, graceful shutdown and deploy rollback. Do not ignore build errors with `|| true`.
 
@@ -151,4 +151,4 @@ Use a staging environment first. Launch only after the applicable P0 items have 
 - [ ] Privacy/terms/retention/provider disclosures and support process approved.
 - [ ] Rollback and incident ownership documented; paid entitlements match actual billing behavior.
 
-Local verification on 9 October: workspace build/typechecks and API workflow/parser tests passed. The bank review, Excel and navigation browser checks passed, including 360px, 390px and 768px layouts. Incognito adds entitlement, expired-plan, retry, cross-tab, account-switch, mode-lock and mobile checks. Live frontend HTTPS and service health are verified; authenticated live workflows, mailbox delivery, restoration, load testing, real bank and marketplace fixtures, Tally import and a full adversarial tenant test suite remain unverified. See [RAILWAY_DEPLOYMENT.md](RAILWAY_DEPLOYMENT.md) for branch versus deployment status, and [PHASE0_STABILIZATION.md](PHASE0_STABILIZATION.md) and [TESTING.md](TESTING.md) for the 24 October Phase 0 checks and what they do not prove.
+Local verification on 9 October: workspace build/typechecks and API workflow/parser tests passed. The bank review, Excel and navigation browser checks passed, including 360px, 390px and 768px layouts. Incognito adds entitlement, expired-plan, retry, cross-tab, account-switch, mode-lock and mobile checks. Live frontend HTTPS and service health are verified; authenticated live workflows, mailbox delivery, restoration, load testing, real bank and marketplace fixtures, Tally import and a full adversarial tenant test suite remain unverified. The backend moved from Railway to Google Cloud on 24 October 2026 ([RAILWAY_DEPLOYMENT.md](RAILWAY_DEPLOYMENT.md) says why). See [PHASE0_STABILIZATION.md](PHASE0_STABILIZATION.md) and [TESTING.md](TESTING.md) for the 24 October Phase 0 checks and what they do not prove.
