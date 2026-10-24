@@ -1,0 +1,2 @@
+# Files that run on Linux must keep LF line endings, even when checked out on Windows.
+/deploy/vm/** text eol=lf

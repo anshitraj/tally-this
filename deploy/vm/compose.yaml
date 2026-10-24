@@ -1,0 +1,145 @@
+# TallyThis on one Google Cloud VM.
+#
+# Only Caddy is reachable from outside (ports 80 and 443). The gateway, the API and the worker talk to each
+# other on this compose network and publish no ports, so nothing but Caddy can be called from the internet.
+#
+# Secrets are not in this file or in any file in the repository. fetch-secrets.sh writes them from Secret
+# Manager into /run/tallythis (memory only) just before the stack starts; each container gets only its own.
+# Settings that are not secret come from /opt/tallythis/runtime.env (see runtime.env.example).
+#
+# The systemd unit runs this with --project-directory pointing at the release folder, so `.` below is the
+# repository root of the release being run.
+name: tallythis
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?set SITE_ADDRESS in runtime.env}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in runtime.env}
+    volumes:
+      - ./deploy/vm/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      gateway:
+        condition: service_healthy
+    mem_limit: 256m
+    logging: *logging
+
+  gateway:
+    build:
+      context: .
+      dockerfile: backend/gateway/Dockerfile
+    image: tallythis-gateway:${RELEASE:-local}
+    restart: unless-stopped
+    env_file:
+      - /run/tallythis/gateway.env
+    environment:
+      APP_ENV: production
+      PORT: "8090"
+      GO_API_PORT: "8090"
+      TYPESCRIPT_API_URL: http://api:8080
+      PYTHON_WORKER_URL: http://worker:8091
+      CORS_ORIGIN: ${APP_ORIGIN:?set APP_ORIGIN in runtime.env}
+    expose:
+      - "8090"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8090/api/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      api:
+        condition: service_healthy
+      worker:
+        condition: service_healthy
+    mem_limit: 512m
+    logging: *logging
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/api/Dockerfile
+    image: tallythis-api:${RELEASE:-local}
+    restart: unless-stopped
+    env_file:
+      - /run/tallythis/api.env
+    environment:
+      NODE_ENV: production
+      APP_ENV: production
+      PORT: "8080"
+      APP_URL: ${APP_ORIGIN:?set APP_ORIGIN in runtime.env}
+      API_PUBLIC_URL: ${APP_ORIGIN}
+      CORS_ORIGIN: ${APP_ORIGIN}
+      SUPPORT_EMAIL: ${SUPPORT_EMAIL:-contact@tallythis.xyz}
+      ALLOW_DEMO_SEED: "false"
+      PYTHON_WORKER_URL: http://worker:8091
+      STORAGE_PROVIDER: r2
+      CLOUDFLARE_R2_ACCOUNT_ID: ${CLOUDFLARE_R2_ACCOUNT_ID:?set CLOUDFLARE_R2_ACCOUNT_ID in runtime.env}
+      CLOUDFLARE_R2_BUCKET: ${CLOUDFLARE_R2_BUCKET:?set CLOUDFLARE_R2_BUCKET in runtime.env}
+      STORAGE_FORCE_PATH_STYLE: ${STORAGE_FORCE_PATH_STYLE:-true}
+      PRIVACY_AI_ALLOWED: ${PRIVACY_AI_ALLOWED:-false}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-60}
+      HISTORY_MONTHS: ${HISTORY_MONTHS:-3}
+      OCR_PAGES_IN_FLIGHT: ${OCR_PAGES_IN_FLIGHT:-3}
+      AI_PROVIDER_ORDER: ${AI_PROVIDER_ORDER:-gemini,claude}
+      # Passed through only when set in runtime.env; left unset in the container otherwise.
+      GEMINI_MODEL:
+      GEMINI_FALLBACK_MODEL:
+      ANTHROPIC_MODEL:
+      ANTHROPIC_WORKSPACE_ID:
+      NEON_AUTH_URL:
+      NEON_JWKS_URL:
+      LEGACY_PASSWORD_LOGIN:
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8080/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      worker:
+        condition: service_healthy
+    mem_limit: 8g
+    logging: *logging
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/worker/Dockerfile
+    image: tallythis-worker:${RELEASE:-local}
+    restart: unless-stopped
+    env_file:
+      - /run/tallythis/worker.env
+    environment:
+      APP_ENV: production
+      PORT: "8091"
+      PYTHON_WORKER_PORT: "8091"
+    expose:
+      - "8091"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8091/health', timeout=5)"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    mem_limit: 2g
+    logging: *logging
+
+volumes:
+  caddy_data:
+  caddy_config:

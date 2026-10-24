@@ -1,0 +1,23 @@
+# Copy this file to config.sh (it is git-ignored) and fill it in. Every script in this folder reads it.
+
+# The Google Cloud project that will hold TallyThis. A project of its own keeps its access, costs and secrets
+# apart from your other work. The ID must be unique across all of Google Cloud.
+PROJECT_ID=tallythis-prod
+
+# The billing account that pays for it (gcloud billing accounts list). Your credits are on one of them.
+BILLING_ACCOUNT=XXXXXX-XXXXXX-XXXXXX
+
+# Singapore, next to the Neon database, so the many small database calls stay fast.
+REGION=asia-southeast1
+ZONE=asia-southeast1-b
+
+VM_NAME=tallythis-1
+# 4 vCPU and 16 GB is plenty for a pilot; change it later by stopping the VM and resizing it.
+MACHINE_TYPE=e2-standard-4
+DISK_GB=100
+
+# The name browsers (through Vercel) use to reach the backend, for example api.tallythis.xyz, with a DNS A record
+# pointing at the VM's address (provision.sh prints it). Until that record exists, use the address written with
+# dashes plus .sslip.io, for example 34-124-1-2.sslip.io, which also gets a real certificate.
+SITE_ADDRESS=api.tallythis.xyz
+ACME_EMAIL=contact@tallythis.xyz
