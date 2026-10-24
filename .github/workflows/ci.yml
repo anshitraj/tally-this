@@ -137,7 +137,8 @@ jobs:
 
   browser:
     name: Browser tests (the server's answers are pretended)
-    runs-on: ubuntu-latest
+    # Playwright does not support the newest Ubuntu image that "ubuntu-latest" now points at, so this job is pinned.
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
