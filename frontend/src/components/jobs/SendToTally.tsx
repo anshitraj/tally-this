@@ -42,8 +42,15 @@ export function SendToTally({
   defaultBankLedger,
   onLedgers,
   onSend,
+  showBankChoices = true,
+  noun = "entry",
+  nounPlural = "entries",
 }: {
   entries: number;
+  /** Bank statements pick a bank and Suspense ledger; other jobs only need the company. */
+  showBankChoices?: boolean;
+  noun?: string;
+  nounPlural?: string;
   /** Why sending is not allowed yet, e.g. items still under review. */
   blockedReason: string | null;
   /** Words that identify the statement's bank ledger in Tally, e.g. ["DBS", "4321"]. */
@@ -136,7 +143,10 @@ export function SendToTally({
             <Choice size="sm" value={company} options={(status?.companies ?? []).map(name => ({ value: name, label: name }))} onChange={setCompany} />
           </div>
           {ledgerError && <Notice tone="warn">{ledgerError} New ledgers will be created where needed.</Notice>}
-          {ledgers && (
+          {ledgers && !showBankChoices && (
+            <p className="text-xs text-muted-foreground">{ledgers.length} ledgers from {company} are available in the ledger lists under More options.</p>
+          )}
+          {ledgers && showBankChoices && (
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="block text-xs font-semibold text-muted-foreground">
                 Bank ledger in Tally
@@ -169,7 +179,7 @@ export function SendToTally({
             </div>
           ) : (
             <button type="button" className="fv-button-primary h-11 px-6" onClick={send} disabled={sending || !company}>
-              {sending ? "Sending to Tally…" : `Send ${entries} ${entries === 1 ? "entry" : "entries"} to ${company || "Tally"}`}
+              {sending ? "Sending to Tally…" : `Send ${entries} ${entries === 1 ? noun : nounPlural} to ${company || "Tally"}`}
             </button>
           )}
         </div>

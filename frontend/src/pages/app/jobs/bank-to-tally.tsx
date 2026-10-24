@@ -118,7 +118,9 @@ export default function BankToTallyPage() {
   const [totalsConfirmed, setTotalsConfirmed] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [resultView, setResultView] = useState<"statement" | "review" | "export">("statement");
-  const [useReviewedLedgers, setUseReviewedLedgers] = useState(false);
+  // Ledgers the rules are sure of, the client used before, or the person confirmed go into every
+  // export; everything else stays in Suspense. Turning this off gives a conversion-only file.
+  const [useReviewedLedgers, setUseReviewedLedgers] = useState(true);
   const [aiReview, setAiReview] = useState(false);
   const [aiMessage, setAiMessage] = useState("");
   const jobVersion = useRef(0);
@@ -172,7 +174,7 @@ export default function BankToTallyPage() {
     setAiReview(false);
     setAiMessage("");
     setSuggesting(false);
-    setUseReviewedLedgers(false);
+    setUseReviewedLedgers(true);
     setFile(picked);
     setStage("working");
     setError("");
@@ -560,7 +562,7 @@ export default function BankToTallyPage() {
     setAiReview(false);
     setAiMessage("");
     setSuggesting(false);
-    setUseReviewedLedgers(false);
+    setUseReviewedLedgers(true);
     setStage("idle");
     setResult(null);
     setFile(null);
