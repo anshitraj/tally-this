@@ -1,10 +1,13 @@
 """Final latency benchmark — post all fixes."""
 import urllib.request, urllib.error, json, time
+import os, sys
 
 BASE_TS = "http://localhost:8080"
 BASE_GO = "http://localhost:8090"
 BASE_PY = "http://localhost:8091"
-TOKEN   = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzaWQiOjExMiwic3ViIjoyMzgsImNpZCI6OTQsImVtYWlsIjoicmFodWxAbm92YXN0YWNrLmluIiwicm9sZSI6ImZvdW5kZXIiLCJpYXQiOjE3ODAzMzgyNjgsImV4cCI6MTc4MDM4MTQ2OH0.w64IsafTkQabZU0BWDGZ0ylwSWdtOKtW5CEdmFsbhC4"
+TOKEN   = os.environ.get("TALLYTHIS_TOKEN", "")
+if not TOKEN:
+    sys.exit("Set TALLYTHIS_TOKEN to a current sign-in token for the local server first.")
 AUTH    = {"Authorization": f"Bearer {TOKEN}"}
 
 def req(url, auth=True, method="GET", data=None, hdrs=None):
