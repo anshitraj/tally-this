@@ -29,6 +29,15 @@ vm() {
   gcloud compute ssh "$VM_NAME" --project "$PROJECT_ID" --zone "$ZONE" --tunnel-through-iap --quiet --command "$1"
 }
 
+# Files are sent with scp: gcloud's SSH client on Windows cannot pass binary data through stdin.
+# (gcloud is a Windows program under Git Bash and needs Windows-style paths.)
+winpath() { cygpath -m "$1" 2>/dev/null || echo "$1"; }
+upload() {
+  gcloud compute scp "$(winpath "$1")" "$VM_NAME:$2" --project "$PROJECT_ID" --zone "$ZONE" --tunnel-through-iap --quiet
+}
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
 echo "== Waiting for the VM to be ready (the first boot installs Docker)"
 ready=0
 for _ in $(seq 1 60); do
@@ -43,11 +52,13 @@ if [ "$ready" -ne 1 ]; then
   exit 1
 fi
 
-echo "== Sending your settings (runtime.env, which holds no secrets)"
-vm 'sudo install -m 600 -o root -g root /dev/stdin /opt/tallythis/runtime.env' < "$here/runtime.env"
+echo "== Sending your settings (runtime.env, which holds no secrets) and release $release (commit $sha)"
+git -C "$root" archive --format=tar.gz -o "$tmp/release.tar.gz" "$ref"
+upload "$here/runtime.env" /tmp/tallythis-runtime.env
+upload "$tmp/release.tar.gz" /tmp/tallythis-release.tar.gz
 
-echo "== Sending release $release (commit $sha)"
-git -C "$root" archive --format=tar.gz "$ref" | vm "sudo /opt/tallythis/bin/receive-release $release"
+echo "== Building and starting it on the VM"
+vm "sudo /opt/tallythis/bin/receive-release $release /tmp/tallythis-release.tar.gz /tmp/tallythis-runtime.env"
 
 echo
 echo "== Running. Try:  curl -sS https://$SITE_ADDRESS/api/health"

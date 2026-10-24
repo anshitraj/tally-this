@@ -22,12 +22,12 @@ BASH = shutil.which("bash")
 pytestmark = pytest.mark.skipif(BASH is None or shutil.which("curl") is None, reason="needs bash and curl")
 
 REQUIRED = {
-    "database-url": "postgresql://app:pw%21@ep-host.neon.tech/neondb?sslmode=require&channel_binding=require",
-    "jwt-secret": "a" * 64,
-    "worker-service-token": "b" * 64,
-    "r2-access-key-id": "r2id123",
-    "r2-secret-access-key": "r2secret456",
-    "gemini-api-key": "AIzaFakeKeyForTests_-123",
+    "tallythis-database-url": "postgresql://app:pw%21@ep-host.neon.tech/neondb?sslmode=require&channel_binding=require",
+    "tallythis-jwt-secret": "a" * 64,
+    "tallythis-worker-service-token": "b" * 64,
+    "tallythis-r2-access-key-id": "r2id123",
+    "tallythis-r2-secret-access-key": "r2secret456",
+    "tallythis-gemini-api-key": "AIzaFakeKeyForTests_-123",
 }
 
 
@@ -127,20 +127,20 @@ def test_each_container_gets_only_the_secrets_it_uses(google):
     }, "the optional Anthropic key is absent when it has no value"
     assert set(worker) == {"WORKER_SERVICE_TOKEN"}, "the worker must not receive the database or any API key"
 
-    assert api["DATABASE_URL"] == REQUIRED["database-url"], "special characters in the value are kept exactly"
+    assert api["DATABASE_URL"] == REQUIRED["tallythis-database-url"], "special characters in the value are kept exactly"
     assert api["WORKER_SERVICE_TOKEN"] == worker["WORKER_SERVICE_TOKEN"], "API and worker must share the token"
     assert gateway["JWT_SECRET"] == api["JWT_SECRET"], "API and gateway must share the signing secret"
 
 
 def test_an_optional_secret_is_included_once_it_has_a_value(google):
     handler, url = google
-    handler.secrets["anthropic-api-key"] = "sk-ant-test-0123456789"
+    handler.secrets["tallythis-anthropic-api-key"] = "sk-ant-test-0123456789"
     result, out = run_script(url)
     assert result.returncode == 0, result.stderr
     assert read_env(out, "api.env")["ANTHROPIC_API_KEY"] == "sk-ant-test-0123456789"
 
 
-@pytest.mark.parametrize("missing", ["database-url", "jwt-secret", "worker-service-token", "r2-secret-access-key", "gemini-api-key"])
+@pytest.mark.parametrize("missing", ["tallythis-database-url", "tallythis-jwt-secret", "tallythis-worker-service-token", "tallythis-r2-secret-access-key", "tallythis-gemini-api-key"])
 def test_a_missing_required_secret_stops_the_start_and_names_it(google, missing):
     handler, url = google
     del handler.secrets[missing]
@@ -152,19 +152,19 @@ def test_a_missing_required_secret_stops_the_start_and_names_it(google, missing)
 
 def test_a_secret_the_vm_may_not_read_stops_the_start(google):
     handler, url = google
-    handler.denied.add("jwt-secret")
+    handler.denied.add("tallythis-jwt-secret")
     result, _ = run_script(url)
     assert result.returncode != 0
-    assert "jwt-secret" in result.stderr
+    assert "tallythis-jwt-secret" in result.stderr
 
 
 @pytest.mark.parametrize("bad", ["has space", 'has"quote', "has'quote", "has$dollar", "has\\backslash", "has`tick"])
 def test_a_value_a_container_env_file_cannot_carry_is_refused_not_damaged(google, bad):
     handler, url = google
-    handler.secrets["gemini-api-key"] = bad
+    handler.secrets["tallythis-gemini-api-key"] = bad
     result, out = run_script(url)
     assert result.returncode != 0
-    assert "gemini-api-key" in result.stderr
+    assert "tallythis-gemini-api-key" in result.stderr
     assert bad not in result.stderr, "the value itself must never be printed"
     leaked = (out / "api.env").read_text() if (out / "api.env").exists() else ""
     assert bad not in leaked

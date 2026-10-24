@@ -6,7 +6,7 @@
 #   bash deploy/vm/set-secrets.sh --rotate     also make new random values for the two internal secrets
 #                                              (this signs everyone out)
 #
-# The two internal secrets (jwt-secret, worker-service-token) are made here, at random, the first time. Use only
+# The two internal secrets (tallythis-jwt-secret, tallythis-worker-service-token) are made here, at random, the first time. Use only
 # NEW keys: anything that was ever stored in Railway should be treated as exposed (see docs/GCP_VM_DEPLOYMENT.md).
 set -euo pipefail
 
@@ -28,7 +28,7 @@ safe_value() {
 }
 
 echo "Internal secrets"
-for name in jwt-secret worker-service-token; do
+for name in tallythis-jwt-secret tallythis-worker-service-token; do
   if [ "$rotate" -eq 1 ] || ! has_value "$name"; then
     openssl rand -hex 32 | gc secrets versions add "$name" --data-file=- >/dev/null
     echo "  $name: new random value stored"
@@ -57,14 +57,14 @@ ask() { # ask <secret-name> <what to paste>
 
 echo
 echo "Third-party secrets: use the NEW values you made after rotating the old ones."
-ask database-url "Neon connection string for the application (postgresql://...)"
-ask r2-access-key-id "Cloudflare R2 access key ID"
-ask r2-secret-access-key "Cloudflare R2 secret access key"
-ask gemini-api-key "Gemini API key"
-ask anthropic-api-key "Anthropic API key (optional)"
+ask tallythis-database-url "Neon connection string for the application (postgresql://...)"
+ask tallythis-r2-access-key-id "Cloudflare R2 access key ID"
+ask tallythis-r2-secret-access-key "Cloudflare R2 secret access key"
+ask tallythis-gemini-api-key "Gemini API key"
+ask tallythis-anthropic-api-key "Anthropic API key (optional)"
 
 echo
-for name in database-url jwt-secret worker-service-token r2-access-key-id r2-secret-access-key gemini-api-key; do
+for name in tallythis-database-url tallythis-jwt-secret tallythis-worker-service-token tallythis-r2-access-key-id tallythis-r2-secret-access-key tallythis-gemini-api-key; do
   if has_value "$name"; then echo "  ok       $name"; else echo "  MISSING  $name (required)"; fi
 done
-if has_value anthropic-api-key; then echo "  ok       anthropic-api-key"; else echo "  not set  anthropic-api-key (optional)"; fi
+if has_value tallythis-anthropic-api-key; then echo "  ok       tallythis-anthropic-api-key"; else echo "  not set  tallythis-anthropic-api-key (optional)"; fi

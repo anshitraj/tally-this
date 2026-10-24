@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# Creates everything TallyThis needs in Google Cloud: a project of its own, a private network, one VM with only
-# web ports open to the world, a service account that can read only its own secrets, the (empty) secrets, and a
-# daily disk snapshot. Safe to run again: every step checks first.
+# Creates everything TallyThis needs in a Google Cloud project: a private network of its own, one VM with only web
+# ports open to the world, a service account that can read only TallyThis's own secrets, the (empty) secrets, and
+# a daily disk snapshot. Everything it makes is named tallythis-*, so it can share a project with other work
+# without touching it. Safe to run again: every step checks first.
 #
 # Run from Git Bash, after `gcloud auth login` and after copying config.sh.example to config.sh.
 #   bash deploy/vm/provision.sh
+# The project must already exist and be billed. To have this script create a new one, run it with CREATE_PROJECT=1
+# (a billing account only allows a limited number of projects, so linking a new one can be refused).
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -23,19 +26,29 @@ SA_NAME=tallythis-vm
 SA="$SA_NAME@$PROJECT_ID.iam.gserviceaccount.com"
 
 # Secrets the VM may read. Third-party credentials are added by set-secrets.sh; the two internal ones are
-# generated there too (never shown).
-SECRETS=(database-url jwt-secret worker-service-token r2-access-key-id r2-secret-access-key gemini-api-key anthropic-api-key)
+# generated there too (never shown). The prefix keeps them apart from anything else in a shared project.
+SECRETS=(
+  tallythis-database-url tallythis-jwt-secret tallythis-worker-service-token
+  tallythis-r2-access-key-id tallythis-r2-secret-access-key tallythis-gemini-api-key tallythis-anthropic-api-key
+)
 
 say "Project $PROJECT_ID"
-if ! exists gcloud projects describe "$PROJECT_ID"; then
+if exists gcloud projects describe "$PROJECT_ID"; then
+  echo "found"
+elif [ "${CREATE_PROJECT:-0}" = 1 ]; then
   gcloud projects create "$PROJECT_ID" --name="TallyThis"
 else
-  echo "already exists"
+  echo "Project $PROJECT_ID was not found. Check PROJECT_ID in config.sh, or run with CREATE_PROJECT=1 to make it." >&2
+  exit 1
 fi
 
-say "Billing account $BILLING_ACCOUNT"
-gcloud billing projects link "$PROJECT_ID" --billing-account="$BILLING_ACCOUNT" >/dev/null
-echo "linked"
+say "Billing"
+if [ "$(gcloud billing projects describe "$PROJECT_ID" --format='value(billingEnabled)' 2>/dev/null)" = "True" ]; then
+  echo "already billed"
+else
+  gcloud billing projects link "$PROJECT_ID" --billing-account="$BILLING_ACCOUNT" >/dev/null
+  echo "linked to $BILLING_ACCOUNT"
+fi
 
 say "Turning on the services used"
 gc services enable \
@@ -93,7 +106,8 @@ if ! exists gc compute instances describe "$VM_NAME" --zone "$ZONE"; then
     --metadata=enable-oslogin=TRUE --metadata-from-file=startup-script="$startup_script" \
     --deletion-protection
 else
-  echo "already exists"
+  echo "already exists; refreshing its startup script so it matches this checkout"
+  gc compute instances add-metadata "$VM_NAME" --zone "$ZONE" --metadata-from-file=startup-script="$startup_script"
 fi
 
 say "Daily disk snapshot, kept 14 days"

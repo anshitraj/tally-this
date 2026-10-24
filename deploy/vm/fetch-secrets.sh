@@ -71,20 +71,20 @@ build_env() {
 }
 
 build_env gateway.env \
-  DATABASE_URL=database-url \
-  JWT_SECRET=jwt-secret
+  DATABASE_URL=tallythis-database-url \
+  JWT_SECRET=tallythis-jwt-secret
 
 build_env api.env \
-  DATABASE_URL=database-url \
-  JWT_SECRET=jwt-secret \
-  WORKER_SERVICE_TOKEN=worker-service-token \
-  CLOUDFLARE_R2_ACCESS_KEY_ID=r2-access-key-id \
-  CLOUDFLARE_R2_SECRET_ACCESS_KEY=r2-secret-access-key \
-  GEMINI_API_KEY=gemini-api-key \
-  ANTHROPIC_API_KEY=anthropic-api-key:optional
+  DATABASE_URL=tallythis-database-url \
+  JWT_SECRET=tallythis-jwt-secret \
+  WORKER_SERVICE_TOKEN=tallythis-worker-service-token \
+  CLOUDFLARE_R2_ACCESS_KEY_ID=tallythis-r2-access-key-id \
+  CLOUDFLARE_R2_SECRET_ACCESS_KEY=tallythis-r2-secret-access-key \
+  GEMINI_API_KEY=tallythis-gemini-api-key \
+  ANTHROPIC_API_KEY=tallythis-anthropic-api-key:optional
 
 build_env worker.env \
-  WORKER_SERVICE_TOKEN=worker-service-token
+  WORKER_SERVICE_TOKEN=tallythis-worker-service-token
 
 chmod 600 "$OUT"/*.env
 if [ "$failed" -ne 0 ]; then

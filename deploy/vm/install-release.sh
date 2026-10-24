@@ -67,7 +67,9 @@ if [ "$ok" -ne 1 ]; then
     switch_to "$previous"
     systemctl restart tallythis || true
   else
-    echo "== There is no previous release to go back to." >&2
+    # Nothing to go back to: stop the service so it does not keep retrying (and asking Secret Manager) in a loop.
+    echo "== There is no previous release to go back to; stopping the service. After fixing the cause run: sudo systemctl start tallythis" >&2
+    systemctl stop tallythis || true
   fi
   exit 1
 fi
