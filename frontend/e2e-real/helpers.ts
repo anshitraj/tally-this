@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 
 export const PASSWORD = "Test-passw0rd-1";
 
@@ -101,6 +101,32 @@ export async function api(page: Page, method: "GET" | "POST" | "PATCH" | "DELETE
     // not JSON
   }
   return { status: response.status(), json, text };
+}
+
+/**
+ * The text of a headline number once it has stopped changing. The big counts on a result start at 0 and count up, so a
+ * check that passes on the first matching frame can pass on a number that is still on its way to a different final value.
+ */
+export async function settledText(locator: Locator, quietMs = 700): Promise<string> {
+  let last = "";
+  let changedAt = Date.now();
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    const text = ((await locator.first().textContent({ timeout: 5_000 }).catch(() => null)) ?? "").trim();
+    if (text !== last) {
+      last = text;
+      changedAt = Date.now();
+    } else if (text !== "" && Date.now() - changedAt >= quietMs) {
+      return text;
+    }
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  return last;
+}
+
+/** The count above a label such as "matched" or "need attention", read once it has settled. */
+export function statValue(page: Page, label: string): Promise<string> {
+  return settledText(page.getByText(label, { exact: true }).locator("xpath=preceding-sibling::*[1]"));
 }
 
 /** The page has no sideways scroll: nothing is cut off on a narrow screen. */

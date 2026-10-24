@@ -124,3 +124,49 @@ export function mayTallyRows(): TallyRow[] {
   rows.push(EXTRA_IN_TALLY);
   return rows;
 }
+
+// ── Books jobs ──────────────────────────────────────────────────────────────
+
+/** Valid GSTINs (the checksum character is right), the same ones the API's unit tests use. */
+export const SELLER_GSTIN = "27AAPFU0939F1ZV";
+export const BUYER_GSTIN = "29AABCT1332L1ZA";
+
+const csv = (rows: Array<Array<string | number>>) => rows.map(row => row.join(",")).join("\n") + "\n";
+
+/** October 2026 sales register: 6 sales and a credit note. See the hand-worked answers in books-jobs.spec.ts. */
+export const SALES_REGISTER = csv([
+  ["Demo Co"],
+  [`GSTIN/UIN: ${SELLER_GSTIN}`],
+  ["Date", "Particulars", "Voucher Type", "Voucher No.", "GSTIN/UIN", "Place of Supply", "Taxable Value", "IGST", "CGST", "SGST", "Gross Total"],
+  ["02-10-2026", "Buyer One Pvt Ltd", "Sales", "S-001", BUYER_GSTIN, "Karnataka", 100000, 18000, 0, 0, 118000],
+  ["03-10-2026", "Local Buyer", "Sales", "S-002", "", "Maharashtra", 5000, 0, 450, 450, 5900],
+  ["04-10-2026", "Local Buyer 2", "Sales", "S-003", "", "Maharashtra", 2000, 0, 180, 180, 2360],
+  ["05-10-2026", "Delhi Walk-in", "Sales", "S-004", "", "Delhi", 150000, 27000, 0, 0, 177000],
+  ["06-10-2026", "Delhi Small", "Sales", "S-005", "", "Delhi", 40000, 7200, 0, 0, 47200],
+  ["07-10-2026", "Buyer One Pvt Ltd", "Credit Note", "CN-001", BUYER_GSTIN, "Karnataka", 10000, 1800, 0, 0, 11800],
+  ["08-10-2026", "Exempt Goods Buyer", "Sales", "S-006", "", "Maharashtra", 3000, 0, 0, 0, 3000],
+]);
+
+/** A purchase list: two clean bills, and one whose total does not add up. */
+export const PURCHASE_LIST = csv([
+  ["Date", "Supplier Name", "Supplier GSTIN", "Supplier Invoice No.", "Taxable Value", "CGST", "SGST", "IGST", "Invoice Value"],
+  ["05-10-2026", "Alpha Traders", SELLER_GSTIN, "INV-001", 10000, 900, 900, 0, 11800],
+  ["06-10-2026", "Beta Supplies", BUYER_GSTIN, "BS-77", 20000, 0, 0, 3600, 23600],
+]);
+export const PURCHASE_LIST_WITH_ERROR = csv([
+  ["Date", "Supplier Name", "Supplier GSTIN", "Supplier Invoice No.", "Taxable Value", "CGST", "SGST", "IGST", "Invoice Value"],
+  ["05-10-2026", "Alpha Traders", SELLER_GSTIN, "INV-001", 10000, 900, 900, 0, 11800],
+  ["06-10-2026", "Beta Supplies", BUYER_GSTIN, "BS-77", 20000, 0, 0, 3600, 25000],
+]);
+
+/** A salary register for October 2026 with three employees. Each row adds up; Meena has PF but no UAN. */
+export const SALARY_SHEET = csv([
+  ["Sunrise Traders Pvt Ltd"],
+  ["Salary register for the month of October 2026"],
+  [""],
+  ["Emp Code", "Employee Name", "UAN", "PAN", "Bank A/c No", "Paid Days", "Basic", "HRA", "Special Allowance", "Gross", "PF", "ESI", "Professional Tax", "TDS", "Loan Recovery", "Net Pay"],
+  ["E001", "Anita Rao", "100200300401", "ABCDE1234F", "501000123456", 31, 20000, 8000, 7000, 35000, 1800, 0, 200, 1000, 0, 32000],
+  ["E002", "Ravi Kumar", "100200300402", "ABCDE1234G", "501000123457", 31, 12000, 4800, 3000, 19800, 1440, 149, 200, 0, 500, 17511],
+  ["E003", "Meena Joshi", "", "", "501000123458", 30, 15000, 6000, 4000, 25000, 1800, 0, 200, 0, 0, 23000],
+  ["Total", "", "", "", "", "", 47000, 18800, 14000, 79800, 5040, 149, 600, 1000, 500, 72511],
+]);

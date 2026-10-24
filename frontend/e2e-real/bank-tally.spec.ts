@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { EXTRA_IN_TALLY, MAY_ROWS, MAY_STATEMENT, MISSING_FROM_TALLY, mayTallyRows, tallyCsv } from "./data";
 import { parseCsv, savedDownload } from "./files";
-import { signedUpAccount, watchProblems } from "./helpers";
+import { signedUpAccount, statValue, watchProblems } from "./helpers";
 
 /**
  * Bank ↔ Tally against the real backend. The Tally file is the bank statement's own rows minus three the books are
@@ -29,8 +29,6 @@ async function uploadBoth(page: Page, bankCsv: string, tally: string) {
   await inputs.nth(1).setInputFiles({ name: "tally-daybook-may-2026.csv", mimeType: "text/csv", buffer: Buffer.from(tally) });
 }
 
-const stat = (page: Page, label: string) => page.getByText(label, { exact: true }).locator("xpath=preceding-sibling::*[1]");
-
 async function reportRows(page: Page) {
   const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Download Report" }).first().click()]);
   const rows = parseCsv((await savedDownload(download)).bytes.toString("utf8"));
@@ -45,8 +43,8 @@ test.describe("Bank ↔ Tally", () => {
     await openJob(page);
     await uploadBoth(page, MAY_STATEMENT.csv, tallyCsv(mayTallyRows()));
 
-    await expect(stat(page, "matched")).toHaveText(String(CONFIRMED));
-    await expect(stat(page, "need attention")).toHaveText(String(ATTENTION));
+    expect(await statValue(page, "matched")).toBe(String(CONFIRMED));
+    expect(await statValue(page, "need attention")).toBe(String(ATTENTION));
     await page.getByRole("button", { name: `Review ${ATTENTION} items` }).click();
     const review = page.getByText("Review", { exact: true }).locator("xpath=ancestor::section[1]");
     for (const row of [...missing, ...withoutReference]) {
@@ -60,7 +58,7 @@ test.describe("Bank ↔ Tally", () => {
     await signedUpAccount(page, "bt-report", "Report Client");
     await openJob(page);
     await uploadBoth(page, MAY_STATEMENT.csv, tallyCsv(mayTallyRows()));
-    await expect(stat(page, "matched")).toHaveText(String(CONFIRMED));
+    expect(await statValue(page, "matched")).toBe(String(CONFIRMED));
 
     const rows = await reportRows(page);
     const matched = rows.filter(row => row.decision === "Matched");
@@ -84,7 +82,7 @@ test.describe("Bank ↔ Tally", () => {
     await signedUpAccount(page, "bt-decide", "Decide Client");
     await openJob(page);
     await uploadBoth(page, MAY_STATEMENT.csv, tallyCsv(mayTallyRows()));
-    await expect(stat(page, "need attention")).toHaveText(String(ATTENTION));
+    expect(await statValue(page, "need attention")).toBe(String(ATTENTION));
     await page.getByRole("button", { name: `Review ${ATTENTION} items` }).click();
 
     // Settle the one row that exists only in Tally.
@@ -104,8 +102,8 @@ test.describe("Bank ↔ Tally", () => {
       { date: "09/05/2026", particulars: "Another Party", type: "Receipt", number: "RCP-2", credit: 2222.22, narration: "unrelated" },
     ]);
     await uploadBoth(page, MAY_STATEMENT.csv, unrelated);
-    await expect(stat(page, "matched")).toHaveText("0");
-    await expect(stat(page, "need attention")).toHaveText(String(MAY_ROWS.length + 2));
+    expect(await statValue(page, "matched")).toBe("0");
+    expect(await statValue(page, "need attention")).toBe(String(MAY_ROWS.length + 2));
   });
 
   test("the same amount on the same day, with no shared reference, is only a suggestion", async ({ page }) => {
@@ -114,7 +112,7 @@ test.describe("Bank ↔ Tally", () => {
     // One Tally entry with the amount and day of the ACME payment but a different party and no reference.
     const tally = tallyCsv([{ date: "01/05/2026", particulars: "Different Vendor", type: "Payment", number: "PMT-X", debit: 5000, narration: "misc" }]);
     await uploadBoth(page, MAY_STATEMENT.csv, tally);
-    await expect(stat(page, "matched")).toHaveText("0");
-    await expect(stat(page, "need attention")).toHaveText(String(MAY_ROWS.length));
+    expect(await statValue(page, "matched")).toBe("0");
+    expect(await statValue(page, "need attention")).toBe(String(MAY_ROWS.length));
   });
 });
