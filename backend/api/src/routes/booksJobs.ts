@@ -31,6 +31,7 @@ import {
   type CheckedBill,
 } from "../services/purchaseBills";
 import { sendVouchersToTally } from "../services/tallyPush";
+import { liveTallyBlocked } from "../services/tallyTarget";
 import { buildGstr1, readSalesRegister, type Gstr1Result } from "../services/salesRegister";
 import { buildGstr3b, itcFromGstr2b, type ItcBasis, type ItcSource, type ThreeBAdjustments } from "../services/gstr3b";
 import { buildReturnWorkbook } from "../services/gstReturnWorkbook";
@@ -459,6 +460,11 @@ router.post("/jobs/bills/xml", requirePermission("uploads.create"), async (req, 
 router.post("/jobs/bills/send", requirePermission("uploads.create"), async (req, res): Promise<void> => {
   const companyId = await resolveBooksCompanyId(req, res);
   if (companyId == null) return;
+  const off = liveTallyBlocked();
+  if (off) {
+    res.status(409).json({ ok: false, message: off });
+    return;
+  }
   const gate = await privacyGate(req, res);
   if (!gate) return;
   const output = billsOutput(req.body);
@@ -888,6 +894,11 @@ router.post("/jobs/payroll/journal", requirePermission("uploads.create"), async 
 router.post("/jobs/payroll/send", requirePermission("uploads.create"), async (req, res): Promise<void> => {
   const companyId = await resolveBooksCompanyId(req, res);
   if (companyId == null) return;
+  const off = liveTallyBlocked();
+  if (off) {
+    res.status(409).json({ ok: false, message: off });
+    return;
+  }
   const gate = await privacyGate(req, res);
   if (!gate) return;
   const parsed = journalSchema.safeParse(req.body);

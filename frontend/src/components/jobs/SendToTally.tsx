@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, Loader2, Plug } from "lucide-react";
 import { Choice, Notice, getJson } from "@/components/jobs/jobUi";
+import { useLiveTally } from "@/lib/liveTally";
 
 export interface TallySendResult {
   ok: boolean;
@@ -61,6 +62,7 @@ export function SendToTally({
   onLedgers: (names: string[]) => void;
   onSend: (tallyCompany: string, choices: TallyChoices) => Promise<TallySendResult>;
 }) {
+  const live = useLiveTally();
   const [checking, setChecking] = useState(false);
   const [status, setStatus] = useState<TallyStatus | null>(null);
   const [company, setCompany] = useState("");
@@ -117,11 +119,24 @@ export function SendToTally({
   // Entries may already be in Tally when some were created or Tally never confirmed either way.
   const sentBefore = Boolean(result && ((result.created ?? 0) > 0 || (result.created == null && !result.errors?.length)));
 
+  // The hosted site cannot reach the accountant's own TallyPrime. Say so, and point to the file that does work.
+  if (live.checked && !live.available) {
+    return (
+      <div className="space-y-1">
+        <div className="flex items-center gap-2 text-sm font-semibold"><Plug className="h-4 w-4" />Sending straight to Tally is not available on this site</div>
+        <p className="text-xs text-muted-foreground">
+          {live.message || "It only works when TallyThis runs on the same computer as TallyPrime."} In Tally: open the company → Import → Vouchers → choose the downloaded file.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-3">
       <div>
-        <div className="flex items-center gap-2 text-sm font-semibold"><Plug className="h-4 w-4" />Send straight to Tally</div>
+        <div className="flex items-center gap-2 text-sm font-semibold"><Plug className="h-4 w-4" />Send straight to Tally <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-900">Experimental</span></div>
         <p className="mt-1 text-xs text-muted-foreground">
+          Tried with sample data only, not yet with a live TallyPrime. The downloaded Tally file is the safer route.
           Works when TallyPrime is open on this computer with F1 Help → Settings → Connectivity → TallyPrime acts as: Server (port 9000).
           Back up the Tally company first.
         </p>

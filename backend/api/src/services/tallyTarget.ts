@@ -28,6 +28,15 @@ function items(value: string | undefined) {
   return (value ?? "").split(",").map(part => part.trim().toLowerCase()).filter(Boolean);
 }
 
+/** Why a live Tally feature is not offered here. Shown to the person as it is. */
+export const LIVE_TALLY_OFF =
+  "Sending straight to Tally only works when TallyThis runs on the same computer as TallyPrime. On this site, download the Tally XML file and import it in Tally instead.";
+
+/** The message to show when live Tally features are off for this server, or null when they are on. */
+export function liveTallyBlocked(env: Env = process.env): string | null {
+  return tallyConnectorEnabled(env) ? null : LIVE_TALLY_OFF;
+}
+
 export function tallyConnectorEnabled(env: Env = process.env): boolean {
   const flag = (env.TALLY_CONNECTOR_ENABLED ?? "").trim().toLowerCase();
   if (["1", "true", "yes", "on"].includes(flag)) return true;

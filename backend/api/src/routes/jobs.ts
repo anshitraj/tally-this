@@ -15,6 +15,7 @@ import { resolveBooksCompanyId } from "../services/companyScope";
 import { parseBankStatement, unifyParties, type BankStatementSummary, type NormalizedBankTxn } from "../services/bankStatement";
 import { buildTallyVoucherXml, LEDGER_OPTIONS, suggestLedger, type LedgerMapping, type TallyBankTxn, type TallyXmlInput } from "../services/tallyVoucherXml";
 import { sendVouchersToTally, tallyLedgers, tallyStatus } from "../services/tallyPush";
+import { liveTallyBlocked } from "../services/tallyTarget";
 import { applyDecision, compareBankWithTally, parseTallyLedgerCsv, type ReviewStatus } from "../services/statementCompare";
 import { buildGstDraftJson, mergeEcommercePacks, normalizeMarketplaceCsv, salesToCsv, type EcommercePack, type MarketplacePlatform } from "../services/ecommerceGst";
 import { compareInvoicesWithBank, parseInvoiceCsv, type InvoiceRow } from "../services/invoiceVerify";
@@ -290,13 +291,29 @@ function bankTallyInput(req: Request): TallyXmlInput {
 router.get("/jobs/tally/status", requirePermission("uploads.read"), async (req, res): Promise<void> => {
   const companyId = await resolveBooksCompanyId(req, res);
   if (companyId == null) return;
-  res.json({ ok: true, ...(await tallyStatus()) });
+  // A cloud server cannot reach the accountant's own TallyPrime, so the feature is not offered there.
+  const off = liveTallyBlocked();
+  if (off) {
+    res.json({ ok: true, available: false, running: false, companies: [], message: off });
+    return;
+  }
+  // ?check=0 only asks whether the feature is offered, without contacting Tally.
+  if (req.query.check === "0") {
+    res.json({ ok: true, available: true });
+    return;
+  }
+  res.json({ ok: true, available: true, ...(await tallyStatus()) });
 });
 
 // The ledgers already in a Tally company, for mapping rows, the bank and Suspense to real names.
 router.get("/jobs/tally/ledgers", requirePermission("uploads.read"), async (req, res): Promise<void> => {
   const companyId = await resolveBooksCompanyId(req, res);
   if (companyId == null) return;
+  const off = liveTallyBlocked();
+  if (off) {
+    res.status(409).json({ ok: false, message: off });
+    return;
+  }
   const company = typeof req.query.company === "string" ? req.query.company.trim().slice(0, 200) : "";
   if (!company) {
     res.status(400).json({ ok: false, message: "Choose the Tally company first." });
@@ -313,6 +330,11 @@ router.get("/jobs/tally/ledgers", requirePermission("uploads.read"), async (req,
 router.post("/jobs/bank-to-tally/send", requirePermission("uploads.create"), async (req, res): Promise<void> => {
   const companyId = await resolveBooksCompanyId(req, res);
   if (companyId == null) return;
+  const off = liveTallyBlocked();
+  if (off) {
+    res.status(409).json({ ok: false, message: off });
+    return;
+  }
   const gate = await privacyGate(req, res);
   if (!gate) return;
   const input = bankTallyInput(req);
