@@ -1,19 +1,24 @@
 import "./env";
-import { neon, neonConfig } from "@neondatabase/serverless";
-import { drizzle } from "drizzle-orm/neon-http";
+import { neon } from "@neondatabase/serverless";
+import { drizzle, type NeonHttpDatabase } from "drizzle-orm/neon-http";
+import { drizzle as drizzleNodePostgres } from "drizzle-orm/node-postgres";
+import pg from "pg";
 import * as schema from "./schema";
+import { isLoopbackDatabaseUrl } from "./driver";
 
-// ── Neon Serverless HTTP Driver ───────────────────────────────────────────
-// Uses HTTP/1.1 instead of TCP+TLS to reach Neon. Eliminates the 1.5-2.5s
-// cold-start TCP handshake on Neon's serverless tier.
-// Benchmark: cold-start ~50-200ms vs ~2000ms with node-postgres pool.
+// ── Which driver ───────────────────────────────────────────────────────────
+// The real database (Neon) is reached over HTTP/1.1 instead of TCP+TLS. That removes the 1.5-2.5s
+// cold-start handshake of a pooled connection (~50-200ms vs ~2000ms with node-postgres).
 //
-// Trade-offs vs pg Pool:
+// A database on this computer (localhost, 127.0.0.1, ::1) is a plain Postgres that the HTTP driver
+// cannot talk to. Tests and local checks use it, with the normal driver. Only a loopback host
+// qualifies, so a real database is never reached by the plain driver by mistake.
+//
+// Trade-offs of the HTTP driver:
 //   ✓ No cold start             — HTTP keep-alive is handled by the edge
 //   ✓ No pool management needed — each query is a self-contained HTTP request
-//   ✓ Works great for serverless deployments
-//   ✗ Can't use pool.connect()  — use db.transaction() instead
-//   ✗ Not suitable for long-running queries >30s (use node-postgres for those)
+//   ✗ No interactive transactions
+//   ✗ Not suitable for long-running queries >30s
 
 if (!process.env.DATABASE_URL) {
   throw new Error(
@@ -21,32 +26,42 @@ if (!process.env.DATABASE_URL) {
   );
 }
 
-// fetchConnectionCache is now always true in @neondatabase/serverless v1+
-// (setting it explicitly generates a deprecation warning)
+const connectionString = process.env.DATABASE_URL;
+const onThisComputer = isLoopbackDatabaseUrl(connectionString);
 
-const sql = neon(process.env.DATABASE_URL);
+// The API only uses what both drivers share, so the plain driver is typed as the HTTP one.
+type Database = NeonHttpDatabase<typeof schema>;
 
-export const db = drizzle(sql, { schema });
+const localPool = onThisComputer ? new pg.Pool({ connectionString }) : null;
+const sql = onThisComputer ? null : neon(connectionString);
+
+export const db: Database = localPool
+  ? (drizzleNodePostgres(localPool, { schema }) as unknown as Database)
+  : drizzle(sql!, { schema });
 
 // ── Backward-compat shim ──────────────────────────────────────────────────
 // `pool` was exported by the old pg-based driver and is referenced in:
 //   - backend/api/src/index.ts  (keep-alive pinger — no longer needed)
 //   - backend/api/src/server/db/index.ts (re-export)
-// We export a minimal shim so no other file needs to change.
-// The keep-alive pinger in index.ts is safe to leave; the shim's connect()
-// does a real lightweight query and returns a release-able object.
+// We export a minimal shim so no other file needs to change. `query` answers with the rows, as the
+// HTTP driver does.
 export const pool = {
   connect: async () => {
     const release = () => {};
     return {
-      query: async (text: string) => { await sql.query(text); },
+      query: async (text: string) => {
+        if (localPool) await localPool.query(text);
+        else await sql!.query(text);
+      },
       release,
     };
   },
-  end: async () => {},
+  end: async () => {
+    if (localPool) await localPool.end();
+  },
   query: async (text: string, values?: unknown[]) => {
-    if (values) return await sql.query(text, values as any[]);
-    return await sql.query(text);
+    if (localPool) return (await localPool.query(text, values as any[])).rows;
+    return values ? await sql!.query(text, values as any[]) : await sql!.query(text);
   },
   on: () => {},
   totalCount: 0,
@@ -54,4 +69,5 @@ export const pool = {
   waitingCount: 0,
 };
 
+export { isLoopbackDatabaseUrl };
 export * from "./schema";

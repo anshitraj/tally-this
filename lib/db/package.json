@@ -8,6 +8,8 @@
     "./schema": "./src/schema/index.ts"
   },
   "scripts": {
+    "test": "node --test --experimental-strip-types \"src/**/*.test.ts\"",
+    "migrate": "node --experimental-strip-types scripts/migrate.mjs",
     "push": "drizzle-kit push --config ./drizzle.config.ts",
     "push-force": "drizzle-kit push --force --config ./drizzle.config.ts",
     "copy-db": "node scripts/copy-database.mjs",
