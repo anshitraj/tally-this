@@ -15,6 +15,7 @@ import {
   History,
   Hourglass,
   Landmark,
+  LayoutGrid,
   LifeBuoy,
   ListChecks,
   Percent,
@@ -106,6 +107,18 @@ export const SECONDARY_NAV: NavEntry[] = [
 ];
 
 /**
+ * The one side-menu entry that leads to everything else. It opens a page that lists the other jobs and pages in
+ * plain groups, so the menu itself stays at eight short entries instead of listing every page.
+ */
+export const TOOLS_ENTRY: NavEntry = {
+  label: "Advanced",
+  href: "/app/tools",
+  icon: LayoutGrid,
+  keywords: "more tools other jobs pages everything all menu",
+  hint: "Every other job and page, grouped",
+};
+
+/**
  * The fifth job. It is the monthly ITC check every CA does, so Home, search and the client page
  * offer it, while the side menu keeps it under Advanced to stay at four everyday jobs.
  */
@@ -147,7 +160,7 @@ export const PAYROLL_JOB: NavEntry = {
 /** The jobs beyond the four everyday ones. Home and search offer them; the menu keeps them under Advanced. */
 export const MORE_JOBS: NavEntry[] = [BILLS_JOB, GST_SALES_JOB, GST_RECON_JOB, PAYROLL_JOB];
 
-/** Everything else. Shown only when the person opens Advanced. */
+/** Everything else. Listed on the Advanced page (and found by search), never in the side menu itself. */
 export const ADVANCED_GROUPS: NavGroup[] = [
   {
     title: "More jobs",
@@ -336,12 +349,42 @@ export const ADVANCED_GROUPS: NavGroup[] = [
 
 export const ADVANCED_NAV: NavEntry[] = ADVANCED_GROUPS.flatMap(group => group.items);
 
+/**
+ * Pages every signed-in person needs from time to time. They open from the account menu at the bottom of the
+ * side menu, so they do not make the Advanced page the place to look for them.
+ */
+export const ACCOUNT_MENU: NavEntry[] = ["/app/settings", "/app/history", "/app/docs"]
+  .map(href => ADVANCED_NAV.find(item => item.href === href))
+  .filter((entry): entry is NavEntry => Boolean(entry));
+
 export const ALL_NAV: NavEntry[] = [
   ...WORKSPACE_NAV,
   ...JOB_NAV,
   ...SECONDARY_NAV,
+  TOOLS_ENTRY,
   ...ADVANCED_NAV,
 ];
+
+function pathOf(path: string) {
+  return path.split("?")[0];
+}
+
+function owns(entry: NavEntry, path: string) {
+  const clean = pathOf(path);
+  return clean === entry.href || clean.startsWith(`${entry.href}/`);
+}
+
+/** True for the Advanced page and every page that is listed on it (the account-menu pages are not). */
+export function isAdvancedPage(path: string): boolean {
+  if (owns(TOOLS_ENTRY, path)) return true;
+  if (ACCOUNT_MENU.some(entry => owns(entry, path))) return false;
+  return ADVANCED_NAV.some(entry => owns(entry, path));
+}
+
+/** The Advanced entry, for a page that sits under it, so the top bar can offer a way back to the list. */
+export function sectionOf(path: string): NavEntry | undefined {
+  return isAdvancedPage(path) && !owns(TOOLS_ENTRY, path) ? TOOLS_ENTRY : undefined;
+}
 
 /** The entry that owns a path, matching nested paths such as /app/history/12. */
 export function findNav(path: string): NavEntry | undefined {

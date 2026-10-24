@@ -2,20 +2,29 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { AnimatePresence, LayoutGroup, MotionConfig, motion } from "framer-motion";
-import { Building2, ChevronDown, LogOut, Menu, Search, X } from "lucide-react";
+import { Building2, ChevronDown, ChevronsUpDown, LogOut, Menu, Search, X } from "lucide-react";
 import { BrandMark } from "@/components/app/finverify-ui";
 import CommandPalette from "@/components/app/CommandPalette";
 import ErrorBoundary from "@/components/app/ErrorBoundary";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { getUser, logout } from "@/lib/auth";
 import { useClients } from "@/components/jobs/jobUi";
 import {
-  ADVANCED_GROUPS,
-  ADVANCED_NAV,
+  ACCOUNT_MENU,
   JOB_NAV,
   SECONDARY_NAV,
+  TOOLS_ENTRY,
   WORKSPACE_NAV,
   findNav,
+  isAdvancedPage,
   parentOf,
+  sectionOf,
   type NavEntry,
 } from "@/lib/navigation";
 import { cn } from "@/lib/utils";
@@ -121,25 +130,26 @@ function NavItems({
   items,
   location,
   onNavigate,
-  sub = false,
+  isCurrent = isActive,
 }: {
   items: NavEntry[];
   location: string;
   onNavigate: (href: string) => void;
-  sub?: boolean;
+  /** Which entry shows as the current page. Advanced also stands for every page listed on it. */
+  isCurrent?: (location: string, href: string) => boolean;
 }) {
   return (
     <div className="space-y-0.5">
       {items.map(item => {
         const Icon = item.icon;
-        const active = isActive(location, item.href);
+        const active = isCurrent(location, item.href);
         return (
           <button
             key={item.href}
             type="button"
             onClick={() => onNavigate(item.href)}
             aria-current={active ? "page" : undefined}
-            className={cn("fv-app-nav-item", sub && "is-sub", active && "is-active")}
+            className={cn("fv-app-nav-item", active && "is-active")}
           >
             {active && (
               <motion.span
@@ -162,7 +172,6 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const [location, navigate] = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [advancedOpen, setAdvancedOpen] = useState(() => ADVANCED_NAV.some(item => isActive(location, item.href)));
   const mainRef = useRef<HTMLElement>(null);
   // Choosing a page closes the drawer at once; closing it by hand slides it away.
   const [closeAtOnce, setCloseAtOnce] = useState(false);
@@ -170,6 +179,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
   const current = findNav(location);
   const parent = parentOf(location);
+  const section = sectionOf(location);
   const pageName = current?.label || "Workspace";
 
   // A new page starts at its top, and the drawer closes by itself.
@@ -177,7 +187,6 @@ export default function AppShell({ children }: { children: ReactNode }) {
     mainRef.current?.scrollTo({ top: 0 });
     setCloseAtOnce(true);
     setMobileOpen(false);
-    if (ADVANCED_NAV.some(item => isActive(location, item.href))) setAdvancedOpen(true);
   }, [location]);
 
   useEffect(() => {
@@ -230,61 +239,52 @@ export default function AppShell({ children }: { children: ReactNode }) {
           <div className="fv-nav-divider">
             <NavItems items={SECONDARY_NAV} location={location} onNavigate={go} />
           </div>
-          <div className="mt-4">
-            <button
-              type="button"
-              onClick={() => setAdvancedOpen(open => !open)}
-              aria-expanded={advancedOpen}
-              className="fv-app-advanced"
-            >
-              <span className="flex-1 text-left">Advanced</span>
-              <ChevronDown className={cn("h-3.5 w-3.5 transition", advancedOpen && "rotate-180")} />
-            </button>
-            <AnimatePresence initial={false}>
-              {advancedOpen && (
-                <motion.div
-                  key="advanced"
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: "auto", opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: 0.2, ease: "easeOut" }}
-                  style={{ overflow: "hidden" }}
-                >
-                  {ADVANCED_GROUPS.map(section => (
-                    <div key={section.title}>
-                      <div className="fv-nav-subtitle">{section.title}</div>
-                      <NavItems items={section.items} location={location} onNavigate={go} sub />
-                    </div>
-                  ))}
-                </motion.div>
-              )}
-            </AnimatePresence>
+          {/* Everything else is one click away on its own page, not a long list here. */}
+          <div className="fv-nav-divider">
+            <NavItems
+              items={[TOOLS_ENTRY]}
+              location={location}
+              onNavigate={go}
+              isCurrent={(path, href) => isAdvancedPage(path) || isActive(path, href)}
+            />
           </div>
         </nav>
         <div className="fv-sidebar-account">
-          <div className="flex items-center gap-3 rounded-xl px-2 py-1.5">
-            <div className="fv-account-avatar">
-              {user.name
-                .split(" ")
-                .map(part => part[0])
-                .join("")
-                .slice(0, 2)
-                .toUpperCase()}
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-sm font-semibold">{user.name}</div>
-              <div className="fv-account-email truncate">{user.email}</div>
-            </div>
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-              aria-label="Log out"
-              title="Log out"
-            >
-              <LogOut className="h-4 w-4" />
-            </button>
-          </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button type="button" className="fv-account-trigger" aria-label="Account menu">
+                <div className="fv-account-avatar">
+                  {user.name
+                    .split(" ")
+                    .map(part => part[0])
+                    .join("")
+                    .slice(0, 2)
+                    .toUpperCase()}
+                </div>
+                <div className="min-w-0 flex-1 text-left">
+                  <div className="truncate text-sm font-semibold">{user.name}</div>
+                  <div className="fv-account-email truncate">{user.email}</div>
+                </div>
+                <ChevronsUpDown className="h-4 w-4 shrink-0" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="top" align="start" className="w-60">
+              {ACCOUNT_MENU.map(item => {
+                const Icon = item.icon;
+                return (
+                  <DropdownMenuItem key={item.href} onSelect={() => go(item.href)}>
+                    <Icon className="mr-2 h-4 w-4" />
+                    {item.label}
+                  </DropdownMenuItem>
+                );
+              })}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={handleLogout}>
+                <LogOut className="mr-2 h-4 w-4" />
+                Log out
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
     </LayoutGroup>
@@ -356,6 +356,14 @@ export default function AppShell({ children }: { children: ReactNode }) {
               <button type="button" onClick={() => go("/app/overview")}>
                 Workspace
               </button>
+              {section && (
+                <>
+                  <span>/</span>
+                  <button type="button" onClick={() => go(section.href)}>
+                    {section.label}
+                  </button>
+                </>
+              )}
               {parent && (
                 <>
                   <span>/</span>

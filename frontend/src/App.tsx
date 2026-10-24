@@ -37,6 +37,7 @@ const AdminPage = lazy(() => import("@/pages/app/admin"));
 const SettingsPage = lazy(() => import("@/pages/app/settings"));
 const ClientsPage = lazy(() => import("@/pages/app/clients"));
 const ActivityPage = lazy(() => import("@/pages/app/activity"));
+const ToolsPage = lazy(() => import("@/pages/app/tools"));
 const BankToTallyPage = lazy(() => import("@/pages/app/jobs/bank-to-tally"));
 const BankTallyPage = lazy(() => import("@/pages/app/jobs/bank-tally"));
 const EcommerceGstPage = lazy(() => import("@/pages/app/jobs/ecommerce-gst"));
@@ -120,6 +121,7 @@ function AppArea() {
         <Route path="/app/admin" component={AdminPage} />
         <Route path="/app/clients" component={ClientsPage} />
         <Route path="/app/activity" component={ActivityPage} />
+        <Route path="/app/tools" component={ToolsPage} />
         <Route path="/app/history/:id" component={HistoryDetailPage} />
         <Route path="/app/history" component={HistoryPage} />
         <Route path="/app/jobs/bank-to-tally" component={BankToTallyPage} />

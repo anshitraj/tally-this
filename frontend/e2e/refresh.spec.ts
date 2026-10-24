@@ -218,18 +218,14 @@ test("client switching retains navigation to all seven main screens", async ({
       .click();
     await expect(page.getByRole("heading", { level: 1 })).toHaveText(heading);
   }
+  // Advanced is one short entry that opens a page listing everything else, History and Settings included.
   await page
     .locator("aside")
     .getByRole("button", { name: "Advanced", exact: true })
     .click();
-  await expect(
-    page.locator("aside").getByRole("button", { name: "History", exact: true }),
-  ).toBeVisible();
-  await expect(
-    page
-      .locator("aside")
-      .getByRole("button", { name: "Settings", exact: true }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Advanced");
+  await expect(page.getByRole("link", { name: /^History/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /^Settings/ })).toBeVisible();
 });
 
 test("reports keep specialist exports available and handle blockers", async ({
