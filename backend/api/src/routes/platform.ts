@@ -11,7 +11,8 @@ import {
   usersTable,
 } from "@workspace/db";
 import { and, desc, eq } from "drizzle-orm";
-import { getCompanyId, requireAuth, requirePermission } from "../middleware/authz";
+import { auditAction, getCompanyId, requireAuth, requirePermission } from "../middleware/authz";
+import { validateCompanyUpdate } from "../services/companyProfile";
 import { hashPassword, sessionDurationMs, signAuthToken, tokenHash, verifyPassword } from "../services/auth";
 import { defaultRolePermissions } from "../services/permissions";
 import { deleteStoredObject } from "../services/storage";
@@ -27,9 +28,8 @@ function demoLoadingAllowed(): boolean {
   return process.env.ALLOW_DEMO_SEED === "true" || process.env.NODE_ENV !== "production";
 }
 
-router.get("/company", requirePermission("settings.manage_company"), async (req, res): Promise<void> => {
-  const [company] = await db.select().from(companiesTable).where(eq(companiesTable.id, getCompanyId(req))).limit(1);
-  res.json(company ? {
+function companyView(company: typeof companiesTable.$inferSelect) {
+  return {
     id: company.id,
     name: company.name,
     industry: company.industry,
@@ -41,7 +41,30 @@ router.get("/company", requirePermission("settings.manage_company"), async (req,
     currency: company.currency,
     dataRetentionDays: company.dataRetentionDays,
     createdAt: company.createdAt.toISOString(),
-  } : null);
+  };
+}
+
+router.get("/company", requirePermission("settings.manage_company"), async (req, res): Promise<void> => {
+  const [company] = await db.select().from(companiesTable).where(eq(companiesTable.id, getCompanyId(req))).limit(1);
+  res.json(company ? companyView(company) : null);
+});
+
+// Settings → Save. Only the fields the companies table stores can be changed (services/companyProfile.ts),
+// and only on the signed-in person's own company, never on a client's.
+router.patch("/company", requirePermission("settings.manage_company"), async (req, res): Promise<void> => {
+  const parsed = validateCompanyUpdate(req.body);
+  if (!parsed.ok) {
+    res.status(400).json({ ok: false, error: parsed.error });
+    return;
+  }
+  const [company] = await db.update(companiesTable).set(parsed.update).where(eq(companiesTable.id, req.auth!.companyId)).returning();
+  if (!company) {
+    res.status(404).json({ ok: false, error: "Company not found." });
+    return;
+  }
+  // The audit trail records which fields changed, not their values.
+  await auditAction(req, "settings.company_updated", "company", company.id, { fields: Object.keys(parsed.update) });
+  res.json({ ok: true, company: companyView(company) });
 });
 
 const loginThrottle = createLoginThrottle({

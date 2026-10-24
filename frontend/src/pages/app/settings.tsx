@@ -4,7 +4,8 @@ import { motion } from "framer-motion";
 import { Building2, Bell, Shield, Users, Save, Database, FileText, History, Trash2, Cpu } from "lucide-react";
 import PageHeader from "@/components/app/PageHeader";
 import { useToast } from "@/hooks/use-toast";
-import { getUser } from "@/lib/auth";
+import { getAuthToken, getUser, login } from "@/lib/auth";
+import { BRAND } from "@/lib/brand";
 import { readJson } from "@/lib/api";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -86,15 +87,12 @@ export default function SettingsPage() {
     queryFn: () => fetch(`${BASE}/api/company`).then(readJson),
   });
 
+  // Only fields the company record really stores. Nothing here is a made-up example value.
   const [company, setCompany] = useState({
     name: user?.company ?? "",
     gstin: "",
     pan: "",
-    cin: "U72900KA2022PTC160000",
     financialYearStart: "April",
-    state: "Karnataka",
-    city: "Bengaluru",
-    caName: "",
     caEmail: "",
   });
 
@@ -110,16 +108,37 @@ export default function SettingsPage() {
     }));
   }, [companyRecord]);
 
-  const [notifications, setNotifications] = useState({
-    riskAlerts: true,
-    reconciliationComplete: true,
-    caReviewRequired: true,
-    weeklyReport: false,
-  });
+  const stored = companyRecord
+    ? {
+        name: companyRecord.name ?? "",
+        gstin: companyRecord.gstin ?? "",
+        pan: companyRecord.pan ?? "",
+        financialYearStart: companyRecord.financialYearStart ?? "April",
+        caEmail: companyRecord.caEmail ?? "",
+      }
+    : null;
+  const dirty = stored != null && (Object.keys(stored) as Array<keyof typeof stored>).some(key => (company[key] ?? "").trim() !== stored[key]);
 
-  const handleSave = () => {
-    toast({ title: "Settings saved", description: "Your preferences have been updated." });
-  };
+  // Save changes writes to the company record. It says "Saved" only after the server confirms it.
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      const response = await fetch(`${BASE}/api/company`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: company.name, gstin: company.gstin, pan: company.pan, financialYearStart: company.financialYearStart, caEmail: company.caEmail }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok || !body.ok) throw new Error(body.error || "Your changes could not be saved.");
+      return body.company as CompanyRecord;
+    },
+    onSuccess: record => {
+      qc.setQueryData(["company"], record);
+      qc.invalidateQueries({ queryKey: ["auditLogs"] });
+      if (user) login({ user: { ...user, company: record.name }, token: getAuthToken() ?? undefined });
+      toast({ title: "Saved", description: "Your company details were updated." });
+    },
+    onError: (error: Error) => toast({ title: "Not saved", description: error.message, variant: "destructive" }),
+  });
 
   const deleteDocumentMutation = useMutation({
     mutationFn: (id: number) => fetch(`${BASE}/api/documents/${id}`, { method: "DELETE" }).then(async response => {
@@ -148,9 +167,6 @@ export default function SettingsPage() {
             { label: "Company Name", key: "name" as const },
             { label: "GSTIN", key: "gstin" as const },
             { label: "PAN", key: "pan" as const },
-            { label: "CIN", key: "cin" as const },
-            { label: "State", key: "state" as const },
-            { label: "City", key: "city" as const },
           ].map(field => (
             <div key={field.key}>
               <label className="text-xs font-medium text-muted-foreground block mb-1.5">{field.label}</label>
@@ -161,6 +177,17 @@ export default function SettingsPage() {
               />
             </div>
           ))}
+          <div>
+            <label className="text-xs font-medium text-muted-foreground block mb-1.5">Financial year starts in</label>
+            <select
+              value={company.financialYearStart}
+              onChange={e => setCompany(c => ({ ...c, financialYearStart: e.target.value }))}
+              className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
+            >
+              {["January", "April", "July", "October"].map(month => <option key={month} value={month}>{month}</option>)}
+            </select>
+          </div>
+          <p className="md:col-span-2 text-xs text-muted-foreground">GSTIN and PAN are optional. They are asked for only when a job needs them.</p>
         </div>
       ),
     },
@@ -170,19 +197,15 @@ export default function SettingsPage() {
       label: "CA Details",
       content: (
         <div className="grid md:grid-cols-2 gap-4">
-          {[
-            { label: "CA Name", key: "caName" as const },
-            { label: "CA Email", key: "caEmail" as const },
-          ].map(field => (
-            <div key={field.key}>
-              <label className="text-xs font-medium text-muted-foreground block mb-1.5">{field.label}</label>
-              <input
-                value={company[field.key]}
-                onChange={e => setCompany(c => ({ ...c, [field.key]: e.target.value }))}
-                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
-              />
-            </div>
-          ))}
+          <div>
+            <label className="text-xs font-medium text-muted-foreground block mb-1.5">CA Email</label>
+            <input
+              type="email"
+              value={company.caEmail}
+              onChange={e => setCompany(c => ({ ...c, caEmail: e.target.value }))}
+              className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
+            />
+          </div>
         </div>
       ),
     },
@@ -214,29 +237,19 @@ export default function SettingsPage() {
       label: "Notification Preferences",
       content: (
         <div className="space-y-3">
+          <p className="text-xs text-muted-foreground">Email alerts are not switched on yet, so there is nothing to turn on here. They will appear here when they are available.</p>
           {[
-            { key: "riskAlerts" as const, label: "Risk flag alerts", desc: "Get notified when new GST/TDS risks are detected" },
-            { key: "reconciliationComplete" as const, label: "Reconciliation complete", desc: "Notify when auto-reconciliation finishes" },
-            { key: "caReviewRequired" as const, label: "CA review required", desc: "Notify CA when items need their attention" },
-            { key: "weeklyReport" as const, label: "Weekly summary report", desc: "Receive a weekly digest of verification progress" },
+            { label: "Risk flag alerts", desc: "Get notified when new GST/TDS risks are detected" },
+            { label: "Reconciliation complete", desc: "Notify when auto-reconciliation finishes" },
+            { label: "CA review required", desc: "Notify CA when items need their attention" },
+            { label: "Weekly summary report", desc: "Receive a weekly digest of verification progress" },
           ].map(n => (
-            <div key={n.key} className="flex items-center justify-between py-3 border-b border-border last:border-0">
+            <div key={n.label} className="flex items-center justify-between py-3 border-b border-border last:border-0">
               <div>
                 <div className="text-sm font-medium">{n.label}</div>
                 <div className="text-xs text-muted-foreground">{n.desc}</div>
               </div>
-              <button
-                onClick={() => setNotifications(prev => ({ ...prev, [n.key]: !prev[n.key] }))}
-                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                  notifications[n.key] ? "bg-primary" : "bg-muted"
-                }`}
-              >
-                <span
-                  className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform shadow-sm ${
-                    notifications[n.key] ? "translate-x-4" : "translate-x-0.5"
-                  }`}
-                />
-              </button>
+              <span className="rounded-full bg-muted px-2.5 py-1 text-[11px] font-semibold text-muted-foreground">Coming soon</span>
             </div>
           ))}
         </div>
@@ -258,21 +271,22 @@ export default function SettingsPage() {
             <div className="text-sm font-medium mb-1">Two-Factor Authentication</div>
             <div className="text-xs text-muted-foreground mb-2">Add extra security with TOTP or SMS verification</div>
             <button
-              onClick={() => toast({ title: "2FA setup", description: "Coming soon in v2." })}
-              className="text-xs px-3 py-1.5 border border-border rounded-lg text-muted-foreground hover:text-foreground transition-colors"
+              type="button"
+              disabled
+              className="text-xs px-3 py-1.5 border border-border rounded-lg text-muted-foreground opacity-60 cursor-not-allowed"
             >
-              Enable 2FA
+              Two-factor sign-in: coming soon
             </button>
           </div>
           <div>
             <div className="text-sm font-medium mb-1">Data Export & GDPR</div>
-            <div className="text-xs text-muted-foreground mb-2">Download all your data or request account deletion</div>
-            <button
-              onClick={() => toast({ title: "Export requested", description: "Your data export will be ready in 24 hours." })}
-              className="text-xs px-3 py-1.5 border border-border rounded-lg text-muted-foreground hover:text-foreground transition-colors"
+            <div className="text-xs text-muted-foreground mb-2">There is no self-service export yet. Email us and we will send your data or delete your account.</div>
+            <a
+              href={`mailto:${BRAND.contactEmail}?subject=${encodeURIComponent("Data export or account deletion")}`}
+              className="inline-block text-xs px-3 py-1.5 border border-border rounded-lg text-muted-foreground hover:text-foreground transition-colors"
             >
-              Request data export
-            </button>
+              Email {BRAND.contactEmail}
+            </a>
           </div>
           <div className="grid md:grid-cols-2 gap-3 pt-2">
             {[
@@ -392,11 +406,13 @@ export default function SettingsPage() {
         subtitle="Manage your company profile and preferences"
         actions={
           <button
-            onClick={handleSave}
-            className="flex items-center gap-1.5 px-4 py-2 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary/90 transition-colors"
+            type="button"
+            onClick={() => saveMutation.mutate()}
+            disabled={!dirty || saveMutation.isPending}
+            className="flex items-center gap-1.5 px-4 py-2 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Save className="w-4 h-4" />
-            Save changes
+            {saveMutation.isPending ? "Saving…" : "Save changes"}
           </button>
         }
       />

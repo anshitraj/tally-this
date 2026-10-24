@@ -21,6 +21,9 @@ const JOB_LABEL: Record<string, string> = {
   ecommerce_gst: "E-commerce GST",
   bank_invoice_reconciliation: "Invoice ↔ Bank",
   gstr_2b_reconciliation: "GSTR-2B ↔ Books",
+  bills_to_tally: "Bills → Tally",
+  gst_sales_register: "Sales → GSTR-1 & 3B",
+  payroll_register: "Payroll",
 };
 
 interface RunRow {
@@ -104,6 +107,65 @@ function readRuns(rows: RunRow[]) {
       headline = [data.bankName, data.periodLabel].filter(Boolean).join(" · ");
       total = txns.length;
       attention = txns.filter(txn => (txn.confidence ?? 1) < 0.9).length;
+    } else if (row.run_type === "bills_to_tally") {
+      const data = art("purchase_bills") ?? {};
+      const bills = Array.isArray(data.bills) ? (data.bills as Array<Record<string, any>>) : [];
+      const active = bills.filter(bill => bill.include !== false && !bill.note);
+      headline = `${bills.length} ${bills.length === 1 ? "bill" : "bills"}`;
+      total = bills.length;
+      const blocked = active.filter(bill => bill.blocked);
+      attention = blocked.length;
+      for (const bill of blocked) {
+        const issue = Array.isArray(bill.issues) ? bill.issues.find((entry: { level?: string }) => entry.level === "block") : null;
+        open.push({
+          job,
+          runId: row.id,
+          group: "Bill needs a fix before Tally",
+          date: String(bill.invoiceDate ?? ""),
+          description: `${bill.supplierName || "Supplier not found"} · ${bill.invoiceNumber || "no invoice number"}`,
+          amount: number(bill.total),
+          note: String(issue?.message ?? ""),
+          decision: "Not reviewed",
+        });
+      }
+    } else if (row.run_type === "gst_sales_register") {
+      const data = (art("gstr1_working") ?? {}) as Record<string, any>;
+      const gstr1 = (data.gstr1 ?? {}) as Record<string, any>;
+      const flagged = Array.isArray(gstr1.flagged) ? (gstr1.flagged as Array<Record<string, any>>) : [];
+      headline = [gstr1.period, gstr1.sellerGstin].filter(Boolean).join(" · ");
+      total = number(gstr1.counts?.documents);
+      attention = flagged.length;
+      for (const item of flagged) {
+        open.push({
+          job,
+          runId: row.id,
+          group: "Sale to check before GSTR-1",
+          date: String(item.date ?? ""),
+          description: `${item.number ?? ""} · ${item.customer ?? ""}`.trim(),
+          amount: null,
+          note: Array.isArray(item.flags) ? item.flags.join(" ") : "",
+          decision: "Not reviewed",
+        });
+      }
+    } else if (row.run_type === "payroll_register") {
+      const data = (art("payroll_register") ?? {}) as Record<string, any>;
+      const employees = Array.isArray(data.employees) ? (data.employees as Array<Record<string, any>>) : [];
+      headline = [data.employer?.name, data.month].filter(Boolean).join(" · ");
+      total = employees.length;
+      const flagged = employees.filter(employee => Array.isArray(employee.flags) && employee.flags.length > 0);
+      attention = flagged.length;
+      for (const employee of flagged) {
+        open.push({
+          job,
+          runId: row.id,
+          group: "Payroll figure to check",
+          date: String(data.month ?? ""),
+          description: String(employee.name ?? ""),
+          amount: number(employee.net) != null ? (number(employee.net) as number) / 100 : null,
+          note: (employee.flags as string[]).join(" "),
+          decision: "Not reviewed",
+        });
+      }
     } else if (row.run_type === "ecommerce_gst") {
       const data = art("ecommerce_gst") ?? {};
       const summary = (data.summary ?? {}) as Record<string, unknown>;
@@ -166,13 +228,13 @@ async function loadMonth(companyId: number, month: string) {
            (SELECT jsonb_agg(jsonb_build_object('type', ra.artifact_type, 'data', ra.json_data) ORDER BY ra.created_at)
               FROM run_artifacts ra
              WHERE ra.run_id = wr.id
-               AND ra.artifact_type IN ('bank_statement', 'ecommerce_gst', 'bank_tally_comparison', 'invoice_bank_comparison', 'gstr2b_comparison')) AS artifacts
+               AND ra.artifact_type IN ('bank_statement', 'ecommerce_gst', 'bank_tally_comparison', 'invoice_bank_comparison', 'gstr2b_comparison', 'purchase_bills', 'gstr1_working', 'payroll_register')) AS artifacts
       FROM workflow_runs wr
       LEFT JOIN users u ON u.id = wr.created_by
      WHERE wr.company_id = ${companyId}
        AND (COALESCE(wr.metadata_json->>'clientId','') = '' OR wr.metadata_json->>'clientId' = ${String(companyId)})
-       AND NOT EXISTS (SELECT 1 FROM run_artifacts a WHERE a.run_id = wr.id AND a.artifact_type = 'ledger_mappings')
-       AND wr.run_type IN ('bank_to_tally', 'bank_tally_reconciliation', 'ecommerce_gst', 'bank_invoice_reconciliation', 'gstr_2b_reconciliation')
+       AND NOT EXISTS (SELECT 1 FROM run_artifacts a WHERE a.run_id = wr.id AND a.artifact_type IN ('ledger_mappings', 'client_profile'))
+       AND wr.run_type IN ('bank_to_tally', 'bank_tally_reconciliation', 'ecommerce_gst', 'bank_invoice_reconciliation', 'gstr_2b_reconciliation', 'bills_to_tally', 'gst_sales_register', 'payroll_register')
        AND wr.status = 'completed'
        AND wr.created_at >= ${historyCutoff().toISOString()}::timestamptz
        AND to_char(wr.created_at AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM') = ${month}

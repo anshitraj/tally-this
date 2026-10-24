@@ -32,6 +32,10 @@ When money comes **in** and the rule's ledger is an expense (Indirect Expenses o
 
 Before this rule, the bare word "google" mapped every one of these to Software Expenses and auto-confirmed it.
 
+### UPI bank codes and handle domains are not words to classify by
+
+An NPCI-style narration names the payer's bank code and the UPI app behind the handle: `UPI/DR/392962306756/KRISHNA/JIOP/**97928@PTAXIS/...`. `JIOP` is Jio Payments Bank and `@PTAXIS` is Paytm on Axis Bank; neither says what the money paid for. Rules therefore ignore the bank-code field and the part of a handle after "@" (the part before "@", such as `goog-payments@`, still counts). Measured on a 696-row Canara passbook (15 October 2026): before this, 18 ordinary UPI payments were confidently booked to Professional Tax Payable because `@PTAXIS` contains "ptax", and payments through Jio Payments Bank went to Telephone & Internet. `ptax` and `jio` now have to be whole words. The other party's name is read from the fourth field of such a narration, so a short name like `VI` is kept.
+
 ## Statutory dues
 
 | Narration | Ledger | Group | Source |

@@ -66,7 +66,20 @@ These checks establish infrastructure operation, not complete product readiness.
 Full authenticated upload/review/export flows through the Vercel proxy still need
 verification, including real upload-size limits. Resolve the existing application
 security and privacy blockers in [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md)
-before onboarding customers with financial documents. The gateway's existing CORS
-middleware also adds a wildcard alongside the API's configured origin on proxied
-responses; use the intended same-origin Vercel proxy and fix this before supporting
-direct browser requests to Railway.
+before onboarding customers with financial documents. The gateway used to add a
+wildcard CORS origin alongside the API's. On branch `phase0/stabilize` it answers
+cross-origin requests only for the origins in its `CORS_ORIGIN` variable (a wildcard
+remains only on a developer machine with no `CORS_ORIGIN`). That change is not
+deployed until the branch is.
+
+## Before deploying the Phase 0 branch
+
+Set these first. The full list and the reasons are in
+[PHASE0_STABILIZATION.md](PHASE0_STABILIZATION.md).
+
+- `WORKER_SERVICE_TOKEN`: one random value, at least 24 characters, on `api` and
+  `worker`. The worker and gateway images now default to `APP_ENV=production`, so
+  without the token the worker refuses every request except `/health` and the API
+  uses its built-in readers.
+- `JWT_SECRET` of at least 32 characters, the same on `api` and `gateway`.
+- `CORS_ORIGIN` on the gateway, set to the frontend origin.

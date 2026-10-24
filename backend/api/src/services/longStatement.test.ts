@@ -10,7 +10,7 @@ import { clearReadJobs, findReadJob, finishedWithin, releaseReadJob, startReadJo
 import { OCR_MAX_PAGES, chainIntact, pageGroups, pageRanges, pagesNeedingOcr, planAiRead } from "./statementReadPlan";
 import { clearStatementCache, recallStatement, rememberStatement, statementCacheKey } from "./statementCache";
 import type { StatementRead } from "./fileReaders";
-import { recognizeStatement } from "./statementOcr";
+import { readPagesInPool, recognizeStatement } from "./statementOcr";
 import type { StatementCheck } from "./statementCheck";
 
 // ── Plan ────────────────────────────────────────────────────────────────────
@@ -651,4 +651,91 @@ test("the oldest statements are dropped when too many are remembered", () => {
   keys.forEach(key => rememberStatement(key, remembered(2)));
   assert.equal(recallStatement(keys[0]), null);
   assert.notEqual(recallStatement(keys[19]), null);
+});
+
+// ── Reading scanned pages in parallel ───────────────────────────────────────
+
+const pause = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+
+test("OCR reads pages several at a time, never more than the limit, and keeps every page's own text", async () => {
+  let inFlight = 0;
+  let peak = 0;
+  const progress: number[] = [];
+  const result = await readPagesInPool({
+    pages: Array.from({ length: 12 }, (_, index) => index + 1),
+    concurrency: 3,
+    budgetMs: 10_000,
+    // Later pages finish first, so a mix-up between pages would show.
+    readPage: async page => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await pause((13 - page) * 3);
+      inFlight -= 1;
+      return `text of page ${page}`;
+    },
+    onProgress: done => progress.push(done),
+  });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(peak, 3);
+  assert.equal(result.texts.size, 12);
+  for (let page = 1; page <= 12; page += 1) assert.equal(result.texts.get(page), `text of page ${page}`);
+  assert.deepEqual(progress, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+});
+
+test("a scan with one unreadable page returns nothing and names that page", async () => {
+  const result = await readPagesInPool({
+    pages: [1, 2, 3, 4, 5, 6],
+    concurrency: 2,
+    budgetMs: 10_000,
+    readPage: async page => (page === 4 ? null : `page ${page}`),
+  });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.deepEqual(result.failedPages, [4]);
+});
+
+test("a page that throws counts as unreadable instead of ending the read", async () => {
+  const result = await readPagesInPool({
+    pages: [1, 2, 3],
+    concurrency: 3,
+    budgetMs: 10_000,
+    readPage: async page => {
+      if (page === 2) throw new Error("engine crashed");
+      return `page ${page}`;
+    },
+  });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.deepEqual(result.failedPages, [2]);
+});
+
+test("when no page can be read the rest are not attempted", async () => {
+  let attempts = 0;
+  const result = await readPagesInPool({
+    pages: Array.from({ length: 40 }, (_, index) => index + 1),
+    concurrency: 2,
+    budgetMs: 10_000,
+    readPage: async () => {
+      attempts += 1;
+      await pause(2);
+      return null;
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.ok(attempts < 10, `expected the read to stop early, made ${attempts} attempts`);
+  if (!result.ok) assert.equal(result.failedPages.length, 40);
+});
+
+test("an exhausted OCR time budget attempts nothing and returns nothing partial", async () => {
+  let attempts = 0;
+  const result = await readPagesInPool({
+    pages: [1, 2, 3],
+    concurrency: 2,
+    budgetMs: -1,
+    readPage: async () => {
+      attempts += 1;
+      return "text";
+    },
+  });
+  assert.equal(attempts, 0);
+  assert.equal(result.ok, false);
 });

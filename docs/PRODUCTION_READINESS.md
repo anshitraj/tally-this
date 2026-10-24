@@ -1,6 +1,6 @@
 # TallyThis production launch checklist
 
-Reviewed 9 October 2026. This is a launch plan, not a production certification.
+Reviewed 9 October 2026. The Phase 0 security and honesty fixes of 24 October 2026 ([PHASE0_STABILIZATION.md](PHASE0_STABILIZATION.md)) were made on branch `phase0/stabilize` and count only once that branch is deployed and checked. This is a launch plan, not a production certification.
 
 The interface, upload workflows and exports work locally. Production launch still needs security remediation, a tested deployment, and operational setup. A successful workspace build does not prove live DNS, email delivery, backups, tenant isolation or capacity.
 
@@ -17,9 +17,9 @@ The interface, upload workflows and exports work locally. Production launch stil
 | Area | Required work | Evidence needed to launch |
 | --- | --- | --- |
 | Authentication | Neon Auth is wired in (email code confirmation, code-based reset, Google/GitHub via Neon; sign-in attempts per email are limited for the older sign-in). Still needed: a live end-to-end test of sign-up, code, reset and both OAuth providers (including Safari, since Neon's session cookie is cross-site), a custom SMTP sender and own Google/GitHub OAuth apps in the Neon console, "Allow Localhost" turned off, production domains added as trusted, and `LEGACY_PASSWORD_LOGIN=false` once users have moved. | Login, recovery, linking, expired/revoked sessions and malicious redirect checks pass on staging. |
-| Permissions | Align Go and Express role checks and client scoping for reads, imports, approvals, downloads and exports. | Founder, CA, finance and viewer tests; a second unrelated workspace cannot access another client's data. |
-| Tally connector | Keep customer-run gateways separate from unrestricted server-side network access. Restrict permitted destinations and worker ingress. | Worker is inaccessible publicly; blocked-destination checks pass. A cloud worker's localhost is not a customer's Tally installation. |
-| Dependencies | Resolve runtime dependency advisories and rerun Node, Python and Go checks. | Reachable high/critical vulnerabilities closed or documented with verified mitigations. |
+| Permissions | **Phase 0:** the Go gateway now enforces the same role permissions as Express on all 15 routes it answers, with negative tests (viewer, wrong role, no sign-in, lookup failure). **Still needed:** client scoping for reads, imports, approvals, downloads and exports in both layers, and database-backed tests of the API's own routes (the gateway's permission lookup now has one, run against a real Postgres in CI). | Founder, CA, finance and viewer tests against a database; a second unrelated workspace cannot access another client's data. |
+| Tally connector | **Phase 0:** the worker answers only requests carrying a shared service token (503 in production without one), connector destinations are allow-listed and checked again after DNS resolution, cloud-metadata and link-local addresses are never allowed, and the connector is off by default in production. **Still needed:** set `WORKER_SERVICE_TOKEN` on `api` and `worker`, confirm the worker has no public domain, and test blocked destinations on the deployed stack. | Worker is inaccessible publicly; blocked-destination checks pass. A cloud worker's localhost is not a customer's Tally installation. |
+| Dependencies | **Phase 0:** Node production advisories went from 9 (5 high) to 2. The remaining high one (zod 3, memory use on a huge array) is accepted with a test guard and a review date of 31 December 2026, and CI fails on any new critical or high advisory. **Still needed:** the Python and Go dependency audits, which were not run, and the move to zod 4. | Reachable high/critical vulnerabilities closed or documented with verified mitigations. |
 | Upload handling | Enforce total request, file count, content type, parser time, page/row and memory limits. Use per-workspace quotas and concurrency limits. | Large, malformed, truncated, encrypted and repeated uploads fail safely without crashing services or duplicating imports. |
 | File storage | Configure private R2 and least-privilege credentials. Keep public bucket URLs disabled. Validate storage health at startup and download authorization. | Upload → reopen → download → delete tested using the deployed configuration, including failure/retry cases. |
 | Database | Use an isolated production Postgres/Neon database, restricted credentials, encrypted connections and reviewed migrations. | Staging migration and rollback/forward-repair rehearsed; backup restored into an isolated database. |
@@ -27,7 +27,7 @@ The interface, upload workflows and exports work locally. Production launch stil
 | Deployment | Build and run the actual Linux/container release behind HTTPS, with one public entry point. | All seven main screens and four upload/review/export journeys work through the public proxy, with production settings. |
 | Operations | Add alerts for downtime, failed uploads/exports, DB/storage failure, job latency, resource use and unexpected costs. | An alert reaches an operator; restart/recovery and rollback rehearsals succeed. |
 
-The production dependency audit on 8 October reported **1 critical, 15 high, 7 moderate and 2 low advisory entries**. These are registry ratings, not 25 independently confirmed exploits. Runtime reachability and remediation must be reviewed. The local detailed security review is kept outside the public source tree.
+The production dependency audit on 8 October reported **1 critical, 15 high, 7 moderate and 2 low advisory entries**. On 24 October, before Phase 0, `pnpm audit --prod` listed 9 (5 high); after it, 2 (1 high, accepted as above, and 1 low in a build tool). These are registry ratings, not independently confirmed exploits. Runtime reachability and remediation must be reviewed. Python and Go dependencies have not been audited. The local detailed security review is kept outside the public source tree.
 
 ## Deployment layout
 
@@ -70,11 +70,13 @@ Set secrets through the hosting platform's secret manager, never in frontend cod
 | `NODE_ENV`, `APP_ENV` | `production`, explicitly configured for all services |
 | `DATABASE_URL` | Production database only, restricted user and encrypted connection |
 | `DIRECT_DATABASE_URL` | Migration connection if required; restrict operator access |
-| `JWT_SECRET` / `SESSION_SECRET` | Strong randomly generated secret shared consistently where verification requires it; missing secrets must fail startup |
+| `JWT_SECRET` / `SESSION_SECRET` | At least 32 random characters, never a value from this repository (including the `.env.example` sample), identical on `api` and `gateway`. Both exit at start-up in production otherwise |
 | `APP_URL`, `API_PUBLIC_URL` | Confirmed HTTPS origin; prefer the same public origin |
 | OAuth client IDs/secrets and redirect URIs | Exact production `/api/auth/.../callback` URLs; separate staging registrations |
-| `CORS_ORIGIN` | Exact authorized origins if cross-origin access is required; no wildcard credential policy |
+| `CORS_ORIGIN` | Exact authorized origins, comma-separated. On the gateway, production allows only these (none if unset; the Vercel proxy is same-origin and needs none). No wildcard |
 | `PYTHON_WORKER_URL` | Private network endpoint |
+| `WORKER_SERVICE_TOKEN` | One random value, at least 24 characters (32 or more advised), on `api` and `worker` only. The worker image defaults to `APP_ENV=production`, where the worker answers 503 to everything except `/health` without it |
+| `TALLY_CONNECTOR_ENABLED` | Leave unset: off in production. Turn on only for a deliberate private-network deployment, with `TALLY_ALLOWED_HOSTS` and `TALLY_ALLOWED_PORTS` set to exactly what is needed |
 | `STORAGE_PROVIDER` and R2 variables | `r2` with a private bucket and complete scoped credentials |
 | `SUPPORT_EMAIL` | `contact@tallythis.xyz` |
 | `ALLOW_DEMO_SEED` | `false`; use a separate demo database if needed |
@@ -127,11 +129,11 @@ R2 should remain private: [Cloudflare's documentation](https://developers.cloudf
 
 - Decide initial pricing, quotas, file-size limits and support response expectations. Test paid access expiry and quota exhaustion.
 - Current plans are set by an operator script; automatic billing is not implemented. Manual invoicing can support a small pilot. Automated subscriptions require verified payment webhooks, idempotency, entitlement changes, refunds/cancellations and tax invoice handling reviewed by the business's accountant.
-- Fix or clearly disable prototype controls that claim to save without persisting. The current Settings save action displays a toast; it does not itself persist those preferences.
+- Prototype controls that claim to save without persisting: **Phase 0 fixed Settings.** Save now stores the company details (`PATCH /api/company`) and says Saved only after the server confirms; controls that did nothing are removed or marked Coming soon. Other screens have not been reviewed for the same pattern.
 - Add a support inbox workflow and escalation owner; write upload troubleshooting and export/import instructions. Keep the primary onboarding at three steps.
 - Establish incident response, credential rotation, dependency patching and regular restoration drills. Protect staff/operator accounts with MFA and least privilege.
 - Monitor product usage without collecting document contents, PAN/account numbers, token values or raw financial narration in analytics. Self-host fonts if the chosen privacy/performance policy requires it.
-- Add staged CI: build/typecheck, workflow tests, UI navigation/mobile tests, permission/tenant tests, dependency scanning, container build and staging smoke tests. No GitHub Actions pipeline was visible in the inspected tree.
+- Staged CI: **Phase 0 added** `.github/workflows/ci.yml`, which runs typecheck, API tests, build, the Node advisory gate, Go and Python worker tests and the browser tests on every pull request. It had not run on GitHub when this was written. Still missing: permission and tenant tests against a database, container builds, staging smoke tests and Python/Go dependency scanning. See [TESTING.md](TESTING.md).
 - Reduce the large initial JavaScript bundle through route splitting and measure real user loading/job completion times.
 
 ## Release gate
@@ -149,4 +151,4 @@ Use a staging environment first. Launch only after the applicable P0 items have 
 - [ ] Privacy/terms/retention/provider disclosures and support process approved.
 - [ ] Rollback and incident ownership documented; paid entitlements match actual billing behavior.
 
-Local verification on 9 October: workspace build/typechecks and API workflow/parser tests passed. The bank review, Excel and navigation browser checks passed, including 360px, 390px and 768px layouts. Incognito adds entitlement, expired-plan, retry, cross-tab, account-switch, mode-lock and mobile checks. Live frontend HTTPS and service health are verified; authenticated live workflows, mailbox delivery, restoration, load testing, real bank and marketplace fixtures, Tally import and a full adversarial tenant test suite remain unverified. See [RAILWAY_DEPLOYMENT.md](RAILWAY_DEPLOYMENT.md) for branch versus deployment status.
+Local verification on 9 October: workspace build/typechecks and API workflow/parser tests passed. The bank review, Excel and navigation browser checks passed, including 360px, 390px and 768px layouts. Incognito adds entitlement, expired-plan, retry, cross-tab, account-switch, mode-lock and mobile checks. Live frontend HTTPS and service health are verified; authenticated live workflows, mailbox delivery, restoration, load testing, real bank and marketplace fixtures, Tally import and a full adversarial tenant test suite remain unverified. See [RAILWAY_DEPLOYMENT.md](RAILWAY_DEPLOYMENT.md) for branch versus deployment status, and [PHASE0_STABILIZATION.md](PHASE0_STABILIZATION.md) and [TESTING.md](TESTING.md) for the 24 October Phase 0 checks and what they do not prove.

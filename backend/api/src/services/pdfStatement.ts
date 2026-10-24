@@ -310,6 +310,87 @@ export function rowText(row: Row) {
   return row.items.map(item => item.text).join(" ");
 }
 
+/**
+ * The last line of every transaction in some statements, e.g. Canara Bank's "Chq: 525805739236"
+ * (or "Chq: 0" when there is no reference). Its value is the transaction's reference.
+ */
+const BLOCK_END = /^chq\s*[:.]\s*(\S*)\s*$/i;
+
+/**
+ * True when transactions are printed as blocks that end with a marker line and whose text starts
+ * ABOVE the date and amount line (the cell text is centred on the amounts). Reading such a
+ * statement line by line from the date downwards loses the top of every description.
+ */
+function usesMarkedBlocks(rows: Row[], pages: number[]): boolean {
+  let layout: Layout | null = null;
+  let anchors = 0;
+  let markers = 0;
+  let pagesWithLeadLines = 0;
+  let pagesWithAnchors = 0;
+  for (const page of pages) {
+    const start = rows.findIndex(row => row.page === page);
+    const found = findHeader(rows, start, page);
+    if (found) layout = found.layout;
+    if (!layout) continue;
+    let seenAnchor = false;
+    let leadLines = 0;
+    for (let index = found ? found.next : start; index < rows.length && rows[index].page === page; index += 1) {
+      const cells = readCells(rows[index].items, layout);
+      if (splitDates(cells, layout).date && cells.money.length > 0) {
+        anchors += 1;
+        seenAnchor = true;
+        continue;
+      }
+      const text = cells.narration.map(item => item.text).join(" ");
+      if (BLOCK_END.test(text)) markers += 1;
+      else if (!seenAnchor && text && !/opening\s+balance|brought\s+forward/i.test(rowText(rows[index]))) leadLines += 1;
+    }
+    if (seenAnchor) pagesWithAnchors += 1;
+    if (seenAnchor && leadLines > 0) pagesWithLeadLines += 1;
+  }
+  return anchors >= 3 && markers >= anchors * 0.6 && pagesWithLeadLines >= Math.ceil(pagesWithAnchors / 2);
+}
+
+/**
+ * Joins the wrapped lines of one description. A bank that wraps at the column's width breaks inside
+ * a word only when a line is full ("UPI/DR/52580/COUNTR" + "YDE/UTIB"); a line that stops short of
+ * the edge ended at a space ("GOOGLE INDIA" + "DIGITAL SERVICES").
+ */
+function joinWrappedLines(rows: Item[][], fullRight: number): string {
+  let joined = "";
+  rows.forEach((items, index) => {
+    const line = items.map(item => item.text).join(" ");
+    if (index === 0) {
+      joined = line;
+      return;
+    }
+    const previousWasFull = Math.max(...rows[index - 1].map(item => item.right)) >= fullRight;
+    joined += `${previousWasFull ? "" : " "}${line}`;
+  });
+  return joined;
+}
+
+/** How far right a description line reaches when the bank filled it, from all the lines read. */
+function fullLineEdge(drafts: DraftTxn[]): number {
+  const rights: number[] = [];
+  const charWidths: number[] = [];
+  for (const draft of drafts) {
+    for (const items of draft.narrationRows) {
+      const left = Math.min(...items.map(item => item.left));
+      const right = Math.max(...items.map(item => item.right));
+      const length = items.map(item => item.text).join(" ").length;
+      rights.push(right);
+      if (length >= 8) charWidths.push((right - left) / length);
+    }
+  }
+  if (rights.length === 0) return Infinity;
+  rights.sort((a, b) => a - b);
+  charWidths.sort((a, b) => a - b);
+  const edge = rights[Math.floor(rights.length * 0.95)];
+  const charWidth = charWidths[Math.floor(charWidths.length / 2)] ?? 6;
+  return edge - 1.2 * charWidth;
+}
+
 // ── Main entry ──────────────────────────────────────────────────────────────
 
 export async function readStatementPdf(buffer: Buffer, options: { password?: string; fileName?: string } = {}): Promise<PdfStatementRead> {
@@ -352,6 +433,7 @@ function interpret(rows: Row[], allText: string, fileName: string): Omit<PdfStat
   };
 
   const pages = [...new Set(rows.map(row => row.page))];
+  const markedBlocks = usesMarkedBlocks(rows, pages);
   for (const page of pages) {
     close();
     const start = rows.findIndex(row => row.page === page);
@@ -364,6 +446,101 @@ function interpret(rows: Row[], allText: string, fileName: string): Omit<PdfStat
       if (found) firstHeaderSeen = true;
     }
     if (!layout || !firstHeaderSeen) continue;
+
+    if (markedBlocks) {
+      // Description lines read since the last block ended: they belong to the next date line.
+      let lead: Array<{ items: Item[]; raw: string }> = [];
+      // Description lines below the current date line, until the block's end marker.
+      let below: Array<{ y: number; items: Item[]; raw: string }> = [];
+      let anchorY = 0;
+      for (let index = bodyStart; index < rows.length && rows[index].page === page; index += 1) {
+        const row = rows[index];
+        const text = rowText(row);
+        const cells = readCells(row.items, layout);
+        const { date, valueDate } = splitDates(cells, layout);
+        // A transaction's line carries its amounts. A wrapped description line can read like a
+        // date ("9/11/2025 13:57:40"); without amounts it is part of the description.
+        const isAnchor = Boolean(date) && cells.money.length > 0;
+        const lineItems = isAnchor ? cells.narration : [...cells.dates, ...cells.narration].sort((a, b) => a.left - b.left);
+        const narrationText = lineItems.map(item => item.text).join(" ");
+        if (/opening\s+balance|balance\s+b\/?f|brought\s+forward/i.test(text) && cells.debit == null && cells.credit == null) {
+          close();
+          lead = [];
+          if (opening == null) opening = cells.balance ?? cells.amount ?? cells.money[cells.money.length - 1] ?? null;
+          continue;
+        }
+        if (/closing\s+balance|carried\s+forward|balance\s+c\/?f|^total\b|grand\s+total/i.test(narrationText || text)) {
+          close();
+          lead = [];
+          if (cells.balance != null) closingRows.push(cells.balance);
+          continue;
+        }
+        if (isAnchor && date) {
+          if (current) {
+            // The previous block had no end marker: the lines nearer this date line are this block's.
+            const previous: DraftTxn = current;
+            while (below.length > 0 && anchorY - below[below.length - 1].y > below[below.length - 1].y - row.y) {
+              const moved = below.pop()!;
+              previous.narrationRows.pop();
+              lead.unshift(moved);
+            }
+          }
+          close();
+          current = {
+            page,
+            lastY: row.y,
+            date,
+            valueDate,
+            serial: cells.serial,
+            narrationRows: [...lead.map(line => line.items), ...(cells.narration.length > 0 ? [cells.narration] : [])],
+            ref: cells.ref.map(item => item.text),
+            debit: cells.debit,
+            credit: cells.credit,
+            amount: cells.amount,
+            drcr: cells.drcr ?? cells.amountSuffix,
+            balance: cells.balance == null ? null : cells.balanceSuffix === "dr" ? -cells.balance : cells.balance,
+            inferred: false,
+            raw: [...lead.map(line => line.raw), text],
+          };
+          lead = [];
+          below = [];
+          anchorY = row.y;
+          continue;
+        }
+        if (lineItems.length + cells.ref.length + cells.money.length === 0) continue;
+        const marker = BLOCK_END.exec(narrationText);
+        if (marker) {
+          const open: DraftTxn | null = current;
+          if (open) {
+            if (marker[1] && !/^0+$/.test(marker[1])) open.ref.push(marker[1]);
+            open.raw.push(text);
+          }
+          close();
+          lead = [];
+          below = [];
+          continue;
+        }
+        const open: DraftTxn | null = current;
+        if (!open) {
+          if (lineItems.length > 0) lead.push({ items: lineItems, raw: text });
+          continue;
+        }
+        if (lineItems.length > 0) {
+          open.narrationRows.push(lineItems);
+          below.push({ y: row.y, items: lineItems, raw: text });
+        }
+        open.ref.push(...cells.ref.map(item => item.text));
+        open.debit ??= cells.debit;
+        open.credit ??= cells.credit;
+        open.amount ??= cells.amount;
+        open.drcr ??= cells.drcr ?? cells.amountSuffix;
+        if (open.balance == null && cells.balance != null) open.balance = cells.balanceSuffix === "dr" ? -cells.balance : cells.balance;
+        open.lastY = row.y;
+        open.raw.push(text);
+      }
+      close();
+      continue;
+    }
 
     for (let index = bodyStart; index < rows.length && rows[index].page === page; index += 1) {
       const row = rows[index];
@@ -445,6 +622,24 @@ function interpret(rows: Row[], allText: string, fileName: string): Omit<PdfStat
   const newestFirst = drafts.length > 1 && drafts[0].date > drafts[drafts.length - 1].date;
   const chronological = newestFirst ? [...drafts].reverse() : drafts;
 
+  // A minus sign in the Withdrawal (or Deposit) column is a reversal: the money moved the other way
+  // ("UPI/REV ... -40.00" under Withdrawals raises the balance). Swapped only when the balance agrees.
+  chronological.forEach((draft, index) => {
+    const side = draft.debit != null && draft.debit < 0 ? "debit" : draft.credit != null && draft.credit < 0 ? "credit" : null;
+    if (!side) return;
+    const previous = index === 0 ? opening : chronological[index - 1].balance;
+    if (previous == null || draft.balance == null) return;
+    const value = Math.abs((side === "debit" ? draft.debit : draft.credit) as number);
+    const delta = round2(draft.balance - previous);
+    if (side === "debit" && Math.abs(delta - value) <= 0.005) {
+      draft.debit = null;
+      draft.credit = value;
+    } else if (side === "credit" && Math.abs(delta + value) <= 0.005) {
+      draft.credit = null;
+      draft.debit = value;
+    }
+  });
+
   // Single amount column without a Dr/Cr marker: the balance movement gives the direction.
   chronological.forEach((draft, index) => {
     if (draft.debit != null || draft.credit != null) return;
@@ -465,18 +660,22 @@ function interpret(rows: Row[], allText: string, fileName: string): Omit<PdfStat
     }
   });
 
+  // Marked-block statements wrap at the column's width: a line that reaches the edge was cut mid-word.
+  const fullRight = markedBlocks ? fullLineEdge(drafts) : Infinity;
+
   const transactions: NormalizedBankTxn[] = chronological.map((draft, index) => {
     const debit = draft.debit != null && draft.debit !== 0 ? Math.abs(draft.debit) : null;
     const credit = draft.credit != null && draft.credit !== 0 ? Math.abs(draft.credit) : null;
     // Read straight from a Withdrawal/Deposit column; the balance check below raises or lowers this.
     const confidence = draft.inferred ? 0.7 : 0.97;
-    const narration = draft.narrationRows
-      .map(rowItems => rowItems.map(item => item.text).join(" "))
-      .reduce((joined, part) => {
-        if (!joined) return part;
-        // Word-wrapping banks also break after "-" or "/" ("24-08-" + "25/BHARAT").
-        return charWrap || /[-/]$/.test(joined) ? `${joined}${part}` : `${joined} ${part}`;
-      }, "")
+    const lines = draft.narrationRows.map(rowItems => rowItems.map(item => item.text).join(" "));
+    const narration = (markedBlocks
+      ? joinWrappedLines(draft.narrationRows, fullRight)
+      : lines.reduce((joined, part) => {
+          if (!joined) return part;
+          // Word-wrapping banks also break after "-" or "/" ("24-08-" + "25/BHARAT").
+          return charWrap || /[-/]$/.test(joined) ? `${joined}${part}` : `${joined} ${part}`;
+        }, ""))
       .replace(/\s{2,}/g, " ")
       .trim();
     return {
@@ -597,12 +796,61 @@ function dateRange(transactions: NormalizedBankTxn[]): string | null {
   return `${formatDay(dates[0])} – ${formatDay(dates[dates.length - 1])}`;
 }
 
+/** The slice of the PDF.js document that page rendering needs. */
+interface RenderableDocument {
+  getPage(pageNumber: number): Promise<{
+    getViewport(options: { scale: number }): { width: number; height: number };
+    render(context: { canvasContext: unknown; viewport: unknown; canvas: unknown }): { promise: Promise<void> };
+    cleanup(): void;
+  }>;
+  canvasFactory: {
+    create(width: number, height: number): { canvas: { encode?: (format: "png") => Promise<Buffer>; toBuffer?: (mime: "image/png") => Buffer }; context: unknown };
+    destroy(canvasAndContext: unknown): void;
+  };
+}
+
+/**
+ * PNG images of the given 1-based pages, in page order, at twice the page size.
+ *
+ * pdf-parse's own getScreenshot encodes with a synchronous toBuffer and never releases the page
+ * canvas, and @napi-rs/canvas then keeps about 8 MB of native memory per page for the life of the
+ * process: a 150-page scan held more than a gigabyte. Encoding asynchronously and destroying each
+ * canvas keeps memory flat and gives the same pixels. If a future pdf-parse no longer exposes the
+ * document this falls back to getScreenshot.
+ */
+async function renderPagesPng(parser: PDFParse, pages: number[]): Promise<Buffer[]> {
+  const load = (parser as unknown as { load?: () => Promise<RenderableDocument> }).load;
+  const doc = typeof load === "function" ? await load.call(parser).catch(() => null) : null;
+  if (!doc?.canvasFactory || typeof doc.getPage !== "function") {
+    const shots = await parser.getScreenshot({ scale: 2, imageDataUrl: false, imageBuffer: true, partial: pages });
+    return [...shots.pages].sort((a, b) => a.pageNumber - b.pageNumber).map(page => Buffer.from(page.data));
+  }
+  const images: Buffer[] = [];
+  for (const pageNumber of [...pages].sort((a, b) => a - b)) {
+    const page = await doc.getPage(pageNumber);
+    try {
+      const viewport = page.getViewport({ scale: 2 });
+      const surface = doc.canvasFactory.create(viewport.width, viewport.height);
+      try {
+        await page.render({ canvasContext: surface.context, viewport, canvas: surface.canvas }).promise;
+        const { canvas } = surface;
+        images.push(typeof canvas.encode === "function" ? await canvas.encode("png") : Buffer.from(canvas.toBuffer?.("image/png") ?? []));
+      } finally {
+        doc.canvasFactory.destroy(surface);
+      }
+    } finally {
+      page.cleanup();
+    }
+  }
+  return images;
+}
+
 /** Page images for reading a locked or scanned PDF with AI. */
 export async function renderPdfPages(buffer: Buffer, password?: string, maxPages = 12): Promise<Buffer[]> {
   const parser = new PDFParse({ data: new Uint8Array(buffer), password: password || undefined });
   try {
-    const shots = await parser.getScreenshot({ scale: 2, imageDataUrl: false, imageBuffer: true, first: maxPages });
-    return shots.pages.map(page => Buffer.from(page.data));
+    const total = (await parser.getInfo()).total;
+    return await renderPagesPng(parser, Array.from({ length: Math.min(maxPages, total) }, (_, index) => index + 1));
   } finally {
     await parser.destroy().catch(() => undefined);
   }
@@ -629,10 +877,7 @@ export async function openPdfRenderer(buffer: Buffer, password?: string): Promis
   return {
     pageCount,
     render(pages) {
-      const run = queue.then(async () => {
-        const shots = await parser.getScreenshot({ scale: 2, imageDataUrl: false, imageBuffer: true, partial: pages });
-        return [...shots.pages].sort((a, b) => a.pageNumber - b.pageNumber).map(page => Buffer.from(page.data));
-      });
+      const run = queue.then(() => renderPagesPng(parser, pages));
       queue = run.catch(() => undefined);
       return run;
     },

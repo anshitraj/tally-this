@@ -6,6 +6,7 @@ import { BrandLogo, LogoStrip } from "@/components/app/BrandLogo";
 import { Notice, getJson } from "@/components/jobs/jobUi";
 
 interface TallyStatus {
+  available?: boolean;
   running?: boolean;
   companies?: string[];
   message?: string;
@@ -90,12 +91,12 @@ export default function IntegrationsPage() {
           </span>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-3">
-              <h2 className="text-lg font-semibold">Send to Tally</h2>
+              <h2 className="text-lg font-semibold">Send to Tally <span className="ml-1 rounded-full bg-amber-100 px-2 py-0.5 align-middle text-[11px] font-semibold text-amber-900">Experimental</span></h2>
               <BrandLogo name="Tally" size="sm" />
             </div>
             <p className="mt-1 text-sm text-muted-foreground">
-              Post reviewed vouchers straight into the company open in TallyPrime. This works when TallyThis runs on the same computer or
-              network as Tally.
+              Post reviewed vouchers straight into the company open in TallyPrime. This works only when TallyThis runs on the same computer or
+              network as Tally, and it has been tried with sample data, not yet with a live TallyPrime.
             </p>
 
             <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -111,7 +112,14 @@ export default function IntegrationsPage() {
               )}
             </div>
 
-            {status && !connected && (
+            {status && !connected && status.available === false && (
+              <div className="mt-4">
+                <Notice tone="info">
+                  <p className="font-medium">{status.message || "Sending straight to Tally is not available on this site."}</p>
+                </Notice>
+              </div>
+            )}
+            {status && !connected && status.available !== false && (
               <div className="mt-4">
                 <Notice tone="warn">
                   <p className="font-medium">{status.message || "Tally did not answer."}</p>

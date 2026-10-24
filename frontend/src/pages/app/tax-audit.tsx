@@ -6,6 +6,7 @@ import PageHeader from "@/components/app/PageHeader";
 import { PageTransition } from "@/components/app/finverify-ui";
 import { useToast } from "@/hooks/use-toast";
 import { readJson } from "@/lib/api";
+import { useLiveTally } from "@/lib/liveTally";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -144,6 +145,7 @@ export default function TaxAuditPage() {
     enabled: Boolean(openCheck),
   });
 
+  const live = useLiveTally();
   const [connectOpen, setConnectOpen] = useState(false);
   const [conn, setConn] = useState({ host: "localhost", port: "9000", company: clientName || "", fromDate: "2025-04-01", toDate: "2026-03-31" });
 
@@ -209,13 +211,19 @@ export default function TaxAuditPage() {
           {importMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
           {importMutation.isPending ? "Importing…" : "Import Tally Export (XML)"}
         </button>
-        <button
-          type="button"
-          onClick={() => setConnectOpen(true)}
-          className="inline-flex items-center gap-2 rounded-xl border border-border px-4 py-2 text-sm font-medium hover:bg-muted"
-        >
-          <Plug className="h-4 w-4" /> Connect to Tally
-        </button>
+        {live.checked && !live.available ? (
+          <span className="inline-flex items-center gap-2 px-1 text-xs text-muted-foreground">
+            <Plug className="h-4 w-4" /> Live connection to Tally is not available on this site. Import a Tally export instead.
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setConnectOpen(true)}
+            className="inline-flex items-center gap-2 rounded-xl border border-border px-4 py-2 text-sm font-medium hover:bg-muted"
+          >
+            <Plug className="h-4 w-4" /> Connect to Tally <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-900">Experimental</span>
+          </button>
+        )}
         <button
           type="button"
           onClick={() => packMutation.mutate()}
@@ -291,7 +299,7 @@ export default function TaxAuditPage() {
             <div className="mb-3 flex items-start justify-between">
               <div>
                 <div className="flex items-center gap-2 text-base font-bold"><Plug className="h-4 w-4 text-primary" /> Connect to Tally</div>
-                <p className="mt-1 text-xs text-muted-foreground">Pull the Day Book live from a running Tally gateway — no manual export.</p>
+                <p className="mt-1 text-xs text-muted-foreground">Pull the Day Book from a Tally running on this computer or network. Experimental: tried with sample data only, not yet with a live TallyPrime.</p>
               </div>
               <button type="button" onClick={() => setConnectOpen(false)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted"><X className="h-4 w-4" /></button>
             </div>
@@ -311,7 +319,7 @@ export default function TaxAuditPage() {
                   <input type="date" value={conn.toDate} onChange={e => setConn(c => ({ ...c, toDate: e.target.value }))} className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm" /></label>
               </div>
               <div className="rounded-lg bg-muted/50 px-3 py-2 text-[11px] text-muted-foreground">
-                In Tally: F1 → Settings → Connectivity → enable "act as server" (default port 9000). Tally must be reachable from the API host.
+                In Tally: F1 → Settings → Connectivity → enable "act as server" (default port 9000). Tally must be reachable from the computer TallyThis runs on; the hosted site cannot reach your computer.
               </div>
               <button type="submit" disabled={syncMutation.isPending || !conn.company.trim()} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-60">
                 {syncMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin" /> Syncing…</> : <><Plug className="h-4 w-4" /> Sync now</>}

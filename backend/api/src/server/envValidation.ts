@@ -1,4 +1,5 @@
 import { logger } from "../lib/logger";
+import { signingSecretProblem } from "../services/auth";
 
 function has(name: string): boolean {
   return Boolean(process.env[name]);
@@ -11,10 +12,11 @@ function any(names: string[]): boolean {
 export function validateServerEnv() {
   const errors: string[] = [];
   const warnings: string[] = [];
-  const production = process.env.NODE_ENV === "production";
 
   if (!has("DATABASE_URL")) errors.push("DATABASE_URL is required");
-  if (production && !any(["JWT_SECRET", "SESSION_SECRET"])) errors.push("JWT_SECRET or SESSION_SECRET is required in production");
+  // A missing or weak signing key stops the service instead of quietly weakening it.
+  const secretProblem = signingSecretProblem();
+  if (secretProblem) errors.push(secretProblem);
 
   const r2Any = any([
     "CLOUDFLARE_R2_ACCOUNT_ID",

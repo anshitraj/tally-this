@@ -39,12 +39,35 @@ export function tokenHash(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
-export function jwtSecret(): string {
-  const secret = process.env.JWT_SECRET ?? process.env.SESSION_SECRET;
-  if (!secret && process.env.NODE_ENV === "production") {
-    throw new Error("JWT_SECRET or SESSION_SECRET must be set in production");
+// Published in this repository (the fallback below and the sample in .env.example), so they may only ever be used
+// on a developer machine. The sample is longer than 32 characters, so length alone would not catch a copied .env.example.
+const DEVELOPMENT_SECRET = "finverify-dev-session-secret-change-me";
+const PUBLISHED_SECRETS = new Set([DEVELOPMENT_SECRET, "replace-with-a-long-random-secret"]);
+const MIN_PRODUCTION_SECRET_LENGTH = 32;
+
+export function isProduction(env: Record<string, string | undefined> = process.env): boolean {
+  return [env.NODE_ENV, env.APP_ENV].some(value => value?.trim().toLowerCase() === "production");
+}
+
+/**
+ * Why the signing secret cannot be used, or null. A developer machine may run without one;
+ * production may not: it needs a real key of at least 32 characters, not the published development value,
+ * otherwise anyone could sign their own session token.
+ */
+export function signingSecretProblem(env: Record<string, string | undefined> = process.env): string | null {
+  if (!isProduction(env)) return null;
+  const secret = env.JWT_SECRET || env.SESSION_SECRET;
+  if (!secret) return "JWT_SECRET or SESSION_SECRET must be set in production";
+  if (PUBLISHED_SECRETS.has(secret) || secret.length < MIN_PRODUCTION_SECRET_LENGTH) {
+    return "The production signing secret must be at least 32 characters and not a value published in this repository";
   }
-  return secret ?? "finverify-dev-session-secret-change-me";
+  return null;
+}
+
+export function jwtSecret(): string {
+  const problem = signingSecretProblem();
+  if (problem) throw new Error(problem);
+  return process.env.JWT_SECRET || process.env.SESSION_SECRET || DEVELOPMENT_SECRET;
 }
 
 export function sessionDurationMs(): number {

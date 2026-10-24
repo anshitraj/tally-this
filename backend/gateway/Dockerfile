@@ -10,7 +10,7 @@ FROM alpine:3.23
 RUN apk add --no-cache ca-certificates && adduser -D -u 10001 tallythis
 WORKDIR /app
 COPY --from=builder /api-go ./api-go
-ENV PORT=8090
+ENV PORT=8090 APP_ENV=production
 USER tallythis
 EXPOSE 8090
 CMD ["./api-go"]

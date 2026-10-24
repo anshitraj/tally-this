@@ -16,6 +16,9 @@ export type WorkflowRunType =
   | "bank_gateway_reconciliation"
   | "bank_payroll_reconciliation"
   | "gstr_2b_reconciliation"
+  | "bills_to_tally"
+  | "gst_sales_register"
+  | "payroll_register"
   | "gst_tds_review"
   | "invoice_ai_extraction"
   | "full_month_close"
@@ -97,6 +100,24 @@ const DEFAULT_STEPS: Record<WorkflowRunType, RunStep[]> = {
     { label: "Saving result", status: "pending", percent: 90 },
     { label: "Completed", status: "pending", percent: 100 },
   ],
+  bills_to_tally: [
+    { label: "Reading purchase bills", status: "pending", percent: 20 },
+    { label: "Checking amounts and GSTIN", status: "pending", percent: 60 },
+    { label: "Preparing Tally vouchers", status: "pending", percent: 85 },
+    { label: "Completed", status: "pending", percent: 100 },
+  ],
+  gst_sales_register: [
+    { label: "Reading sales register", status: "pending", percent: 25 },
+    { label: "Sorting into GSTR-1 tables", status: "pending", percent: 60 },
+    { label: "Preparing GSTR-3B working", status: "pending", percent: 85 },
+    { label: "Completed", status: "pending", percent: 100 },
+  ],
+  payroll_register: [
+    { label: "Reading salary sheet", status: "pending", percent: 25 },
+    { label: "Checking deductions", status: "pending", percent: 60 },
+    { label: "Preparing statutory working", status: "pending", percent: 85 },
+    { label: "Completed", status: "pending", percent: 100 },
+  ],
   gst_tds_review: [
     { label: "Loading GST/TDS records", status: "pending", percent: 20 },
     { label: "Generating risk flags", status: "pending", percent: 60 },
@@ -138,6 +159,9 @@ function runTitle(runType: WorkflowRunType, meta?: Record<string, string>): stri
     bank_gateway_reconciliation: "Gateway settlement matching",
     bank_payroll_reconciliation: "Payroll matching",
     gstr_2b_reconciliation: "GSTR-2B ↔ Books",
+    bills_to_tally: "Bills → Tally",
+    gst_sales_register: "Sales → GSTR-1 and 3B",
+    payroll_register: "Payroll",
     gst_tds_review: "GST/TDS review pack",
     invoice_ai_extraction: "Invoice AI extraction",
     full_month_close: "Full month close",

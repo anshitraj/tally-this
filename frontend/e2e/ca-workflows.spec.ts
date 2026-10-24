@@ -285,7 +285,8 @@ test("Invoice ↔ Bank: a request for the missing invoices is one press away", a
 test("empty advanced pages point to the file or job that fills them", async ({ page }) => {
   await workspace(page);
   for (const [path, button] of [
-    ["/app/payroll", "Open Upload center"],
+    // Rows imported earlier keep their own page; /app/payroll is now the Payroll job.
+    ["/app/payroll-register", "Open Upload center"],
     ["/app/gateway-settlements", "Open Upload center"],
     ["/app/invoices", "Match invoices with the bank"],
     ["/app/ledger-match", "Compare bank with Tally"],
