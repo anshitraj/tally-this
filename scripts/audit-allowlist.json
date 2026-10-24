@@ -1,0 +1,10 @@
+{
+  "allowed": [
+    {
+      "id": "GHSA-mrhx-c7xc-m3w5",
+      "package": "zod",
+      "reason": "Out-of-memory validating a huge array whose schema has no length limit. The fix exists only in zod 4 (a major upgrade). The API still runs zod 3.25.76. Every array that takes data from a request has a .max() limit, enforced by backend/api/src/services/zodArrayLimits.test.ts; the unlimited ones only parse AI model replies, which the model's output limit bounds. Plan: move to zod 4 in Phase 1.",
+      "reviewBy": "2026-12-31"
+    }
+  ]
+}
