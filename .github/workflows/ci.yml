@@ -113,6 +113,28 @@ jobs:
         env:
           GATEWAY_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/tallythis_ci
 
+  deploy-scripts:
+    name: Deployment scripts (Google Cloud VM)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pytest
+      - name: Lint the shell scripts
+        run: shellcheck --severity=warning -x deploy/vm/*.sh
+      - name: Secret-fetching tests, against a fake Google
+        run: python -m pytest deploy/vm/tests -q
+      - name: The compose file renders with sample settings
+        run: |
+          sudo mkdir -p /run/tallythis
+          sudo touch /run/tallythis/api.env /run/tallythis/gateway.env /run/tallythis/worker.env
+          printf '%s\n' SITE_ADDRESS=api.example.test ACME_EMAIL=ops@example.test APP_ORIGIN=https://www.example.test \
+            CLOUDFLARE_R2_ACCOUNT_ID=x CLOUDFLARE_R2_BUCKET=y > "$RUNNER_TEMP/runtime.env"
+          docker compose --project-directory . --env-file "$RUNNER_TEMP/runtime.env" -f deploy/vm/compose.yaml config > /dev/null
+
   worker:
     name: Python worker
     runs-on: ubuntu-latest

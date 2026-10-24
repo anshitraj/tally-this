@@ -45,7 +45,9 @@ healthy() {
 
 echo "== Switching to $release"
 switch_to "$dir"
-systemctl restart tallythis
+# A failed start (for example a secret with no value yet) must not end the script here: the checks below explain
+# it and put the previous release back.
+systemctl restart tallythis || echo "== The service could not start; details follow." >&2
 
 ok=0
 for _ in $(seq 1 60); do
@@ -53,7 +55,11 @@ for _ in $(seq 1 60); do
     ok=1
     break
   fi
-  if ! systemctl is-active --quiet tallythis; then
+  # Give up early when the service has failed or has already had to restart itself (a service that is merely
+  # still starting reports "activating", which is not a reason to stop waiting).
+  state=$(systemctl is-active tallythis || true)
+  restarts=$(systemctl show -p NRestarts --value tallythis 2>/dev/null || echo 0)
+  if [ "$state" = failed ] || [ "$state" = inactive ] || [ "${restarts:-0}" -ge 1 ]; then
     break
   fi
   sleep 5
