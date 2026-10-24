@@ -100,9 +100,12 @@ export function toCsv(headers: string[], rows: Array<Array<unknown>>) {
   return [headers.map(quote).join(","), ...rows.map(row => row.map(quote).join(","))].join("\n");
 }
 
+/** Rupees in the Indian grouping: whole rupees show no decimals, anything with paise shows both ("₹6,420.50", never "₹6,420.5"). */
 export function inr(value: number | null | undefined) {
   if (value == null || !Number.isFinite(value)) return "—";
-  return `₹${value.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+  const paise = Math.round(Math.abs(value) * 100);
+  const shown = (paise / 100).toLocaleString("en-IN", { minimumFractionDigits: paise % 100 === 0 ? 0 : 2, maximumFractionDigits: 2 });
+  return `${value < 0 && paise > 0 ? "-" : ""}₹${shown}`;
 }
 
 /** Sends files with the active client attached. */

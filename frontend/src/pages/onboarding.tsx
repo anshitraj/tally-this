@@ -1,103 +1,137 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
-import { ArrowRight, Briefcase, Building, Calculator } from "lucide-react";
+import { ArrowRight, Building, Briefcase, Check } from "lucide-react";
 import { BrandMark } from "@/components/app/finverify-ui";
-import { Choice } from "@/components/jobs/jobUi";
+import { Choice, MoreOptions } from "@/components/jobs/jobUi";
 import { AUTOMATIONS } from "@/pages/app/overview";
-import { getAuthToken, getUser, login } from "@/lib/auth";
+import { getAuthToken, getUser, login, onboardingDoneKey } from "@/lib/auth";
 import { setActiveClient } from "@/lib/activeClient";
 import { cn } from "@/lib/utils";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-type Role = "ca" | "accountant" | "business";
+type Who = "clients" | "business";
 type Accounting = "Tally" | "Zoho" | "Other";
+type Step = 2 | 3;
 
-const ROLES: Array<{ id: Role; label: string; detail: string; icon: typeof Briefcase }> = [
-  { id: "ca", label: "CA / CA firm", detail: "I handle books for many clients", icon: Briefcase },
-  { id: "accountant", label: "Accountant", detail: "I keep books for a few businesses", icon: Calculator },
-  { id: "business", label: "Business owner", detail: "I manage my own company's books", icon: Building },
+const WHO: Array<{ id: Who; label: string; detail: string; icon: typeof Briefcase }> = [
+  { id: "clients", label: "I work for clients", detail: "CA firm or accountant", icon: Briefcase },
+  { id: "business", label: "It's my own business", detail: "I keep my company's books", icon: Building },
 ];
 
+/** What the person has typed so far, kept for this tab so a refresh does not start the setup again. */
+interface Draft {
+  step: Step;
+  who: Who;
+  accounting: Accounting;
+  clientName: string;
+  businessName: string;
+  fullName: string;
+  firmName: string;
+}
+
+const draftKey = (email: string) => `finverify_onboarding_draft:${email}`;
+
+function readDraft(email: string): Partial<Draft> {
+  try {
+    const raw = sessionStorage.getItem(draftKey(email));
+    return raw ? (JSON.parse(raw) as Partial<Draft>) : {};
+  } catch {
+    return {};
+  }
+}
+
 /** A name made up at sign-up (the start of the email, or "X's workspace") is not shown back as if the person typed it. */
-function suggested(value: string | undefined, email: string, placeholderPattern: RegExp) {
+function suggested(value: string | undefined, email: string, placeholderPattern?: RegExp) {
   const text = (value ?? "").trim();
-  if (!text || text === email.split("@")[0] || placeholderPattern.test(text)) return "";
+  if (!text || text === email.split("@")[0] || (placeholderPattern && placeholderPattern.test(text))) return "";
   return text;
 }
 
 /**
- * Step 1 finishes the account (name and firm, also after Google or GitHub), step 2 adds the first
- * client and step 3 picks the first job.
+ * Account creation was step 1, on the sign-up page. Step 2 adds the first client (one name, two pick-one questions)
+ * and step 3 opens the first job. Everything else is under More options or asked later by the job that needs it.
  */
 export default function OnboardingPage() {
   const [, navigate] = useLocation();
   const user = getUser();
-  const [step, setStep] = useState<1 | 2 | 3>(1);
-  const [fullName, setFullName] = useState(() => suggested(user?.name, user?.email ?? "", /^$/));
-  const [firmName, setFirmName] = useState(() => suggested(user?.company, user?.email ?? "", /'s workspace$/i));
-  const [role, setRole] = useState<Role>("ca");
-  const [clientName, setClientName] = useState("");
-  const [accounting, setAccounting] = useState<Accounting>("Tally");
+  const email = user?.email ?? "";
+  const saved = readDraft(email);
+
+  const [step, setStep] = useState<Step>(saved.step === 3 ? 3 : 2);
+  const [who, setWho] = useState<Who>(saved.who ?? "clients");
+  const [accounting, setAccounting] = useState<Accounting>(saved.accounting ?? "Tally");
+  const [clientName, setClientName] = useState(saved.clientName ?? "");
+  const [businessName, setBusinessName] = useState(saved.businessName ?? suggested(user?.company, email, /'s workspace$/i));
+  const [fullName, setFullName] = useState(saved.fullName ?? suggested(user?.name, email));
+  const [firmName, setFirmName] = useState(saved.firmName ?? suggested(user?.company, email, /'s workspace$/i));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
+  const alreadyDone = Boolean(user) && localStorage.getItem(onboardingDoneKey(email)) === "true";
+
   useEffect(() => {
-    if (!user) navigate("/login");
-  }, [user, navigate]);
+    if (!user) navigate("/login", { replace: true });
+    // Someone who has finished setting up never sees it again (Back button, an old link, a second visit).
+    else if (alreadyDone) navigate("/app/overview", { replace: true });
+  }, [user, alreadyDone, navigate]);
 
-  if (!user) return null;
-
-  const ownBusiness = role === "business";
-
-  const saveProfile = async () => {
-    setError("");
-    const name = fullName.trim();
-    const company = firmName.trim();
-    if (!name) {
-      setError("Enter your name.");
-      return;
-    }
-    setBusy(true);
+  useEffect(() => {
+    if (!email) return;
     try {
-      const response = await fetch(`${BASE}/api/account/profile`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, companyName: company }),
-      });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok || !body.ok) {
-        setError(body.error || "Your details could not be saved. Try again.");
-        return;
-      }
-      login({ user: { ...user, name, company: company || user.company }, token: getAuthToken() ?? undefined });
-      setStep(2);
-    } finally {
-      setBusy(false);
+      sessionStorage.setItem(draftKey(email), JSON.stringify({ step, who, accounting, clientName, businessName, fullName, firmName } satisfies Draft));
+    } catch {
+      // A blocked storage only means a refresh starts the step again.
     }
+  }, [email, step, who, accounting, clientName, businessName, fullName, firmName]);
+
+  if (!user || alreadyDone) return null;
+
+  const ownBusiness = who === "business";
+
+  const post = async (path: string, body: unknown) => {
+    const response = await fetch(`${BASE}${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const data = await response.json().catch(() => ({}));
+    return { response, data };
   };
 
-  const saveClient = async (skip: boolean) => {
-    setError("");
-    const name = clientName.trim();
-    if (ownBusiness || skip || !name) {
-      setActiveClient({ id: user.companyId ?? null, name: user.company || "My business", accounting });
-      setStep(3);
-      return;
+  /** Saves the person's own name and firm, only where they differ from what the account already has. */
+  const saveProfile = async (company: string) => {
+    const name = fullName.trim();
+    const changes: { name?: string; companyName?: string } = {};
+    if (name && name !== user.name) changes.name = name;
+    if (company && company !== user.company) changes.companyName = company;
+    if (!changes.name && !changes.companyName) return true;
+    const { response, data } = await post("/api/account/profile", changes);
+    if (!response.ok || !data.ok) {
+      setError(data.error || "Your details could not be saved. Try again.");
+      return false;
     }
+    login({ user: { ...user, name: changes.name ?? user.name, company: changes.companyName ?? user.company }, token: getAuthToken() ?? undefined });
+    return true;
+  };
+
+  const continueFromClient = async (skip: boolean) => {
+    setError("");
     setBusy(true);
     try {
-      const response = await fetch(`${BASE}/api/practice/clients`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
-      });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok || !body.client) {
-        setError(body.error || "Could not add the client. Try again.");
+      const firm = ownBusiness ? businessName.trim() : firmName.trim();
+      if (!(await saveProfile(firm))) return;
+      const ownCompany = firm || suggested(user.company, email, /'s workspace$/i) || "My business";
+      const name = clientName.trim();
+      if (ownBusiness || skip || !name) {
+        setActiveClient({ id: user.companyId ?? null, name: ownCompany, accounting });
+        setStep(3);
         return;
       }
-      setActiveClient({ id: body.client.companyId, name: body.client.name, accounting, linkId: body.client.linkId });
+      const { response, data } = await post("/api/practice/clients", { name });
+      // The same client sent twice (a refresh, a second click) answers 409 with the one that exists: use it.
+      const client = data.client as { companyId: number; name: string; linkId: number } | undefined;
+      if ((!response.ok && response.status !== 409) || !client) {
+        setError(data.error || "Could not add the client. Try again.");
+        return;
+      }
+      setActiveClient({ id: client.companyId, name: client.name, accounting, linkId: client.linkId });
       setStep(3);
     } finally {
       setBusy(false);
@@ -105,86 +139,66 @@ export default function OnboardingPage() {
   };
 
   const finish = (href: string) => {
-    localStorage.setItem(`finverify_onboarding_complete:${user.email}`, "true");
-    login({
-      user: { ...user, role: role === "ca" ? "ca" : role === "accountant" ? "finance" : "founder" },
-      token: getAuthToken() ?? undefined,
-    });
-    navigate(href);
+    localStorage.setItem(onboardingDoneKey(email), "true");
+    try {
+      sessionStorage.removeItem(draftKey(email));
+    } catch {
+      // nothing to clean up
+    }
+    // Replaces this page in the history, so the Back button leaves setup behind instead of returning to it.
+    navigate(href, { replace: true });
   };
+
+  const stages: Array<{ n: number; label: string }> = [
+    { n: 1, label: "Account" },
+    { n: 2, label: "Client" },
+    { n: 3, label: "First job" },
+  ];
 
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header className="border-b border-border bg-card">
         <div className="mx-auto flex h-16 max-w-2xl items-center justify-between px-4">
           <BrandMark />
-          <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
-            Step {step} of 3
-            <span className="flex gap-1">
-              {[1, 2, 3].map(index => <span key={index} className={cn("h-1.5 w-6 rounded-full", index <= step ? "bg-[var(--fv-accent)]" : "bg-muted")} />)}
-            </span>
-          </div>
+          <ol className="flex items-center gap-3 text-xs font-semibold text-muted-foreground" aria-label={`Step ${step} of 3`}>
+            {stages.map(stage => {
+              const done = stage.n < step;
+              const current = stage.n === step;
+              return (
+                <li key={stage.n} aria-current={current ? "step" : undefined} className={cn("flex items-center gap-1.5", current && "text-foreground")}>
+                  <span
+                    className={cn(
+                      "flex h-5 w-5 items-center justify-center rounded-full text-[11px]",
+                      done ? "bg-[var(--fv-accent)] text-white" : current ? "border-2 border-[var(--fv-accent)] text-foreground" : "border border-border",
+                    )}
+                  >
+                    {done ? <Check className="h-3 w-3" aria-hidden="true" /> : stage.n}
+                  </span>
+                  <span className="hidden sm:inline">{stage.label}</span>
+                </li>
+              );
+            })}
+          </ol>
         </div>
       </header>
 
       <main className="mx-auto max-w-2xl px-4 py-10">
-        {step === 1 && (
-          <section>
-            <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Welcome to TallyThis</h1>
-            <p className="mt-2 text-sm text-muted-foreground">Two quick details so your reports carry the right names.</p>
-            <form
-              className="mt-6 space-y-4 rounded-2xl border border-border bg-card p-5"
-              onSubmit={event => { event.preventDefault(); if (!busy) void saveProfile(); }}
-            >
-              <div>
-                <label htmlFor="full-name" className="text-sm font-semibold">Your name</label>
-                <input
-                  id="full-name"
-                  name="name"
-                  autoComplete="name"
-                  autoFocus
-                  value={fullName}
-                  onChange={event => setFullName(event.target.value)}
-                  placeholder="Aarav Sharma"
-                  className="fv-input mt-2 h-12 w-full text-base"
-                  required
-                />
-              </div>
-              <div>
-                <label htmlFor="firm-name" className="text-sm font-semibold">Firm or business name</label>
-                <input
-                  id="firm-name"
-                  name="organization"
-                  autoComplete="organization"
-                  value={firmName}
-                  onChange={event => setFirmName(event.target.value)}
-                  placeholder="Mehta & Associates"
-                  className="fv-input mt-2 h-12 w-full text-base"
-                />
-                <p className="mt-2 text-xs text-muted-foreground">Shown on reports. You can change it later.</p>
-              </div>
-              {error && <p className="text-sm text-red-700">{error}</p>}
-              <div className="flex justify-end">
-                <button type="submit" className="fv-button-primary h-12 px-8 text-base" disabled={busy || !fullName.trim()}>
-                  {busy ? "Saving…" : "Continue"}
-                </button>
-              </div>
-            </form>
-          </section>
-        )}
-
         {step === 2 && (
           <section>
-            <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Who are you?</h1>
-            <div className="mt-5 grid gap-3 sm:grid-cols-3">
-              {ROLES.map(item => {
+            <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">{ownBusiness ? "Confirm your business" : "Add your first client"}</h1>
+            <p className="mt-2 text-sm text-muted-foreground">
+              {ownBusiness ? "This is the business whose books you will work on." : "It takes a minute. You can add more clients later."}
+            </p>
+
+            <div className="mt-5 grid gap-3 sm:grid-cols-2" role="group" aria-label="Who are you">
+              {WHO.map(item => {
                 const Icon = item.icon;
-                const selected = role === item.id;
+                const selected = who === item.id;
                 return (
                   <button
                     key={item.id}
                     type="button"
-                    onClick={() => setRole(item.id)}
+                    onClick={() => setWho(item.id)}
                     aria-pressed={selected}
                     className={cn(
                       "rounded-2xl border bg-card p-4 text-left transition",
@@ -199,21 +213,32 @@ export default function OnboardingPage() {
               })}
             </div>
 
-            <div className="mt-8 rounded-2xl border border-border bg-card p-5">
+            <form
+              className="mt-6 rounded-2xl border border-border bg-card p-5"
+              onSubmit={event => { event.preventDefault(); if (!busy) void continueFromClient(false); }}
+            >
               {ownBusiness ? (
                 <>
-                  <div className="text-sm text-muted-foreground">Your business</div>
-                  <div className="mt-1 text-lg font-semibold">{user.company || "My business"}</div>
+                  <label htmlFor="business-name" className="text-sm font-semibold">Your business name</label>
+                  <input
+                    id="business-name"
+                    name="organization"
+                    autoComplete="organization"
+                    autoFocus
+                    value={businessName}
+                    onChange={event => setBusinessName(event.target.value)}
+                    placeholder="e.g. Sharma Traders"
+                    className="fv-input mt-2 h-12 w-full text-base"
+                  />
                 </>
               ) : (
                 <>
-                  <label htmlFor="client-name" className="text-sm font-semibold">Your first client's business name</label>
+                  <label htmlFor="client-name" className="text-sm font-semibold">Client's business name</label>
                   <input
                     id="client-name"
                     autoFocus
                     value={clientName}
                     onChange={event => setClientName(event.target.value)}
-                    onKeyDown={event => { if (event.key === "Enter" && clientName.trim()) void saveClient(false); }}
                     placeholder="e.g. Sharma Traders"
                     className="fv-input mt-2 h-12 w-full text-base"
                   />
@@ -228,22 +253,49 @@ export default function OnboardingPage() {
                   options={[{ value: "Tally", label: "Tally" }, { value: "Zoho", label: "Zoho Books" }, { value: "Other", label: "Something else" }]}
                 />
               </div>
-            </div>
 
-            {error && <p className="mt-3 text-sm text-red-700">{error}</p>}
-            <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
-              {!ownBusiness ? (
-                <button type="button" className="text-sm font-medium text-muted-foreground hover:text-foreground" onClick={() => saveClient(true)}>Skip for now</button>
-              ) : <span />}
-              <button
-                type="button"
-                className="fv-button-primary h-12 px-8 text-base"
-                disabled={busy || (!ownBusiness && !clientName.trim())}
-                onClick={() => saveClient(false)}
-              >
-                {busy ? "Saving…" : "Continue"}
-              </button>
-            </div>
+              <MoreOptions label="Your name and firm (optional)">
+                <div>
+                  <label htmlFor="full-name" className="text-sm font-semibold">Your name</label>
+                  <input
+                    id="full-name"
+                    name="name"
+                    autoComplete="name"
+                    value={fullName}
+                    onChange={event => setFullName(event.target.value)}
+                    placeholder="Aarav Sharma"
+                    className="fv-input mt-2 h-11 w-full"
+                  />
+                </div>
+                {!ownBusiness && (
+                  <div>
+                    <label htmlFor="firm-name" className="text-sm font-semibold">Your firm</label>
+                    <input
+                      id="firm-name"
+                      name="firm"
+                      autoComplete="organization"
+                      value={firmName}
+                      onChange={event => setFirmName(event.target.value)}
+                      placeholder="Mehta & Associates"
+                      className="fv-input mt-2 h-11 w-full"
+                    />
+                    <p className="mt-2 text-xs text-muted-foreground">Shown on reports. You can change both later in Settings.</p>
+                  </div>
+                )}
+              </MoreOptions>
+
+              {error && <p role="alert" className="mt-4 text-sm text-red-700">{error}</p>}
+              <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <button type="button" disabled={busy} className="text-sm font-medium text-muted-foreground hover:text-foreground" onClick={() => void continueFromClient(true)}>Skip for now</button>
+                <button
+                  type="submit"
+                  className="fv-button-primary h-12 px-8 text-base"
+                  disabled={busy || !(ownBusiness ? businessName : clientName).trim()}
+                >
+                  {busy ? "Saving…" : "Continue"}
+                </button>
+              </div>
+            </form>
           </section>
         )}
 
