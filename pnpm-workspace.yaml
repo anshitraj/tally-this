@@ -48,8 +48,13 @@ overrides:
   # Security advisories 9-10 Oct 2026: patched releases of packages that express/exceljs pull in.
   proxy-addr: '>=2.0.8'
   qs: '>=6.16.0'
-  fast-uri: '>=3.1.8'
-  body-parser: '>=2.3.0'
+  fast-uri: '>=4.2.3'
+  body-parser: '>=2.4.0'
+  # exceljs only uses uuid v4; 11.1.1 closes the bounds-check advisory in v3/v5/v6.
+  'exceljs>uuid': '^11.1.1'
+  # The Neon sign-in SDK ships zod 4.3.6; 4.6.6 fixes an out-of-memory advisory in the same major version.
+  '@neondatabase/auth>zod': '^4.6.6'
+  '@neondatabase/auth-ui>zod': '^4.6.6'
   'brace-expansion@^1.1.0': '>=1.1.21 <2'
   'brace-expansion@^2.0.0': '>=2.1.7 <3'
   '@esbuild-kit/esm-loader': npm:tsx@^4.21.0
