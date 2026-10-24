@@ -55,6 +55,12 @@ Do these in order. Steps 1 and 2 are yours; the rest are scripted.
    bash deploy/vm/set-secrets.sh
    ```
    It asks for each value with hidden input and sends it straight to Google. It also makes the two internal secrets at random. Nobody else, including Claude, sees what you type.
+
+   Or, with no typing, once the NEW values are in your local `.env` (`DATABASE_URL`, the R2 key pair, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`):
+   ```bash
+   bash deploy/vm/set-secrets.sh --from-env .env
+   ```
+   It copies them to Secret Manager and prints only the names and lengths. It refuses a value a container could not carry safely, and it never copies `JWT_SECRET` (the signing secret is made fresh on the server).
 4. **Deploy.**
    ```bash
    bash deploy/vm/deploy.sh

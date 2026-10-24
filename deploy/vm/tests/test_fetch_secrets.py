@@ -94,7 +94,7 @@ def run_script(base_url: str):
     if shutil.which("python3") is None or os.name == "nt":
         wrapper = shim / "python3"
         python = shutil.which("python") or "python"
-        wrapper.write_text(f'#!/bin/sh\nexec "{Path(python).as_posix()}" "$@"\n')
+        wrapper.write_text(f'#!/bin/sh\nexec "{Path(python).as_posix()}" "$@"\n', newline="\n")
         wrapper.chmod(wrapper.stat().st_mode | stat.S_IEXEC)
         env["PATH"] = f"{shim.as_posix()}{os.pathsep}{env['PATH']}"
     # Git Bash can mangle the path; hand it a form it understands.
