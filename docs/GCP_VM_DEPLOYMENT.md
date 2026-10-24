@@ -74,6 +74,7 @@ Do these in order. Steps 1 and 2 are yours; the rest are scripted.
 | Open a shell on the VM | `bash deploy/vm/ssh.sh` |
 | See what is running | `bash deploy/vm/ssh.sh 'sudo docker ps'` |
 | Read the logs | `bash deploy/vm/ssh.sh 'sudo journalctl -u tallythis -n 200 --no-pager'` |
+| Check each image works on its own (no real secrets needed) | `bash deploy/vm/ssh.sh 'sudo bash /opt/tallythis/current/deploy/vm/smoke-test.sh'` |
 | Change a non-secret setting | edit `deploy/vm/runtime.env`, then `deploy.sh` |
 | Change a secret | `bash deploy/vm/set-secrets.sh`, then `bash deploy/vm/ssh.sh 'sudo systemctl restart tallythis'` |
 | Make the signing secret new (signs everyone out) | `bash deploy/vm/set-secrets.sh --rotate`, then restart as above |
@@ -88,7 +89,7 @@ A VM of this size runs about a hundred dollars a month at list price, plus the d
 
 ## Not verified
 
-- The deployment has not carried real customer traffic and has never started with real secrets. What was checked on 24 October 2026: the provisioning script ran against the project; the VM boots, installs Docker and accepts SSH through the proxy; **all three images (gateway, API, worker) built successfully on the VM**; the release installer reached the start step and stopped there because the secrets had no values yet; and the secret-handling script passes its tests against a fake Google. Not yet seen: the stack running, the HTTPS certificate being issued, and the website talking to it.
+- The deployment has not carried real customer traffic and has never started with real secrets. What was checked on 24 October 2026: the provisioning script ran against the project; the VM boots, installs Docker and accepts SSH through the proxy; **all three images (gateway, API, worker) built successfully on the VM**; `smoke-test.sh` then started each image on its own with throwaway values and they behaved (the Caddyfile is valid; the worker refuses calls without its token and accepts them with it; the API boots and refuses unauthenticated writes; the gateway reaches both over the private network and sends no cross-site allowance to an unlisted origin); the release installer reached the start step and stopped there because the real secrets had no values yet; and the secret-handling script passes its tests against a fake Google. Not yet seen: the whole stack running with real secrets, the HTTPS certificate being issued, and the website talking to it.
 - **Vercel's proxy cuts any request at 120 seconds** ([Vercel limits](https://vercel.com/docs/limits)). A scan the AI reads for longer than that will fail when it goes through the website, whatever hosts the backend. This is not new. Fixing it means either calling the backend directly from the browser or making long reads run in the background; it is a Phase 1 item.
 - Vercel's limit on the size of an uploaded file through that proxy is not published; try a large statement through the website before relying on 60 MB.
 - One VM is one point of failure. If it stops, the site's backend is down until it restarts (usually a minute or two). Two VMs behind a load balancer is the next step if that matters.
