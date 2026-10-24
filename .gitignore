@@ -82,3 +82,7 @@ logs/
 # Settings for one particular Google Cloud deployment (project, domain, bucket). Never commit.
 /deploy/vm/config.sh
 /deploy/vm/runtime.env
+
+# Real-stack runner state (scripts/stack)
+/.stack/
+/frontend/test-results-real/
