@@ -6,13 +6,14 @@ Counts below are from the Phase 0 run on 24 October 2026 (see [PHASE0_STABILIZAT
 
 ## Automatic: runs on every pull request
 
-[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs these five jobs. None needs a database, a Tally installation, cloud storage or an AI key. Nothing in the workflow deploys anything. The workflow had not run on GitHub when this was written: the local runs below are the evidence so far.
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs these six jobs. None needs a Tally installation, cloud storage or an AI key, and the only database is a throwaway Postgres the job starts for itself. Nothing in the workflow deploys anything. The workflow had not run on GitHub when this was written: the local runs below are the evidence so far.
 
 | Job | Command | What it covers | Last local result |
 | --- | --- | --- | --- |
-| TypeScript | `pnpm run typecheck`, `pnpm --filter @workspace/api-server test`, `pnpm run build` | Types for libraries, API and frontend. Parsers, matching, Tally/GST/payroll XML builders, permissions, security configuration, log scrubbing, the Settings validator. The production build. | API tests 211 pass. |
+| TypeScript | `pnpm run typecheck`, `pnpm --filter @workspace/api-server test`, `pnpm run build` | Types for libraries, API and frontend. Parsers, matching, Tally/GST/payroll XML builders, permissions, security configuration, log scrubbing, the Settings validator. The production build. | API tests 212 pass. |
 | Dependency advisories | `node scripts/audit-gate.mjs` | Fails on a new critical or high advisory in production dependencies, and on an accepted one past its review date (`scripts/audit-allowlist.json`). Needs the npm registry. | 2 advisories left: zod 3 (accepted, guarded by `zodArrayLimits.test.ts`, review by 31 Dec 2026), esbuild (low, build tool only). |
 | Go gateway | `cd backend/gateway && gofmt -l . && go vet ./... && go test ./...` | Sign-in token checks, signing-secret rules, and the permission check on every gateway route, including the 401, 403 and fail-closed cases. The role table is read from the API's `permissions.ts`, so the two cannot drift without a test failing. | Pass. |
+| Go gateway against Postgres | `go test ./internal/routes/ -run RealDatabase` with `GATEWAY_TEST_DATABASE_URL` set (see below) | The gateway's real sign-in and permission SQL against the real tables: every role against every permission the gateway's routes use (allowed exactly where the API's role table allows), expired, revoked, forged and wrong-company sessions, disabled users, a permission switched off, a role with no rows, another company's rows not widening access, and the audit row written for each refusal. CI starts a Postgres service container and creates the schema with `pnpm --filter @workspace/db run push`; a skipped check fails the job. | 3 pass locally against a throwaway Postgres 18; mutation-checked (dropping the role condition, the `enabled` condition, or the revoked-session condition each fails it). |
 | Python worker | `cd backend/worker && python -m pytest tests -q` | Service-token check on every worker route, production fail-closed start, and the Tally connector's address rules (loopback, private ranges, cloud metadata, DNS answers, redirects). | 81 pass. |
 | Browser | `pnpm --filter @workspace/finverify-os exec playwright test` | The screens, with every API answer pretended. Playwright starts the Vite dev server itself. Includes `phase0-honesty.spec.ts`: the hosted site must not offer sending straight to Tally, and Settings must say Saved only after the server confirms. | 78 pass. |
 
@@ -31,16 +32,27 @@ pnpm --filter @workspace/finverify-os exec playwright test
 
 The worker tests need `pip install -r backend/worker/requirements.txt pytest`. The browser tests need `pnpm --filter @workspace/finverify-os exec playwright install chromium` once.
 
-## Manual: needs a real database
+## Needs a real database
 
-None of these run in CI. They talk to the database named in `DATABASE_URL`, so point them at a **separate Neon branch or a throwaway database, never production**. The `.env` file used for local work has historically held the production connection string; check it before running anything below.
+Everything here talks to a database. Use a **throwaway Postgres on your own computer, never the production Neon database**. The `.env` file used for local work has historically held the production connection string; check it before running anything.
 
 | Check | How | What it shows |
 | --- | --- | --- |
+| Gateway sign-in and permission SQL | Start a local Postgres, create the schema with `DATABASE_URL=postgresql://postgres@127.0.0.1:5432/tallythis_test pnpm --filter @workspace/db run push`, then `GATEWAY_TEST_DATABASE_URL=<same address> go test ./internal/routes/ -run RealDatabase -v` from `backend/gateway`. Runs in CI. | See the table above. The test refuses any host except this computer, adds rows under one company named "Gateway test ..." and removes them afterwards. Without the variable it skips. |
 | API and database are up | `pnpm run test:db` (needs the API running; reads `/api/health`) | The API reaches its database. It does not test any route. |
-| Route behaviour with real data | Start the API and gateway against the test database, then use the app | The routes below have **no automated test that runs them against a database**. Their logic is covered by unit tests on the pure functions they call; the wiring is covered by the typecheck only. |
 
-Routes in that second row that changed in Phase 0 and have not been exercised against a database: `PATCH /api/company`, the `409` answer on `/api/jobs/*/send`, `GET /api/jobs/tally/status` and `GET /api/jobs/tally/ledgers`, the `403` on `/api/tax-audit/connector/sync`, and the Go gateway's permission lookup against the real `role_permissions` table. Open Settings, save a change, and reload; try a Bank → Tally send on a hosted build; call a gateway reconciliation route as a viewer. Writing database-backed route tests is a recommended Phase 1 item.
+**The API's routes have no committed database-backed test.** The API talks to Neon through its HTTP driver, which cannot connect to a plain local Postgres, so a route test needs the database layer made swappable (a Phase 1 item). Their logic is covered by unit tests on the pure functions they call; the wiring by the typecheck.
+
+For Phase 0 the changed routes were instead exercised once by hand (24 October 2026): the real worker, the real Go gateway and a throwaway build of the real API whose only difference was a plain `pg` connection in place of the Neon HTTP driver, all against a throwaway Postgres 18 holding the Drizzle schema. 52 checks passed:
+
+- `PATCH /api/company` saves valid details, refuses a bad GSTIN with a reason and changes nothing, ignores fields the Settings page does not own (plan, retention, currency, id), refuses an empty save, writes an audit row, answers 403 to a viewer, and answers 401 when not signed in.
+- In production mode `POST /api/jobs/{bank-to-tally,bills,payroll}/send` and `GET /api/jobs/tally/ledgers` answer 409 with the plain explanation, `GET /api/jobs/tally/status` reports not available without contacting Tally, and the tax-audit connector refuses a cloud-metadata address and even `localhost`. In development mode status says available, metadata, private and non-Tally addresses are refused, and `localhost:9000` reaches the worker.
+- Through the real gateway in production mode, 11 of its 15 routes were called (the other four share their permissions with these): founder allowed, viewer allowed or refused as the API's role table says, anonymous 401. Express answered the viewer the same way as the gateway for `reconciliation/run`, refusals were audited, and `CORS_ORIGIN` was honoured (an unlisted origin got no allow header).
+- The upload route reached the worker with the shared token (200 in the worker's log); without the token the worker answered 401 and the upload still completed through the built-in reader.
+
+The same session loaded the real Settings and Connections pages in a browser against that stack: an invalid GSTIN showed "Not saved" with the server's reason, a valid save reached the database and survived a reload, and the Connections page said that sending straight to Tally needs TallyThis on the same computer as TallyPrime.
+
+That harness was not kept in the repository: it depended on the swapped driver and on a local Postgres install. The Neon HTTP driver path itself, and any route not listed above, were not exercised. Database-backed route tests in CI are the first Phase 1 testing item.
 
 ## Manual: needs R2 or an AI key
 

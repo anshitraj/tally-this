@@ -61,13 +61,21 @@ Rollback: redeploy the previous Railway release for each service. This branch ch
 
 - **The CI workflow has not run on GitHub.** Each job's commands were run locally.
 - **No real TallyPrime import.** The acceptance runners (`verify-tally`, `verify-tally-books`) have never been run. Nothing here changes what XML is produced.
-- **No database-backed test of the changed routes** (`PATCH /company`, the 409 and 403 answers, `tally/status`, the gateway's permission lookup on the real `role_permissions` table). They are covered by pure-function tests, the typecheck, and mutation checks that deliberately break the code and confirm tests fail.
+- **No committed database-backed test of the Express routes** (`PATCH /company`, the 409 and 403 answers, `tally/status`). Their logic is covered by pure-function tests, the typecheck, and mutation checks that break the code and confirm the tests fail. They were also exercised once by hand against a throwaway Postgres (52 checks, listed in [TESTING.md](TESTING.md)), with the API's database driver swapped for plain `pg`; the Neon HTTP driver path itself was not part of that run. The gateway's sign-in and permission SQL, by contrast, has a committed test that runs against a real Postgres, locally and in CI.
 - **Not deployed.** Docker images were not rebuilt and no Railway service was touched.
 - **Neon sign-in** (sign-up, code, reset, Google, GitHub, Safari) still needs a live test by the owner.
 - `TALLY_URL` is one setting for the whole API process: if live Tally were ever switched on for a multi-tenant host, every client would share it. Another reason it stays off in production.
 - The Go gateway still carries its older reconciliation engine alongside the TypeScript one. Which one answers a given screen is unchanged; removing the duplicate is outside Phase 0.
 - Local `.env` files have pointed at the production database. Use a separate Neon branch for development.
 
+## Found while testing, not fixed in Phase 0
+
+All three were there before this branch. They are recorded so they are not lost.
+
+- **The database cannot be rebuilt from the repository.** `period_locks` has no `CREATE TABLE` anywhere in the repo, and `workflow_runs`, `run_sources`, `run_artifacts` and `action_history` exist only in `scripts/migrate-workflow-runs.sql`, which `pnpm --filter @workspace/db run push` does not run. On a database made by `push` alone the gateway's workflow and reconciliation-folder routes answer 500, locking a month fails, and the period-lock check silently treats every month as unlocked (it logs a warning and carries on). Production presumably has these tables, since those screens work today, but nobody can recreate it from the code. Phase 1 needs a single migration path.
+- **A request the gateway rejects before reading its body (401 or 403 on a POST) is sometimes answered with a connection reset** when the client sends the headers and the body separately: about 10% of the time from Python on Windows, never from curl, and the same on the pre-Phase-0 gateway. GETs are unaffected. Not looked at on Linux or behind Vercel's proxy; if a browser ever reports a network error instead of "sign in again" on an expired session, this is where to look.
+- **The gateway's session lookup does not require `users.company_id` to equal the session's company, as Express does.** The two differ only if a user was moved between companies while signed in.
+
 ## Existing work preserved
 
-Bills → Tally, GST sales (GSTR-1 and 3B workings), Payroll, the OCR and Canara reader work and every earlier commit are intact on this branch: it contains local `main` in full. At the time of writing those commits (five on top of GitHub's `main`) existed only on the development machine. The test counts in [TESTING.md](TESTING.md) include their tests: the API suite went from 190 to 211 tests and the browser suite from 73 to 78, with none removed or changed to pass.
+Bills → Tally, GST sales (GSTR-1 and 3B workings), Payroll, the OCR and Canara reader work and every earlier commit are intact on this branch: it contains local `main` in full. At the time of writing those commits (five on top of GitHub's `main`) existed only on the development machine. The test counts in [TESTING.md](TESTING.md) include their tests: the API suite went from 190 to 212 tests and the browser suite from 73 to 78, with none removed or changed to pass.
