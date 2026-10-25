@@ -76,7 +76,7 @@ test.describe("Clients", () => {
 
     // The same name again, in other capitals, is not added.
     await addClient("second client");
-    await expect(page.getByText("You already have a client with this name.")).toBeVisible();
+    await expect(page.getByText("You already have a client with this name.", { exact: true })).toBeVisible();
     let clients = await api(page, "GET", "/api/practice/clients?light=1");
     expect(clients.json.clients.map((client: { name: string }) => client.name).sort()).toEqual(["First Client", "Second Client"]);
 
@@ -84,14 +84,14 @@ test.describe("Clients", () => {
     await page.getByRole("button", { name: "Rename Second Client" }).click();
     await page.getByLabel("Client name").fill("Second Client Ltd");
     await page.getByRole("button", { name: "Save name" }).click();
-    await expect(page.getByText("Name updated")).toBeVisible();
+    await expect(page.getByText("Name updated", { exact: true })).toBeVisible();
     await expect(page.getByText("Second Client Ltd").filter({ visible: true }).first()).toBeVisible();
 
     // Remove from the list: the client's company and its work are kept.
     const secondId = clients.json.clients.find((client: { name: string }) => client.name === "Second Client").companyId as number;
     await page.getByRole("button", { name: "Remove Second Client Ltd" }).click();
     await page.getByRole("button", { name: "Yes, remove" }).click();
-    await expect(page.getByText("Client removed from your list")).toBeVisible();
+    await expect(page.getByText("Client removed from your list", { exact: true })).toBeVisible();
     clients = await api(page, "GET", "/api/practice/clients?light=1");
     expect(clients.json.clients.map((client: { name: string }) => client.name)).toEqual(["First Client"]);
     const kept = await sql("select id from companies where id = $1", [secondId]);
