@@ -7,9 +7,9 @@ Deployment: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. Frontend source is in
 migrations are in `lib/db/`. Set `BACKEND_ORIGIN` in Vercel to the backend's HTTPS address
 (`https://api.tallythis.xyz`). Existing Vercel projects must update their old Root Directory.
 
-Support: [contact@tallythis.xyz](mailto:contact@tallythis.xyz). Website domain is pending confirmation (`tally.xyz` versus `tallythis.xyz`); no production DNS or mail service has been provisioned by these code changes.
+Support: [contact@tallythis.xyz](mailto:contact@tallythis.xyz). The website domain is `tallythis.xyz` (DNS at Spaceship; the site on Vercel, the backend at `api.tallythis.xyz`). Setting this address in the app does not create the mailbox; that is set up separately.
 
-Production launch requirements and the code audit are in [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md). Brand changes preserve the existing package names, database schemas and browser storage keys for compatibility.
+Going live, in order, with what has and has not been checked: [docs/GO_LIVE.md](docs/GO_LIVE.md). The wider launch requirements and the code audit are in [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md). Brand changes preserve the existing package names, database schemas and browser storage keys for compatibility.
 
 TallyThis is accounting automation for CAs, accountants, and finance teams.
 
@@ -144,7 +144,7 @@ Job automation tests (parsers, matching, Tally XML, file detection):
 pnpm --filter @workspace/api-server test
 ```
 
-The Go gateway, Python worker and browser tests, what each one proves, and which checks need a real database or TallyPrime are in [docs/TESTING.md](docs/TESTING.md). `.github/workflows/ci.yml` runs them on every pull request.
+The Go gateway, Python worker and browser tests, what each one proves, and which checks need a real database or TallyPrime are in [docs/TESTING.md](docs/TESTING.md). `.github/workflows/ci.yml` runs them on every pull request. The thorough browser suite runs the real worker, API and gateway against a Postgres on this computer and drives the product the way a person would (`STACK_DATABASE_URL=postgresql://postgres@127.0.0.1:5432/tallythis_stack pnpm --filter @workspace/finverify-os run test:real`); it writes test accounts and files to that database, so use a throwaway one (it refuses any address that is not this computer).
 
 Sample PDFs (text and scanned) for manual testing:
 
@@ -266,7 +266,7 @@ curl http://localhost:8080/api/health
 
 ## Authentication
 
-**Neon Auth (managed Better Auth, beta).** When `NEON_AUTH_URL` is set, the sign-in page uses Neon Auth: email + password with a 6-digit email code to confirm the address, a code-based password reset, and Google/GitHub through Neon. The browser talks to Neon with `@neondatabase/auth` (loaded only on the sign-in page); `POST /api/auth/neon/exchange` then checks the signed Neon token against Neon's public keys (`NEON_JWKS_URL`, default `<NEON_AUTH_URL>/.well-known/jwks.json`; EdDSA only, issuer pinned), reads the person from the `neon_auth` schema in the same database, and returns the same TallyThis session the older sign-in returns, so the Go gateway and every route are unchanged. An older account with the same email is claimed only after Neon has verified that email (`users.neon_user_id`, migration `scripts/migrate-neon-auth.sql`). With Neon Auth on, `/api/auth/register` is closed because it skips email confirmation; set `LEGACY_PASSWORD_LOGIN=false` to close the older password sign-in as well. Verification codes work with Neon's shared email sender, which is rate-limited; set a custom SMTP provider and your own Google/GitHub OAuth apps in the Neon console before launch. Not verified against a live sign-in by the developer: test sign-up, code confirmation, password reset and Google/GitHub in a browser, including Safari, because Neon's session cookie is set from another domain. See [PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md).
+**Neon Auth (managed Better Auth, beta).** When `NEON_AUTH_URL` is set, the sign-in page uses Neon Auth: email + password with a 6-digit email code to confirm the address, a code-based password reset, and Google/GitHub through Neon. The browser talks to Neon with `@neondatabase/auth` (loaded only on the sign-in page); `POST /api/auth/neon/exchange` then checks the signed Neon token against Neon's public keys (`NEON_JWKS_URL`, default `<NEON_AUTH_URL>/.well-known/jwks.json`; EdDSA only, issuer pinned), reads the person from the `neon_auth` schema in the same database, and returns the same TallyThis session the older sign-in returns, so the Go gateway and every route are unchanged. An older account with the same email is claimed only after Neon has verified that email (`users.neon_user_id`, created by `lib/db/migrations/0001_base_tables.sql`). With Neon Auth on, `/api/auth/register` is closed because it skips email confirmation; set `LEGACY_PASSWORD_LOGIN=false` to close the older password sign-in as well. Verification codes work with Neon's shared email sender, which is rate-limited; set a custom SMTP provider and your own Google/GitHub OAuth apps in the Neon console before launch. Not verified against a live sign-in by the developer: test sign-up, code confirmation, password reset and Google/GitHub in a browser, including Safari, because Neon's session cookie is set from another domain. See [PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md).
 
 Older email/password signup and signin are real database-backed flows. A new signup creates an empty company workspace in Neon with founder permissions; it does not seed demo data.
 

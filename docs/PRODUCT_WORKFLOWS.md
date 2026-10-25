@@ -41,7 +41,7 @@ A scan or photo cannot be read without AI. Privacy mode asks first ("This scan n
 
 ## Runs
 
-`workflow_runs`, `run_sources`, `run_artifacts`, and `action_history` are created by `scripts/migrate-workflow-runs.sql`. Job results are stored on the run. Progress is `GET /api/workflow/runs/:id/progress`. `GET /api/workflow/runs` lists runs for the active client.
+`workflow_runs`, `run_sources`, `run_artifacts`, and `action_history` are created by `lib/db/migrations/0002_workflow_tables.sql`. Job results are stored on the run. Progress is `GET /api/workflow/runs/:id/progress`. `GET /api/workflow/runs` lists runs for the active client.
 
 Activity is the workflow audit trail, shown in plain language. Upload history on the upload center is the file trail.
 

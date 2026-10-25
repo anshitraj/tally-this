@@ -34,6 +34,8 @@ jobs:
         run: pnpm --filter @workspace/db test
       - name: Build
         run: pnpm run build
+      - name: Website deployment configuration (rewrites, security headers)
+        run: pnpm run test:deployment
 
   advisories:
     name: Dependency advisories

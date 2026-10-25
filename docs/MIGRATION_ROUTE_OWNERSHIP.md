@@ -60,8 +60,7 @@ The migration brief requires `workflow_runs`, `run_sources`, `run_artifacts`, an
 
 Current checked-in state after this migration slice:
 
-- `workflow_runs`, `run_sources`, `run_artifacts`, and `action_history` are defined in `scripts/migrate-workflow-runs.sql`.
-- `migrate.py` reads and runs `scripts/migrate-workflow-runs.sql`, avoiding a second embedded SQL copy.
+- `workflow_runs`, `run_sources`, `run_artifacts`, and `action_history` are created by `lib/db/migrations/0002_workflow_tables.sql`, applied with `pnpm --filter @workspace/db run migrate` (the one migration path; see [DEPLOYMENT.md](DEPLOYMENT.md)). The older `scripts/migrate-workflow-runs.sql` and the root `migrate.py` that reads it are superseded; `migrate.py` reads a `.env` file, which on this project has held the production address, so do not run it.
 - `run_sources` and `run_artifacts` are still written from TypeScript fallback import/reconciliation flows until those routes move to Go.
 - Go `/api/action-history` can read the dedicated `action_history` table but falls back to `audit_logs` because current TypeScript flows still write audit logs.
 - Status naming is normalized toward `queued`/`running`/`completed`/`failed`/`cancelled`; Go maps older `pending`/`complete` rows for frontend compatibility.
