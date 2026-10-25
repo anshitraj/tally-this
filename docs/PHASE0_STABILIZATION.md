@@ -61,7 +61,7 @@ Rollback: redeploy the previous Railway release for each service. This branch ch
 
 ## Not verified
 
-- **The CI workflow has not run on GitHub.** Each job's commands were run locally.
+- **The CI workflow has not run on GitHub.** Each job's commands were run locally. (It has since: all eight jobs passed on pull request 14 on 25 October 2026; see [TESTING.md](TESTING.md).)
 - **No real TallyPrime import.** The acceptance runners (`verify-tally`, `verify-tally-books`) have never been run. Nothing here changes what XML is produced.
 - **No committed database-backed test of the Express routes** (`PATCH /company`, the 409 and 403 answers, `tally/status`). Their logic is covered by pure-function tests, the typecheck, and mutation checks that break the code and confirm the tests fail. They were also exercised once by hand against a throwaway Postgres (52 checks, listed in [TESTING.md](TESTING.md)), with the API's database driver swapped for plain `pg`; the Neon HTTP driver path itself was not part of that run. The gateway's sign-in and permission SQL, by contrast, has a committed test that runs against a real Postgres, locally and in CI.
 - **Not deployed.** Docker images were not rebuilt and no Railway service was touched.

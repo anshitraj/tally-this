@@ -6,7 +6,7 @@ Counts below are from the runs of 25 October 2026 on branch `release/go-live`. T
 
 ## Automatic: runs on every pull request
 
-[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs these eight jobs. None needs a Tally installation, cloud storage or an AI key, and the only database is a throwaway Postgres the job starts for itself. Nothing in the workflow deploys anything. The workflow had not run on GitHub when this was written: the local runs below are the evidence so far.
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs these eight jobs. None needs a Tally installation, cloud storage or an AI key, and the only database is a throwaway Postgres the job starts for itself. Nothing in the workflow deploys anything. Its first run on GitHub (pull request 14, 25 October 2026, Ubuntu 24.04) passed all eight jobs: the real-backend browser job ran 120 tests in 5.5 minutes and the mocked browser job 89 in 1.5 minutes. The local counts below are from the same day.
 
 | Job | Command | What it covers | Last local result |
 | --- | --- | --- | --- |
