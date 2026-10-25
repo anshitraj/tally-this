@@ -54,13 +54,13 @@ Everything below ran on 25 October 2026 on one Windows computer, with synthetic 
 
 | Check | Result | It shows | It does not show |
 | --- | --- | --- | --- |
-| Real-stack browser suite (`pnpm --filter @workspace/finverify-os run test:real`) | 109 pass (4.5 minutes) | Sign-up, setup, every job from upload to download with exact figures, reports, activity, history, settings, privacy mode, team roles, two companies kept apart, sign-in abuse limits, upload limits, a 5,000-row statement, several people at once, a text-layer PDF statement | That Neon sign-in, email, R2, AI reading, a real bank's layout or a real marketplace export behaves the same |
+| Real-stack browser suite (`pnpm --filter @workspace/finverify-os run test:real`) | 120 pass (4.8 minutes) | Sign-up, setup, every job from upload to download with exact figures, reports, activity, history, settings, privacy mode, team roles, two companies kept apart, sign-in abuse limits, upload limits, a 5,000-row statement, several people at once, a text-layer PDF statement, the Tax Audit import and its findings | That Neon sign-in, email, R2, AI reading, a real bank's layout or a real marketplace export behaves the same |
 | Quick browser suite (answers pretended) | 89 pass | Every screen renders and behaves as designed | Anything about the backend |
-| API unit tests | 214 pass | Parsers, matching, XML builders, permissions, scrubbing, error mapping | Real Tally or GST acceptance |
+| API unit tests | 237 pass | Parsers, matching, XML builders, permissions, scrubbing, error mapping | Real Tally or GST acceptance |
 | Database package | 2 pass | The driver is chosen by host; a real database is never given the local driver | The live Neon connection |
 | Deployment configuration | 4 pass | The Vercel configuration, security headers, rewrites | The Vercel dashboard settings |
 | Go gateway | pass (format, vet, tests) | Sign-in and permission checks, route table | |
-| Python worker | 81 pass | Service token and connector address rules | |
+| Python worker | 112 pass | Service token and connector address rules | |
 | VM scripts | 26 pass, 1 skipped (a file-mode check that only runs on Linux) | Deploy and secret scripts behave | A deploy to the live VM |
 | Typecheck, build, advisory gate | pass | The code compiles and no new serious advisory appeared | |
 | Read-only look at production Neon | pass | Schema equals the migrations; no duplicate emails | That migration `0004` applies cleanly there |
@@ -69,6 +69,7 @@ Everything below ran on 25 October 2026 on one Windows computer, with synthetic 
 
 - Neon sign-up codes, password reset, Google and GitHub sign-in, and email delivery: these need a live test by the owner (step 6). The local runs use the older password sign-in, because no account may be made on Neon's hosted service from the test tooling.
 - A TallyPrime import of any file, and a GST portal upload ([TALLY_IMPORT_ACCEPTANCE.md](TALLY_IMPORT_ACCEPTANCE.md)). Output is described as drafts for CA review.
+- Any export from a real TallyPrime, for the Tax Audit page or the Bank ↔ Tally job: the tests use hand-written XML and CSV. For Tax Audit, try one real export with both masters and vouchers and read what the page says could not run.
 - Any bank statement layout, marketplace export or Tally export not in the synthetic and regression files; scanned statements; password-protected PDFs from a bank not tried.
 - Real cloud storage (R2), real AI providers, the Anthropic fallback (it still needs its workspace id).
 - What the Vercel proxy does to long requests (it cuts them at 120 seconds) and to large uploads. `smoke-live.mjs` can probe this after step 4.
