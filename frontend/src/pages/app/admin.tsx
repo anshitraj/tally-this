@@ -59,40 +59,6 @@ interface SecurityPosture {
   notes: string[];
 }
 
-const DEMO_USERS: AdminUser[] = [
-  { id: 1, name: "Rahul Mehta", email: "rahul@novastack.in", role: "founder", status: "active", lastLoginAt: "2026-05-24T14:18:00.000Z" },
-  { id: 2, name: "Ananya Rao", email: "admin@novastack.in", role: "admin", status: "active", lastLoginAt: "2026-05-23T11:30:00.000Z" },
-  { id: 3, name: "CA Priya Sharma", email: "ca@finverify.in", role: "ca", status: "active", lastLoginAt: "2026-05-22T09:05:00.000Z" },
-];
-
-const DEMO_AUDIT_LOGS: AuditLog[] = [
-  { id: 1, actorEmail: "rahul@novastack.in", action: "upload.created", entityType: "bank_statement", createdAt: "2026-05-24T12:50:00.000Z" },
-  { id: 2, actorEmail: "ca@finverify.in", action: "risk.reviewed", entityType: "gst_risk", createdAt: "2026-05-24T10:20:00.000Z" },
-  { id: 3, actorEmail: "system", action: "reconciliation.run", entityType: "transaction", createdAt: "2026-05-23T16:40:00.000Z" },
-];
-
-const DEMO_DOCUMENTS: DocumentRecord[] = [
-  { id: 1, fileName: "HDFC bank statement - May.csv", sourceType: "bank_statement", storageProvider: "metadata_only", status: "verified", extractedTextStatus: "parsed", createdAt: "2026-05-21T09:30:00.000Z" },
-  { id: 2, fileName: "Zoho invoices export.xlsx", sourceType: "invoice_export", storageProvider: "metadata_only", status: "needs_ca_review", extractedTextStatus: "parsed", createdAt: "2026-05-20T14:10:00.000Z" },
-  { id: 3, fileName: "GST 2B reconciliation.pdf", sourceType: "gst_file", storageProvider: "metadata_only", status: "potential_risk", extractedTextStatus: "metadata_only", createdAt: "2026-05-18T11:45:00.000Z" },
-];
-
-const DEMO_SECURITY: SecurityPosture = {
-  roleBasedAccessDesign: true,
-  activeUsers: 3,
-  auditLogsEnabled: true,
-  auditLogEvents: 3,
-  fileStorageMode: "metadata_only",
-  aiMode: "rule-based",
-  directIntegrationsLive: false,
-  dataExportDeleteControls: true,
-  notes: [
-    "Current workflows are upload-based unless a source is marked available in code.",
-    "Local Tally connector is available when Tally is reachable from the API host; bank, GST, and gateway API connections are not live.",
-    "Potential risk — needs CA review before financial close.",
-  ],
-};
-
 async function fetchJson<T>(path: string): Promise<T> {
   const response = await fetch(`${BASE}${path}`);
   if (!response.ok) throw new Error(`${path} failed: ${response.status}`);
@@ -107,25 +73,22 @@ function roleTone(role: string) {
 
 export default function AdminPage() {
   const [, navigate] = useLocation();
-  const { data: users = DEMO_USERS } = useQuery<AdminUser[]>({
+  // Only the workspace's own records. Nothing is shown before they arrive, and nothing invented stands in for them.
+  const { data: users = [] } = useQuery<AdminUser[]>({
     queryKey: ["adminUsers"],
     queryFn: () => fetchJson<AdminUser[]>("/api/users"),
-    initialData: DEMO_USERS,
   });
-  const { data: auditLogs = DEMO_AUDIT_LOGS } = useQuery<AuditLog[]>({
+  const { data: auditLogs = [] } = useQuery<AuditLog[]>({
     queryKey: ["adminAuditLogs"],
     queryFn: () => fetchJson<AuditLog[]>("/api/audit-logs?limit=6"),
-    initialData: DEMO_AUDIT_LOGS,
   });
-  const { data: documents = DEMO_DOCUMENTS } = useQuery<DocumentRecord[]>({
+  const { data: documents = [] } = useQuery<DocumentRecord[]>({
     queryKey: ["adminDocuments"],
     queryFn: () => fetchJson<DocumentRecord[]>("/api/documents"),
-    initialData: DEMO_DOCUMENTS,
   });
-  const { data: security = DEMO_SECURITY } = useQuery<SecurityPosture>({
+  const { data: security } = useQuery<SecurityPosture>({
     queryKey: ["adminSecurityPosture"],
     queryFn: () => fetchJson<SecurityPosture>("/api/security/posture"),
-    initialData: DEMO_SECURITY,
   });
 
   const openDocuments = documents.filter(document => document.status !== "deleted");
@@ -133,14 +96,16 @@ export default function AdminPage() {
   const activeUsers = users.filter(user => user.status === "active");
   const caUsers = users.filter(user => user.role === "ca");
 
-  const controls = [
-    { label: "RBAC", value: security.roleBasedAccessDesign ? "Designed" : "Not configured", status: "verified" },
-    { label: "Audit trail", value: security.auditLogsEnabled ? "Enabled" : "Not enabled", status: security.auditLogsEnabled ? "verified" : "unverified" },
-    { label: "File storage", value: security.fileStorageMode === "metadata_only" ? "Metadata only" : "Configured", status: "needs_ca_review" },
-    { label: "AI mode", value: security.aiMode === "ai-assisted" ? "AI-assisted" : "Rule-first", status: "verified" },
-    { label: "Direct integrations", value: security.directIntegrationsLive ? "Live" : "Not live", status: security.directIntegrationsLive ? "verified" : "unverified" },
-    { label: "Data controls", value: security.dataExportDeleteControls ? "Available" : "Planned", status: security.dataExportDeleteControls ? "verified" : "needs_ca_review" },
-  ];
+  const controls = security
+    ? [
+        { label: "RBAC", value: security.roleBasedAccessDesign ? "Designed" : "Not configured", status: "verified" },
+        { label: "Audit trail", value: security.auditLogsEnabled ? "Enabled" : "Not enabled", status: security.auditLogsEnabled ? "verified" : "unverified" },
+        { label: "File storage", value: security.fileStorageMode === "metadata_only" ? "Metadata only" : "Configured", status: "needs_ca_review" },
+        { label: "AI mode", value: security.aiMode === "ai-assisted" ? "AI-assisted" : "Rule-first", status: "verified" },
+        { label: "Direct integrations", value: security.directIntegrationsLive ? "Live" : "Not live", status: security.directIntegrationsLive ? "verified" : "unverified" },
+        { label: "Data controls", value: security.dataExportDeleteControls ? "Available" : "Planned", status: security.dataExportDeleteControls ? "verified" : "needs_ca_review" },
+      ]
+    : [];
 
   return (
     <PageTransition className="mx-auto max-w-7xl">
@@ -180,6 +145,7 @@ export default function AdminPage() {
             </button>
           </div>
           <div className="divide-y divide-border">
+            {users.length === 0 && <p className="px-5 py-4 text-sm text-muted-foreground">No team members to show.</p>}
             {users.map(user => (
               <div key={user.id} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
@@ -204,6 +170,7 @@ export default function AdminPage() {
             <ShieldCheck className="h-5 w-5 text-primary" />
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
+            {controls.length === 0 && <p className="text-sm text-muted-foreground sm:col-span-2">Loading…</p>}
             {controls.map(control => (
               <div key={control.label} className="rounded-xl border border-border bg-background p-3">
                 <div className="mb-2 flex items-start justify-between gap-2">
@@ -227,6 +194,7 @@ export default function AdminPage() {
             <Database className="h-5 w-5 text-primary" />
           </div>
           <div className="divide-y divide-border">
+            {documents.length === 0 && <p className="px-5 py-4 text-sm text-muted-foreground">No uploaded files yet.</p>}
             {documents.slice(0, 5).map(document => (
               <button key={document.id} type="button" onClick={() => navigate("/app/uploads")} className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left transition hover:bg-muted/40">
                 <span className="min-w-0">
@@ -250,6 +218,7 @@ export default function AdminPage() {
             </button>
           </div>
           <div className="divide-y divide-border">
+            {auditLogs.length === 0 && <p className="px-5 py-4 text-sm text-muted-foreground">No recent actions to show.</p>}
             {auditLogs.map(log => (
               <div key={log.id} className="flex flex-col gap-2 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
@@ -274,7 +243,7 @@ export default function AdminPage() {
               Admin guardrails
             </div>
             <div className="mt-3 grid gap-2 text-sm leading-6 text-muted-foreground md:grid-cols-3">
-              {security.notes.map(note => <p key={note}>{note}</p>)}
+              {(security?.notes ?? []).map(note => <p key={note}>{note}</p>)}
             </div>
           </div>
           <button type="button" onClick={() => navigate("/app/reports")} className="fv-button-secondary shrink-0">

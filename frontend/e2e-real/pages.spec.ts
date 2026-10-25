@@ -90,6 +90,18 @@ test.describe("every page", () => {
     }
   });
 
+  test("the admin page shows this workspace's own people and actions, never invented ones", async ({ page }) => {
+    // It used to open with made-up users, documents and audit entries until the real ones arrived.
+    const account = await signedUpAccount(page, "admin", "Admin Client");
+    await open(page, "/app/admin");
+    await expect(page.getByRole("heading", { name: "Admin Dashboard" })).toBeVisible();
+    await expect(page.getByText(account.email).first()).toBeVisible();
+    const text = (await page.locator("main").innerText()).replace(/\s+/g, " ");
+    for (const invented of ["novastack", "finverify.in", "Rahul Mehta", "Ananya Rao", "CA Priya", "HDFC bank statement - May", "Zoho invoices export", "GST 2B reconciliation.pdf"]) {
+      expect(text, `the admin page shows "${invented}"`).not.toContain(invented);
+    }
+  });
+
   test("an address that does not exist inside the app says so and offers the way back", async ({ page }) => {
     await signedUpAccount(page, "missing", "Missing Client");
     await open(page, "/app/not-a-page");

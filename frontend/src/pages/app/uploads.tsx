@@ -391,6 +391,9 @@ export default function UploadsPage() {
     },
     onSuccess: result => {
       qc.invalidateQueries({ queryKey: ["uploads"] });
+      // The next-step panel and the action history say what has been uploaded; without this they keep saying "nothing yet".
+      qc.invalidateQueries({ queryKey: ["monthly-close-workflow"] });
+      qc.invalidateQueries({ queryKey: ["action-history"] });
       qc.invalidateQueries({ queryKey: ["overview"] });
       qc.invalidateQueries({ queryKey: ["transactions"] });
       qc.invalidateQueries({ queryKey: ["invoices"] });
