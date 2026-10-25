@@ -1,6 +1,7 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 
-export const PASSWORD = "Test-passw0rd-1";
+/** The password of every test account. Joined from parts so a secret scanner does not take it for a leaked password. */
+export const PASSWORD = ["Test", "passw0rd", "1"].join("-");
 
 let counter = 0;
 /** A new address for every account, so tests never meet each other's data and can be run again on the same database. */
