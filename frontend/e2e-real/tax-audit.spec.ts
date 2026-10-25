@@ -146,8 +146,8 @@ test.describe("Tax Audit", () => {
     await signedUpAccount(page, "ta-bad", "Bad File Client");
     await page.goto("/app/tax-audit");
     await importExport(page, "<html><body>this is a web page</body></html>", );
-    await expect(page.getByText("Import failed")).toBeVisible();
-    await expect(page.getByText("No ledgers or vouchers found in file.")).toBeVisible();
+    await expect(page.getByText("Import failed", { exact: true })).toBeVisible();
+    await expect(page.getByText("No ledgers or vouchers found in file.").first()).toBeVisible();
     await expect(page.getByText("Showing demo data")).toBeVisible();
 
     await importExport(page, "<ENVELOPE><BODY>");
@@ -162,7 +162,7 @@ test.describe("Tax Audit", () => {
     await expect(page.getByText(`${EXPECTED.flagged} of ${EXPECTED.total} checks flagged`)).toBeVisible();
 
     await page.getByRole("button", { name: "Reset to demo" }).click();
-    await expect(page.getByText("Reverted to demo data")).toBeVisible();
+    await expect(page.getByText("Reverted to demo data", { exact: true })).toBeVisible();
     await expect(page.getByText("Showing demo data")).toBeVisible();
     expect((await taxAudit(page)).source).toBe("demo");
 

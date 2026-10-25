@@ -15,7 +15,7 @@ Written 25 October 2026 for branch `release/go-live`. It lists what must happen 
 
 Steps 1 to 4 change shared systems, so each needs the owner's go-ahead and is not done by the test tooling.
 
-1. **Publish the code.** Push `release/go-live` and open a pull request to `main`. It already contains everything in the open pull requests 12 and 13 and in the two local branches (42 commits ahead of `main` on GitHub), so merging it alone is enough; merge 12 and 13 first only if you want smaller steps. Read the CI result; the workflow has not run on GitHub before, so expect to fix a first-run problem. Merge when green.
+1. **Publish the code.** Push `release/go-live` and open a pull request to `main`. It already contains everything in the open pull requests 12 and 13 and in the two local branches (over forty commits ahead of `main` on GitHub), so merging it alone is enough; merge 12 and 13 first only if you want smaller steps. Read the CI result; the workflow has not run on GitHub before, so expect to fix a first-run problem. Merge when green.
 2. **Check, then apply, the database migration.** Each file runs in one transaction, so if two accounts already share an email the new unique index fails and nothing changes:
 
    ```bash
