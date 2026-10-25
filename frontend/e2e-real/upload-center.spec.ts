@@ -25,7 +25,8 @@ test.describe("Upload Center", () => {
 
     await expect(page.getByText(/^Uploaded successfully to Bank Statement folder/)).toBeVisible();
     await expect(page.getByText("24 rows").first()).toBeVisible();
-    // Without a reload, the panels beside it know about the file (they used to keep saying "nothing yet").
+    // Without a reload, the panels beside it know about the file (they used to keep saying "nothing yet"; the file went in
+    // while the panel's own first request was still loading, which e2e/upload-refresh.spec.ts pins down exactly).
     await expect(page.getByText("Bank Statement not uploaded or not parsed yet.")).toHaveCount(0);
     await expect(page.getByText("Parsed upload", { exact: true }).first()).toBeVisible();
 
