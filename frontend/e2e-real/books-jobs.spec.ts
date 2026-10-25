@@ -122,6 +122,47 @@ test.describe("Bills → Tally", () => {
   });
 });
 
+test.describe("Bills → Tally: fixing a blocked bill", () => {
+  test("correcting the total releases the Tally file, which then balances", async ({ page }) => {
+    await signedUpAccount(page, "bt-fix", "Bills Fix Client");
+    await openJob(page, "bills-tally", "Bills → Tally");
+    await upload(page, "purchases-oct-2026.csv", PURCHASE_LIST_WITH_ERROR);
+    expect(await stat(page, /^needs? a fix$/)).toBe("1");
+
+    // BS-77 says ₹25,000 but 20,000 + IGST 3,600 is 23,600.
+    await page.getByRole("button", { name: "Fix 1 bill" }).click();
+    const bill = page.locator("div.px-4.py-3").filter({ hasText: "BS-77" });
+    await bill.getByRole("button", { name: "Edit" }).click();
+    await page.getByLabel("Invoice total").fill("23600");
+    await page.getByRole("button", { name: "Save and check again" }).click();
+    expect(await stat(page, "ready for Tally")).toBe("2");
+    await expect(page.getByRole("button", { name: "Fix 1 bill" })).toHaveCount(0);
+
+    const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Download Tally File" }).click()]);
+    const vouchers = parseVouchers((await savedDownload(download)).bytes.toString("utf8")).filter(voucher => voucher.type === "Purchase");
+    expect(vouchers).toHaveLength(2);
+    expect(unbalancedVouchers(vouchers)).toEqual([]);
+    const beta = vouchers.find(voucher => voucher.reference === "BS-77")!;
+    expect(beta.entries.find(entry => entry.ledger === "Beta Supplies")?.paise).toBe(2360000);
+  });
+
+  test("leaving a blocked bill out also releases the file, with only the good bill in it", async ({ page }) => {
+    await signedUpAccount(page, "bt-leave", "Bills Leave Client");
+    await openJob(page, "bills-tally", "Bills → Tally");
+    await upload(page, "purchases-oct-2026.csv", PURCHASE_LIST_WITH_ERROR);
+    await page.getByRole("button", { name: "Fix 1 bill" }).click();
+    const bill = page.locator("div.px-4.py-3").filter({ hasText: "BS-77" });
+    await bill.getByRole("button", { name: "Edit" }).click();
+    await page.getByLabel("Leave this bill out").check();
+    await page.getByRole("button", { name: "Save and check again" }).click();
+    expect(await stat(page, "left out")).toBe("1");
+
+    const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Download Tally File" }).click()]);
+    const vouchers = parseVouchers((await savedDownload(download)).bytes.toString("utf8")).filter(voucher => voucher.type === "Purchase");
+    expect(vouchers.map(voucher => voucher.reference)).toEqual(["INV-001"]);
+  });
+});
+
 test.describe("Payroll", () => {
   // Gross 35,000 + 19,800 + 25,000 = 79,800; PF 1,800 + 1,440 + 1,800 = 5,040; ESI 149; TDS 1,000;
   // net pay 32,000 + 17,511 + 23,000 = 72,511. Meena has PF deducted but no UAN.

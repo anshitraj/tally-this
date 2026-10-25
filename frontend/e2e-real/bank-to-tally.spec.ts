@@ -189,6 +189,37 @@ test.describe("Bank Statement → Tally", () => {
     await expect(page.getByText(/doesn.t look like a bank statement/)).toBeVisible();
   });
 
+  test("a ledger the person chooses is used in the Tally file and remembered for that client", async ({ page }) => {
+    await signedUpAccount(page, "b2t-ledger", "Ledger Client");
+    await openJob(page);
+    await upload(page, "hdfc-may-2026.csv", MAY_STATEMENT.csv);
+    await expect(page.getByText("24 transactions detected")).toBeVisible();
+    await closeViewer(page);
+    await page.getByRole("button", { name: "Check source values" }).first().click();
+    await expect(page.getByText("Choose a ledger for 13 parties")).toBeVisible();
+
+    // Sharma Traders paid ₹1,18,000: book it to Sales instead of Suspense.
+    const party = page.locator("div.border-b, div.divide-y > div").filter({ hasText: "Sharma Traders" }).first();
+    await party.getByRole("button", { name: "Sales", exact: true }).click();
+    await page.getByRole("button", { name: "I checked these totals" }).click();
+    const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Download Tally XML" }).first().click()]);
+    const vouchers = parseVouchers((await savedDownload(download)).bytes.toString("utf8"));
+    const sharma = vouchers.find(voucher => voucher.narration.startsWith("NEFT CR-Sharma Traders"))!;
+    expect(sharma.entries.map(entry => [entry.ledger, entry.paise])).toEqual(expect.arrayContaining([["Sales", 11800000]]));
+    expect(sharma.entries.some(entry => entry.ledger === "Suspense")).toBe(false);
+    // The others still go to Suspense: a choice is made party by party, never guessed.
+    const kapoor = vouchers.find(voucher => voucher.narration.startsWith("NEFT CR-Kapoor Foods"))!;
+    expect(kapoor.entries.some(entry => entry.ledger === "Suspense")).toBe(true);
+
+    // The next statement for this client already knows it.
+    await openJob(page);
+    await upload(page, "hdfc-may-2026-again.csv", MAY_STATEMENT.csv);
+    await expect(page.getByText("24 transactions detected")).toBeVisible();
+    await closeViewer(page);
+    await page.getByRole("button", { name: "Check source values" }).first().click();
+    await expect(page.getByText("Choose a ledger for 12 parties")).toBeVisible();
+  });
+
   test("a finished run appears in History and Activity for this client", async ({ page }) => {
     await signedUpAccount(page, "b2t-history", "History Client");
     await openJob(page);
