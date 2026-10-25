@@ -219,3 +219,16 @@ test.describe("abuse", () => {
     expect(ours.headers()["access-control-allow-origin"]).toBe(web);
   });
 });
+
+test.describe("addresses the gateway shares with the API", () => {
+  test("the suggested name for a new job is not mistaken for a run id", async ({ request }) => {
+    const person = await register(request, "suggest");
+    const suggestion = await request.get("/api/workflow/runs/suggest-name?runType=bank_tally_reconciliation", { headers: as(person) });
+    expect(suggestion.status(), await suggestion.text()).toBe(200);
+    expect(typeof (await suggestion.json()).suggestedName).toBe("string");
+
+    // A real run id on the same path is still looked up as a run: this one does not exist.
+    const missing = await request.get("/api/workflow/runs/00000000-0000-0000-0000-000000000000", { headers: as(person) });
+    expect(missing.status()).toBe(404);
+  });
+});
