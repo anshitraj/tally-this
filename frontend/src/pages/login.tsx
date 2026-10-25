@@ -60,10 +60,17 @@ async function legacyPost(path: string, body: unknown, timeoutMs = AUTH_TIMEOUT_
       signal: controller.signal,
     });
     const data = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(data?.error === "Invalid credentials" ? "That email and password do not match." : data?.error || "Sign-in failed. Please try again.");
+    if (!response.ok) {
+      if (data?.error === "Invalid credentials") throw new Error("That email and password do not match.");
+      if (typeof data?.error === "string" && data.error) throw new Error(data.error);
+      // No message from TallyThis itself: the service is down, restarting, or not connected to this website yet.
+      throw new Error("TallyThis is not available right now. Please try again in a few minutes.");
+    }
     return data;
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") throw new Error("This is taking longer than usual. Please try again in a moment.");
+    // fetch itself failed (no connection, or the address did not answer at all).
+    if (err instanceof TypeError) throw new Error("TallyThis could not be reached. Check your connection and try again.");
     throw err;
   } finally {
     window.clearTimeout(timeout);
