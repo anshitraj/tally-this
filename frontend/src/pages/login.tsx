@@ -125,10 +125,11 @@ export default function LoginPage() {
     void loadNeonConfig().then(setConfig);
   }, []);
 
-  // Someone already signed in has no use for this page: send them on (unless they are in the middle of coming back from
-  // Google or GitHub, which finishes the sign-in below).
+  // Someone already signed in has no use for this page: send them on. Not when they are in the middle of coming back from
+  // Google or GitHub (which finishes the sign-in below), nor when they were sent here because their session ended.
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).has("neon_auth_session_verifier")) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.has("neon_auth_session_verifier") || params.get("reason") === "expired") return;
     if (getUser()) navigate(appRoute(), { replace: true });
     // Checked once, on arrival.
     // eslint-disable-next-line react-hooks/exhaustive-deps

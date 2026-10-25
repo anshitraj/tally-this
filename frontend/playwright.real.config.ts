@@ -40,7 +40,8 @@ export default defineConfig({
     reducedMotion: "reduce",
   },
   projects: [
-    { name: "desktop", use: { ...devices["Desktop Chrome"] } },
+    // Tests tagged @phone run on a phone-sized screen only; everything else on a desktop one.
+    { name: "desktop", use: { ...devices["Desktop Chrome"] }, grepInvert: /@phone/ },
     { name: "phone", use: { ...devices["Pixel 7"] }, grep: /@phone/ },
   ],
 });
