@@ -19,6 +19,8 @@ interface ClientSummary {
   highSeverity: number;
   byCategory: Record<string, number>;
   topClauses: { clause: string; title: string; count: number; severity: string }[];
+  /** Nothing imported for this client yet: no findings are shown, and none are made up. */
+  noData?: boolean;
 }
 
 interface PracticeData {
@@ -139,13 +141,13 @@ export default function PracticePage() {
                 className="group flex w-full cursor-pointer flex-col gap-3 rounded-2xl border border-border bg-card p-4 text-left transition hover:border-primary/40 hover:shadow-md sm:flex-row sm:items-center sm:justify-between"
               >
                 <div className="flex items-center gap-3">
-                  <div className={`flex h-11 w-11 items-center justify-center rounded-xl ${c.highSeverity > 0 ? "bg-red-50 text-red-600" : "bg-emerald-50 text-emerald-600"}`}>
+                  <div className={`flex h-11 w-11 items-center justify-center rounded-xl ${c.noData ? "bg-muted text-muted-foreground" : c.highSeverity > 0 ? "bg-red-50 text-red-600" : "bg-emerald-50 text-emerald-600"}`}>
                     <Building2 className="h-5 w-5" />
                   </div>
                   <div>
                     <div className="font-semibold">{c.name}</div>
                     <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-                      <span>{c.flagged}/{c.total} checks flagged</span>
+                      <span>{c.noData ? "No Tally data imported yet. Open to import an export." : `${c.flagged}/${c.total} checks flagged`}</span>
                       {c.highSeverity > 0 && <span className="rounded-full bg-red-50 px-2 py-0.5 font-semibold text-red-600">{c.highSeverity} high</span>}
                       {Object.entries(c.byCategory).map(([cat, n]) => (
                         <span key={cat} className="rounded-full bg-muted px-2 py-0.5">{cat.split(" ")[0]}: {n}</span>

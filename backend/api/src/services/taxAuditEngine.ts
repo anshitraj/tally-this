@@ -67,6 +67,11 @@ export interface CheckResult {
   columns: { key: string; label: string; numeric?: boolean }[];
   rows: Record<string, string | number>[];
   notes?: string[];
+  /**
+   * Set when the data given cannot answer this check (no ledger masters, no cash/bank split, no prior-year balances ...).
+   * Such a check shows no rows, but that is "not run", never "no exceptions": the person must not read it as a pass.
+   */
+  notRun?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -81,6 +86,8 @@ export const MSME_DUE_DAYS = 45;
 
 export const DEBTOR_GROUP = "Sundry Debtors";
 export const CREDITOR_GROUP = "Sundry Creditors";
+/** Expense heads Clause 23 asks about, picked by name from Indirect Expenses. */
+export const SPECIFIED_EXPENSE = /salar|wage|commission|rent|interest|remuneration/i;
 
 // ---------------------------------------------------------------------------
 // Embedded demo dataset — realistic Indian SME, exercises every check
@@ -179,6 +186,26 @@ const isDebtor = (l: Ledger) => l.group === DEBTOR_GROUP;
 const isCreditor = (l: Ledger) => l.group === CREDITOR_GROUP;
 const drcr = (signed: number): DrCr => (signed >= 0 ? "Dr" : "Cr");
 function lineGroups(v: Voucher) { return new Set(v.lines.map(l => l.group)); }
+
+/**
+ * What each creditor was paid in cash, day by day, keeping the parties and days that went over the limit.
+ * The 40A(3) limit is on payments to one person in one day, so small payments on different days are never added up.
+ */
+function cashPaidToCreditorsByDay(vouchers: Voucher[]) {
+  const byParty = new Map<string, Map<string, number>>();
+  for (const v of vouchers) {
+    if (v.type !== "Payment" || v.mode !== "Cash" || !v.party || !v.lines.some(l => l.group === CREDITOR_GROUP)) continue;
+    const days = byParty.get(v.party) ?? new Map<string, number>();
+    days.set(v.date, (days.get(v.date) ?? 0) + v.amount);
+    byParty.set(v.party, days);
+  }
+  const over: { party: string; days: number; total: number; largest: number }[] = [];
+  for (const [party, days] of byParty) {
+    const flagged = [...days.values()].filter(amount => amount > LIMIT_40A3);
+    if (flagged.length > 0) over.push({ party, days: flagged.length, total: flagged.reduce((s, a) => s + a, 0), largest: Math.max(...flagged) });
+  }
+  return over;
+}
 
 // ---------------------------------------------------------------------------
 // The 20 checks
@@ -290,95 +317,109 @@ export function buildChecks(ledgers: Ledger[], vouchers: Voucher[], assets: Asse
     const rows = vouchers.filter(v => v.mode === "Cash" && (v.type === "Receipt" || v.type === "Sales") && v.amount >= LIMIT_269ST && !v.lines.some(l => l.group === "Capital Account"))
       .map(v => ({ date: v.date, voucher: v.number, party: v.party ?? "", amount: r2(v.amount), narration: v.narration ?? "" }));
     checks.push({ id: "sec-269st", clause: "269ST", title: "Cash Receipts ≥ ₹2,00,000", category: "Tax Audit Reporting", severity: rows.length ? "high" : "info",
-      description: "Single cash receipts of ₹2 lakh or more (excluding capital-account transactions). Attracts penalty u/s 271DA equal to the amount received.",
+      description: "Single cash receipts of ₹2 lakh or more (excluding capital-account transactions). May attract a penalty u/s 271DA equal to the amount received.",
       columns: [{ key: "date", label: "Date" }, { key: "voucher", label: "Voucher" }, { key: "party", label: "Party" }, { key: "amount", label: "Amount", numeric: true }, { key: "narration", label: "Narration" }], rows });
   }
 
-  // B3 — Clause 40: ratio analysis
+  // B3 — Clause 40: ratio analysis. Worked out from Tally's standard groups, so what a company calls its ledgers does not matter.
   {
-    const find = (n: string) => ledgers.find(l => l.name === n)?.closingBalance ?? 0;
-    const sales = Math.abs(find("Sales A/c"));
-    const purchases = Math.abs(find("Purchase A/c"));
-    const closingStock = Math.abs(find("Closing Stock"));
-    const openingStock = Math.abs(ledgers.find(l => l.name === "Closing Stock")?.openingBalance ?? 0);
-    const indirectExp = ledgers.filter(l => l.group === "Indirect Expenses").reduce((s, l) => s + Math.abs(l.closingBalance), 0);
+    const inGroup = (group: string) => ledgers.filter(l => l.group === group);
+    const total = (list: Ledger[], pick: (l: Ledger) => number) => list.reduce((s, l) => s + pick(l), 0);
+    const salesLedgers = inGroup("Sales Accounts");
+    const stockLedgers = inGroup("Stock-in-Hand");
+    const sales = Math.abs(total(salesLedgers, l => l.closingBalance));
+    const purchases = Math.abs(total(inGroup("Purchase Accounts"), l => l.closingBalance));
+    const closingStock = Math.abs(total(stockLedgers, l => l.closingBalance));
+    const openingStock = Math.abs(total(stockLedgers, l => l.openingBalance));
+    const indirectExp = inGroup("Indirect Expenses").reduce((s, l) => s + Math.abs(l.closingBalance), 0);
     const cogs = openingStock + purchases - closingStock;
     const grossProfit = sales - cogs;
     const netProfit = grossProfit - indirectExp;
-    const avgStock = (openingStock + closingStock) / 2 || 1;
-    const rows = [
-      { ratio: "Gross Profit / Turnover", value: r2((grossProfit / (sales || 1)) * 100), unit: "%", basis: `GP ${r2(grossProfit)} / Sales ${r2(sales)}` },
-      { ratio: "Net Profit / Turnover", value: r2((netProfit / (sales || 1)) * 100), unit: "%", basis: `NP ${r2(netProfit)} / Sales ${r2(sales)}` },
-      { ratio: "Stock Turnover (times)", value: r2(cogs / avgStock), unit: "x", basis: `COGS ${r2(cogs)} / Avg Stock ${r2(avgStock)}` },
-      { ratio: "Material Consumed / Turnover", value: r2((purchases / (sales || 1)) * 100), unit: "%", basis: `Purchases ${r2(purchases)} / Sales ${r2(sales)}` },
-    ];
+    const avgStock = (openingStock + closingStock) / 2;
+    const NO_SALES = "No ledger with a balance in the group Sales Accounts";
+    const rows = sales === 0
+      ? [
+          { ratio: "Gross Profit / Turnover", value: "n/a", unit: "%", basis: NO_SALES },
+          { ratio: "Net Profit / Turnover", value: "n/a", unit: "%", basis: NO_SALES },
+          { ratio: "Stock Turnover (times)", value: "n/a", unit: "x", basis: NO_SALES },
+          { ratio: "Material Consumed / Turnover", value: "n/a", unit: "%", basis: NO_SALES },
+        ]
+      : [
+          { ratio: "Gross Profit / Turnover", value: r2((grossProfit / sales) * 100), unit: "%", basis: `GP ${r2(grossProfit)} / Sales ${r2(sales)}` },
+          { ratio: "Net Profit / Turnover", value: r2((netProfit / sales) * 100), unit: "%", basis: `NP ${r2(netProfit)} / Sales ${r2(sales)}` },
+          avgStock === 0
+            ? { ratio: "Stock Turnover (times)", value: "n/a", unit: "x", basis: "No ledger with a balance in the group Stock-in-Hand" }
+            : { ratio: "Stock Turnover (times)", value: r2(cogs / avgStock), unit: "x", basis: `COGS ${r2(cogs)} / Avg Stock ${r2(avgStock)}` },
+          { ratio: "Material Consumed / Turnover", value: r2((purchases / sales) * 100), unit: "%", basis: `Purchases ${r2(purchases)} / Sales ${r2(sales)}` },
+        ];
     checks.push({ id: "clause-40", clause: "Clause 40", title: "Ratio Analysis", category: "Tax Audit Reporting", severity: "info",
-      description: "Accounting ratios required under Clause 40 — GP ratio, NP ratio, stock turnover and material consumption, with year-on-year comparison.",
-      columns: [{ key: "ratio", label: "Ratio" }, { key: "value", label: "Value", numeric: true }, { key: "unit", label: "Unit" }, { key: "basis", label: "Basis" }], rows });
+      description: "Accounting ratios required under Clause 40 — GP ratio, NP ratio, stock turnover and material consumption.",
+      columns: [{ key: "ratio", label: "Ratio" }, { key: "value", label: "Value", numeric: true }, { key: "unit", label: "Unit" }, { key: "basis", label: "Basis" }], rows,
+      notes: [
+        "Worked out from the groups Sales Accounts, Purchase Accounts, Stock-in-Hand and Indirect Expenses. A ledger under a group of another name is not counted.",
+        "Net profit here is sales, less cost of goods, less Indirect Expenses. Direct expenses, other income and taxes are not included: compare with the profit and loss account.",
+      ] });
   }
 
   // B4 — Clause 23: material expenses party-wise
   {
-    const materialLedgers = ["Salaries", "Commission Paid", "Rent", "Interest on Unsecured Loans", "Partner Remuneration", "Partner Interest on Capital"];
-    const rows = materialLedgers.map(name => {
-      const l = ledgers.find(x => x.name === name);
-      return l ? { expense: name, amount: r2(Math.abs(l.closingBalance)), group: l.group } : null;
-    }).filter(Boolean) as Record<string, string | number>[];
+    const rows = ledgers.filter(l => l.group === "Indirect Expenses" && SPECIFIED_EXPENSE.test(l.name))
+      .map(l => ({ expense: l.name, amount: r2(Math.abs(l.closingBalance)), group: l.group })) as Record<string, string | number>[];
     const total = rows.reduce((s, r) => s + Number(r.amount), 0);
-    rows.forEach(r => { r.materiality = `${r2((Number(r.amount) / (total || 1)) * 100)}%`; });
+    rows.forEach(r => { r.materiality = total === 0 ? "—" : `${r2((Number(r.amount) / total) * 100)}%`; });
     checks.push({ id: "clause-23", clause: "Clause 23", title: "Material Expenses (Party-wise)", category: "Tax Audit Reporting", severity: "info",
       description: "Specified expenses — salary, commission, rent, partner remuneration/interest, interest on unsecured loans — with materiality, to support Clause 23 (payments to specified persons u/s 40A(2)(b)).",
-      columns: [{ key: "expense", label: "Expense Head" }, { key: "group", label: "Group" }, { key: "amount", label: "Amount", numeric: true }, { key: "materiality", label: "% of Material Exp" }], rows });
+      columns: [{ key: "expense", label: "Expense Head" }, { key: "group", label: "Group" }, { key: "amount", label: "Amount", numeric: true }, { key: "materiality", label: "% of Material Exp" }], rows,
+      notes: ["Heads are picked from Indirect Expenses by name (salary, wages, commission, rent, interest, remuneration); a head named differently is not listed. Whether a payee is a related person needs party details that a ledger export does not carry."] });
   }
 
-  // B5 — Cash Exposure Ratio
+  // B5 — Cash Exposure Ratio, from the payment and receipt vouchers themselves (a cash deposit to the bank is not a payment)
   {
-    const cashLedger = "Cash-in-Hand";
-    let cashCr = 0, cashDr = 0;
-    for (const v of vouchers) for (const l of v.lines) if (l.ledger === cashLedger) { cashCr += l.credit; cashDr += l.debit; }
-    const totalPayments = vouchers.filter(v => v.type === "Payment").reduce((s, v) => s + v.amount, 0) || 1;
-    const totalReceipts = vouchers.filter(v => v.type === "Receipt" || v.type === "Sales").reduce((s, v) => s + v.amount, 0) || 1;
-    const payRatio = (cashCr / totalPayments) * 100;
-    const recRatio = (cashDr / totalReceipts) * 100;
+    const sum = (list: Voucher[]) => list.reduce((s, v) => s + v.amount, 0);
+    const payments = vouchers.filter(v => v.type === "Payment");
+    const receipts = vouchers.filter(v => v.type === "Receipt" || v.type === "Sales");
+    const cashPayments = sum(payments.filter(v => v.mode === "Cash"));
+    const cashReceipts = sum(receipts.filter(v => v.mode === "Cash"));
+    const totalPayments = sum(payments);
+    const totalReceipts = sum(receipts);
+    const line = (metric: string, cash: number, all: number, cashWord: string, allWord: string) => {
+      if (all === 0) return { metric, ratio: "n/a", flag: "—", basis: `No ${allWord} in this data` };
+      const ratio = (cash / all) * 100;
+      return { metric, ratio: r2(ratio), flag: ratio > CASH_EXPOSURE_FLAG * 100 ? "⚠ Exceeds 5%" : "OK", basis: `${cashWord} ${r2(cash)} / ${allWord} ${r2(all)}` };
+    };
     const rows = [
-      { metric: "Cash Payments / Total Payments", ratio: r2(payRatio), flag: payRatio > CASH_EXPOSURE_FLAG * 100 ? "⚠ Exceeds 5%" : "OK", basis: `Cash Cr ${r2(cashCr)} / Payments ${r2(totalPayments)}` },
-      { metric: "Cash Receipts / Total Receipts", ratio: r2(recRatio), flag: recRatio > CASH_EXPOSURE_FLAG * 100 ? "⚠ Exceeds 5%" : "OK", basis: `Cash Dr ${r2(cashDr)} / Receipts ${r2(totalReceipts)}` },
+      line("Cash Payments / Total Payments", cashPayments, totalPayments, "Cash payments", "Payments"),
+      line("Cash Receipts / Total Receipts", cashReceipts, totalReceipts, "Cash receipts", "Receipts"),
     ];
     checks.push({ id: "cash-exposure", clause: "Tax Audit", title: "Cash Exposure Ratio", category: "Tax Audit Reporting", severity: rows.some(r => String(r.flag).includes("⚠")) ? "high" : "info",
       description: "Cash component of total payments and receipts. A ratio above 5% signals heavy cash dealing relevant to tax-audit applicability and 44AD/44AB analysis.",
       columns: [{ key: "metric", label: "Metric" }, { key: "ratio", label: "Ratio %", numeric: true }, { key: "flag", label: "Flag" }, { key: "basis", label: "Basis" }], rows });
   }
 
-  // B6 — Creditors with opening balance AND cash payments > 10k
+  // B6 — Creditors with opening balance AND cash payments over the daily limit
+  const overTheDailyLimit = cashPaidToCreditorsByDay(vouchers);
   {
     const creditorOpening = new Map(ledgers.filter(isCreditor).map(l => [l.name, l.openingBalance]));
-    const cashPayByParty = new Map<string, number>();
-    for (const v of vouchers) if (v.type === "Payment" && v.mode === "Cash" && v.party) {
-      if (v.lines.some(l => l.group === CREDITOR_GROUP)) cashPayByParty.set(v.party, (cashPayByParty.get(v.party) ?? 0) + v.amount);
-    }
-    const rows = [...cashPayByParty.entries()].filter(([party, amt]) => creditorOpening.has(party) && creditorOpening.get(party) !== 0 && amt > LIMIT_40A3)
-      .map(([party, amt]) => ({ party, openingBalance: r2(Math.abs(creditorOpening.get(party) ?? 0)), cashPaid: r2(amt) }));
-    checks.push({ id: "creditor-op-cash", clause: "40A(3)", title: "Creditors with Opening Balance & Cash Payments > ₹10k", category: "Tax Audit Reporting", severity: rows.length ? "high" : "info",
-      description: "Creditors carrying an opening balance to whom cash payments above ₹10,000 were made — potential 40A(3) disallowance and carry-forward scrutiny.",
-      columns: [{ key: "party", label: "Creditor" }, { key: "openingBalance", label: "Opening Balance", numeric: true }, { key: "cashPaid", label: "Cash Paid", numeric: true }], rows });
+    const rows = overTheDailyLimit.filter(o => creditorOpening.has(o.party) && creditorOpening.get(o.party) !== 0)
+      .map(o => ({ party: o.party, openingBalance: r2(Math.abs(creditorOpening.get(o.party) ?? 0)), cashPaid: r2(o.total) }));
+    checks.push({ id: "creditor-op-cash", clause: "40A(3)", title: "Creditors with Opening Balance & Cash Payments > ₹10k a Day", category: "Tax Audit Reporting", severity: rows.length ? "high" : "info",
+      description: "Creditors carrying an opening balance who were paid more than ₹10,000 in cash on a single day — potential 40A(3) disallowance and carry-forward scrutiny.",
+      columns: [{ key: "party", label: "Creditor" }, { key: "openingBalance", label: "Opening Balance", numeric: true }, { key: "cashPaid", label: "Cash Paid on Those Days", numeric: true }], rows });
   }
 
-  // B7 — Creditors with cash payments > 10k during year
+  // B7 — Creditors paid more than 10k in cash on one day
   {
-    const cashPayByParty = new Map<string, number>();
-    for (const v of vouchers) if (v.type === "Payment" && v.mode === "Cash" && v.party && v.lines.some(l => l.group === CREDITOR_GROUP)) {
-      cashPayByParty.set(v.party, (cashPayByParty.get(v.party) ?? 0) + v.amount);
-    }
-    const rows = [...cashPayByParty.entries()].filter(([, amt]) => amt > LIMIT_40A3).map(([party, amt]) => ({ party, cashPaid: r2(amt), risk: "40A(3) disallowance" }));
-    checks.push({ id: "creditor-cash", clause: "40A(3)", title: "Creditors — Cash Payments > ₹10k During Year", category: "Tax Audit Reporting", severity: rows.length ? "high" : "info",
-      description: "All creditors to whom aggregate cash payments above ₹10,000 were made in the year (single-day limit u/s 40A(3)).",
-      columns: [{ key: "party", label: "Creditor" }, { key: "cashPaid", label: "Cash Paid", numeric: true }, { key: "risk", label: "Risk" }], rows });
+    const rows = overTheDailyLimit.map(o => ({ party: o.party, daysOver: o.days, cashPaid: r2(o.total), largestInADay: r2(o.largest), risk: "Potential risk — needs CA review." }));
+    checks.push({ id: "creditor-cash", clause: "40A(3)", title: "Creditors — Cash Payments > ₹10k in a Day", category: "Tax Audit Reporting", severity: rows.length ? "high" : "info",
+      description: "Creditors paid more than ₹10,000 in cash to one party on a single day (the day-wise limit u/s 40A(3)). Several smaller payments on different days are not added together.",
+      columns: [{ key: "party", label: "Creditor" }, { key: "daysOver", label: "Days Over", numeric: true }, { key: "cashPaid", label: "Cash Paid on Those Days", numeric: true }, { key: "largestInADay", label: "Largest in a Day", numeric: true }, { key: "risk", label: "Risk" }], rows,
+      notes: ["The ₹10,000 limit is applied to one party's cash payments on one date. Higher limits for some payees and the Rule 6DD exceptions are not applied: have the CA review each row."] });
   }
 
   // B8 — Clause 44: GST breakup of expenditure
   {
     const totalExp = ledgers.filter(l => l.group === "Indirect Expenses" || l.group === "Purchase Accounts").reduce((s, l) => s + Math.abs(l.closingBalance), 0);
-    const gstExp = Math.abs(ledgers.find(l => l.name === "Purchase A/c")?.closingBalance ?? 0);
+    const gstExp = Math.abs(ledgers.filter(l => l.group === "Purchase Accounts").reduce((s, l) => s + l.closingBalance, 0));
     const nonGstExp = totalExp - gstExp;
     const rows = [
       { head: "Total expenditure", amount: r2(totalExp) },
@@ -389,16 +430,20 @@ export function buildChecks(ledgers: Ledger[], vouchers: Voucher[], assets: Asse
     ];
     checks.push({ id: "clause-44", clause: "Clause 44", title: "GST Break-up of Expenditure", category: "Tax Audit Reporting", severity: "info",
       description: "Clause 44 break-up of total expenditure into GST-registered, unregistered, composition and exempt buckets.",
-      columns: [{ key: "head", label: "Expenditure Head" }, { key: "amount", label: "Amount", numeric: true }], rows });
+      columns: [{ key: "head", label: "Expenditure Head" }, { key: "amount", label: "Amount", numeric: true }], rows,
+      notes: ["A ledger export does not say which suppliers are registered for GST. This split treats the group Purchase Accounts as bought from registered suppliers and all other expenditure as not, and shows composition and exempt as nil: confirm from supplier GSTINs and invoices."] });
   }
 
   // B9 — Clause 22: MSME
   {
     const rows = ledgers.filter(l => isCreditor(l) && l.isMsme).map(l => ({ creditor: l.name, msmeType: l.msmeType ?? "—", outstanding: r2(Math.abs(l.closingBalance)), status: drcr(l.closingBalance) === "Cr" ? "Payable" : "Advance", dueBeyond45: drcr(l.closingBalance) === "Cr" ? "Verify against bill date" : "—" }));
     checks.push({ id: "clause-22", clause: "Clause 22", title: "MSME Creditors (Sec 43B(h))", category: "Tax Audit Reporting", severity: rows.length ? "medium" : "info",
-      description: "Creditors flagged as Micro/Small enterprises under MSMED Act. Amounts outstanding beyond 45 days are disallowed u/s 43B(h) until paid.",
+      description: "Creditors flagged as Micro/Small enterprises under MSMED Act. Amounts outstanding beyond 45 days may be disallowed u/s 43B(h) until paid.",
       columns: [{ key: "creditor", label: "Creditor" }, { key: "msmeType", label: "MSME Type" }, { key: "outstanding", label: "Outstanding", numeric: true }, { key: "status", label: "Status" }, { key: "dueBeyond45", label: ">45 days" }], rows,
-      notes: [`MSME payments overdue beyond ${MSME_DUE_DAYS} days are disallowed until actually paid.`] });
+      notes: [
+        `MSME payments overdue beyond ${MSME_DUE_DAYS} days may be disallowed until actually paid.`,
+        "MSME status is read from the registration type on each creditor's ledger in the export. A creditor whose ledger does not carry it is not listed here, so an empty list does not show there are none.",
+      ] });
   }
 
   // B10 — Clause 18: Depreciation (asset-wise + additions/deletions)
@@ -429,8 +474,9 @@ export function buildChecks(ledgers: Ledger[], vouchers: Voucher[], assets: Asse
   // C2 — Partner dashboard
   {
     const partners = ledgers.filter(l => l.group === "Capital Account");
-    const remunTotal = Math.abs(ledgers.find(l => l.name === "Partner Remuneration")?.closingBalance ?? 0);
-    const interestTotal = Math.abs(ledgers.find(l => l.name === "Partner Interest on Capital")?.closingBalance ?? 0);
+    const expenseHead = (pattern: RegExp) => ledgers.filter(l => l.group === "Indirect Expenses" && pattern.test(l.name)).reduce((s, l) => s + Math.abs(l.closingBalance), 0);
+    const remunTotal = expenseHead(/remuneration/i);
+    const interestTotal = expenseHead(/interest on capital|partner.*interest/i);
     const totalOpening = partners.reduce((s, x) => s + Math.abs(x.openingBalance), 0) || 1;
     const rows = partners.map(p => {
       const opening = Math.abs(p.openingBalance);
@@ -440,7 +486,8 @@ export function buildChecks(ledgers: Ledger[], vouchers: Voucher[], assets: Asse
     });
     checks.push({ id: "partner-dashboard", clause: "Finalisation", title: "Partner Capital Dashboard", category: "Accounts Finalisation", severity: "info",
       description: "Partner-wise opening capital, interest on capital, remuneration, profit share and closing capital — in one table for finalisation.",
-      columns: [{ key: "partner", label: "Partner" }, { key: "openingCapital", label: "Opening Capital", numeric: true }, { key: "interest", label: "Interest", numeric: true }, { key: "remuneration", label: "Remuneration", numeric: true }, { key: "profitShare", label: "Profit Share / Drawings", numeric: true }, { key: "closingCapital", label: "Closing Capital", numeric: true }], rows });
+      columns: [{ key: "partner", label: "Partner" }, { key: "openingCapital", label: "Opening Capital", numeric: true }, { key: "interest", label: "Interest", numeric: true }, { key: "remuneration", label: "Remuneration", numeric: true }, { key: "profitShare", label: "Profit Share / Drawings", numeric: true }, { key: "closingCapital", label: "Closing Capital", numeric: true }], rows,
+      notes: ["Interest and remuneration are the Indirect Expenses ledgers named for them, shared out in proportion to opening capital. The partnership deed may say otherwise, so check each partner's figures against it."] });
   }
 
   // C3 — TDS/TCS dashboard
@@ -470,5 +517,69 @@ export function buildChecks(ledgers: Ledger[], vouchers: Voucher[], assets: Asse
       columns: [{ key: "date", label: "Date" }, { key: "voucher", label: "Voucher" }, { key: "party", label: "Account" }, { key: "amount", label: "Amount", numeric: true }, { key: "narration", label: "Narration" }], rows });
   }
 
+  return markWhatCouldNotRun(checks, { ledgers, vouchers, assets, bills });
+}
+
+const NO_LEDGERS = "This import has no ledger masters (groups and balances), so ledger-based checks cannot run.";
+const NO_VOUCHERS = "This import has no vouchers.";
+const NO_CASH_SPLIT = "This import cannot tell cash from bank: its ledgers carry no groups.";
+const NO_CLOSING = "This import has no closing balances: every ledger with entries shows the same opening and closing balance.";
+const NO_PRIOR_YEAR = "This import has no prior-year balances to compare with.";
+const NO_PRIOR_GROUPS = "This import has no prior-year groups to compare with.";
+const NO_ASSETS = "This import has no fixed-asset schedule.";
+const NO_CAPITAL = "No ledger in the group Capital Account.";
+
+/**
+ * A check that has nothing to look at is not a check that passed. When the data lacks what a check needs, it is marked
+ * not run, with the reason, instead of showing an empty list that reads as "no exceptions".
+ */
+export function markWhatCouldNotRun(
+  checks: CheckResult[],
+  data: { ledgers: Ledger[]; vouchers: Voucher[]; assets: AssetRow[]; bills: Bill[] },
+): CheckResult[] {
+  const { ledgers, vouchers, assets, bills } = data;
+  // Books move as they are posted to. Several ledgers that have entries (or, with no vouchers, a balance) and not one
+  // balance changed means the closing balances were not in the file: the reader fills them with the opening ones.
+  const posted = new Set(vouchers.flatMap(v => v.lines.map(l => l.ledger)));
+  const moving = vouchers.length > 0
+    ? ledgers.filter(l => posted.has(l.name))
+    : ledgers.filter(l => l.openingBalance !== 0 || l.closingBalance !== 0);
+  const closingMissing = moving.length >= 3 && moving.every(l => l.closingBalance === l.openingBalance);
+
+  const needsBalances = ledgers.length === 0 ? NO_LEDGERS : closingMissing ? NO_CLOSING : null;
+  const needsParties = ledgers.length === 0 ? NO_LEDGERS : vouchers.length === 0 ? NO_VOUCHERS : null;
+  const needsCash = vouchers.length === 0 ? NO_VOUCHERS : ledgers.length === 0 ? NO_LEDGERS
+    : vouchers.some(v => v.mode === "Cash" || v.mode === "Bank") ? null : NO_CASH_SPLIT;
+
+  const reasons: Record<string, string | null> = {
+    "neg-balances": needsBalances,
+    "same-op-cl": needsBalances,
+    "ageing": bills.length > 0 ? null : needsBalances,
+    "party-jv": needsParties,
+    "cross-posting": needsParties,
+    "clause-31": needsCash,
+    "sec-269st": needsCash,
+    "clause-40": needsBalances,
+    "clause-23": needsBalances,
+    "cash-exposure": needsCash,
+    "creditor-op-cash": needsCash,
+    "creditor-cash": needsCash,
+    "clause-44": needsBalances,
+    "clause-22": needsBalances,
+    "clause-18": assets.length > 0 ? null : NO_ASSETS,
+    "op-cl-mismatch": ledgers.some(l => l.prevYearClosing != null) ? null : NO_PRIOR_YEAR,
+    "partner-dashboard": needsBalances ?? (ledgers.some(l => l.group === "Capital Account") ? null : NO_CAPITAL),
+    "tds-tcs": needsBalances,
+    "grouping-mismatch": ledgers.some(l => l.prevYearGroup) ? null : NO_PRIOR_GROUPS,
+    "post-yearend-jv": vouchers.length > 0 ? null : NO_VOUCHERS,
+  };
+
+  for (const check of checks) {
+    const reason = reasons[check.id];
+    if (!reason) continue;
+    check.notRun = reason;
+    check.rows = [];
+    check.severity = "info";
+  }
   return checks;
 }

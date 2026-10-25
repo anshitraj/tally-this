@@ -112,11 +112,13 @@ router.get("/tax-audit", requirePermission("reports.read"), async (req, res): Pr
     if (companyId == null) return;
     const { ledgers, vouchers, assets, bills, source } = await loadData(companyId);
     const checks = buildChecks(ledgers, vouchers, assets, bills);
-    const summary = checks.map(c => ({ id: c.id, clause: c.clause, title: c.title, category: c.category, severity: c.severity, count: c.rows.length, description: c.description }));
+    const summary = checks.map(c => ({ id: c.id, clause: c.clause, title: c.title, category: c.category, severity: c.severity, count: c.rows.length, description: c.description, notRun: c.notRun }));
     const stats = {
       flagged: summary.filter(s => s.count > 0 && s.severity !== "info").length,
       total: summary.length,
       highSeverity: summary.filter(s => s.severity === "high" && s.count > 0).length,
+      // Checks the imported data could not answer. They are not "clear": the page says why.
+      notRun: summary.filter(s => s.notRun).length,
     };
     res.json({ ok: true, source, fyEnd: FY_END, summary, stats });
   } catch (err) {
@@ -264,7 +266,7 @@ router.post("/tax-audit/evidence-pack", requirePermission("reports.read"), async
     const hdr = cover.addRow(["#", "Check", "Clause", "Severity", "Flagged"]);
     hdr.eachCell(c => { c.fill = XL_HEADER_FILL; c.font = XL_HEADER_FONT; });
     checks.forEach((c, i) => {
-      const row = cover.addRow([i + 1, c.title, c.clause, c.severity.toUpperCase(), c.rows.length]);
+      const row = cover.addRow([i + 1, c.title, c.clause, c.severity.toUpperCase(), c.notRun ? "Not run" : c.rows.length]);
       row.getCell(4).font = { bold: true, color: { argb: SEV_COLOR[c.severity] ?? SEV_COLOR.info } };
     });
 
@@ -278,8 +280,10 @@ router.post("/tax-audit/evidence-pack", requirePermission("reports.read"), async
       ws.columns = c.columns.map(col => ({ width: col.numeric ? 18 : 26 }));
       const headerRow = ws.addRow(c.columns.map(col => col.label));
       headerRow.eachCell(cell => { cell.fill = XL_HEADER_FILL; cell.font = XL_HEADER_FONT; cell.alignment = { horizontal: "center" }; });
-      if (c.rows.length === 0) {
-        ws.addRow(["No exceptions — check passed."]);
+      if (c.notRun) {
+        ws.addRow([`Not run: ${c.notRun}`]);
+      } else if (c.rows.length === 0) {
+        ws.addRow(["No exceptions found in the imported data."]);
       } else {
         c.rows.forEach(r => {
           const row = ws.addRow(c.columns.map(col => r[col.key] ?? ""));
