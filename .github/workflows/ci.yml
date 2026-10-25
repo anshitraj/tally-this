@@ -243,7 +243,7 @@ jobs:
         run: |
           export STACK_DATABASE_URL="postgresql://${PGUSER}:${PGPASSWORD}@localhost:5432/${PGDATABASE}"
           export STACK_FRESH=1
-          pnpm --filter @workspace/finverify-os run test:real -- --reporter=list | tee "$RUNNER_TEMP/real-stack.txt"
+          pnpm --filter @workspace/finverify-os exec playwright test --config playwright.real.config.ts --reporter=list | tee "$RUNNER_TEMP/real-stack.txt"
           if grep -qE "^\s+- " "$RUNNER_TEMP/real-stack.txt"; then echo "A test was skipped."; exit 1; fi
         env:
           CI: "true"
