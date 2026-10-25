@@ -64,14 +64,16 @@ func main() {
 	mux.HandleFunc("GET /api/healthz", routes.HealthHandler(cfg, db))
 
 	// Every other route the gateway answers itself needs a signed-in person whose role holds the
-	// permission the Express API requires for the same path (see routes/protected.go).
+	// permission the Express API requires for the same path (see routes/protected.go). Everything else,
+	// including the fixed addresses a wildcard route would swallow, goes to the TypeScript fallback proxy:
+	// the frontend sees no change, and routes are added to Go incrementally.
+	var authz *routes.Authorizer
+	var protected []routes.ProtectedRoute
 	if db != nil {
-		routes.Register(mux, routes.NewAuthorizer(db), routes.Protected(db))
+		authz = routes.NewAuthorizer(db)
+		protected = routes.Protected(db)
 	}
-
-	// ── Everything else → TypeScript fallback proxy ─────────────────────────
-	// Frontend sees no change; routes are added to Go incrementally.
-	mux.Handle("/", tsProxy)
+	routes.Mount(mux, authz, protected, tsProxy)
 
 	addr := ":" + cfg.GoAPIPort
 	log.Printf("[finverify-go] Listening on %s  (TypeScript fallback: %s, Python worker: %s)",

@@ -49,9 +49,26 @@ func Protected(db *sql.DB) []ProtectedRoute {
 	}
 }
 
+// ProxiedLiteralRoutes are fixed addresses that sit under a protected route with a wildcard
+// (GET /api/workflow/runs/{id} would otherwise take "suggest-name" for a run id and answer 404).
+// They go to the TypeScript API, which owns them and checks the permission itself.
+var ProxiedLiteralRoutes = []string{
+	"GET /api/workflow/runs/suggest-name",
+}
+
 // Register adds every protected route to the mux behind the authorizer.
 func Register(mux *http.ServeMux, authz *Authorizer, routes []ProtectedRoute) {
 	for _, route := range routes {
 		mux.Handle(route.Pattern, authz.Require(route.Permission, route.Handler))
 	}
+}
+
+// Mount puts everything the gateway serves on the mux: the protected routes behind the authorizer, the fixed
+// addresses that belong to the fallback, and the fallback itself for every other address.
+func Mount(mux *http.ServeMux, authz *Authorizer, protected []ProtectedRoute, fallback http.Handler) {
+	Register(mux, authz, protected)
+	for _, pattern := range ProxiedLiteralRoutes {
+		mux.Handle(pattern, fallback)
+	}
+	mux.Handle("/", fallback)
 }
