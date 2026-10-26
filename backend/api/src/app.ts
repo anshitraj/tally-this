@@ -60,11 +60,22 @@ app.use(periodLockMiddleware());
 
 app.use("/api", router);
 
+// An address no route answers is a plain 404 in JSON, not the framework's HTML page.
+app.use("/api", (_req: express.Request, res: express.Response) => {
+  res.status(404).json({ ok: false, error: "Not found" });
+});
+
 app.use("/api", (err: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
   const message = err instanceof Error ? err.message : "Unknown server error";
   req.log?.error({ err }, "API request failed");
 
   if (res.headersSent) return;
+
+  // A body that is not valid JSON is the caller's mistake, not a server fault.
+  if (typeof err === "object" && err !== null && "type" in err && err.type === "entity.parse.failed") {
+    res.status(400).json({ ok: false, error: "The request could not be read. Send valid JSON." });
+    return;
+  }
 
   if (typeof err === "object" && err !== null && "type" in err && err.type === "entity.too.large") {
     res.status(413).json({ ok: false, message: "This request is too large. Split the file into smaller statements and try again." });

@@ -6,6 +6,7 @@ import PageHeader from "@/components/app/PageHeader";
 import { PageTransition } from "@/components/app/finverify-ui";
 import { useToast } from "@/hooks/use-toast";
 import { readJson } from "@/lib/api";
+import { useLiveTally } from "@/lib/liveTally";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -17,6 +18,8 @@ interface CheckSummary {
   severity: "high" | "medium" | "low" | "info";
   count: number;
   description: string;
+  /** Why this check could not run on the imported data; set means "not run", never "clear". */
+  notRun?: string;
 }
 
 interface TaxAuditIndex {
@@ -24,7 +27,7 @@ interface TaxAuditIndex {
   source: "tally" | "demo";
   fyEnd: string;
   summary: CheckSummary[];
-  stats: { flagged: number; total: number; highSeverity: number };
+  stats: { flagged: number; total: number; highSeverity: number; notRun: number };
 }
 
 interface CheckDetail {
@@ -37,6 +40,7 @@ interface CheckDetail {
   columns: { key: string; label: string; numeric?: boolean }[];
   rows: Record<string, string | number>[];
   notes?: string[];
+  notRun?: string;
 }
 
 const CATEGORIES = ["Debtors & Creditors", "Tax Audit Reporting", "Accounts Finalisation"] as const;
@@ -102,11 +106,14 @@ export default function TaxAuditPage() {
       const r = await fetch(`${BASE}/api/tax-audit/import${clientQs}`, { method: "POST", body: form });
       const body = await r.json().catch(() => ({}));
       if (!r.ok || !body.ok) throw new Error(body?.error || `Import failed (${r.status})`);
-      return body as { counts?: Record<string, number> };
+      return body as { counts?: Record<string, number>; warnings?: string[] };
     },
     onSuccess: (body) => {
       const c = body.counts ?? {};
-      toast({ title: "Tally data imported", description: `${c.ledgers ?? 0} ledgers, ${c.vouchers ?? 0} vouchers, ${c.ledgerEntries ?? 0} reconciliation rows.` });
+      const counted = `${c.ledgers ?? 0} ledgers, ${c.vouchers ?? 0} vouchers, ${c.ledgerEntries ?? 0} reconciliation rows.`;
+      // What the file lacked is said at once, not only on the cards that could not run.
+      const lacked = (body.warnings ?? []).join(" ");
+      toast({ title: "Tally data imported", description: lacked ? `${counted} ${lacked}` : counted });
       refresh();
     },
     onError: (e: Error) => toast({ title: "Import failed", description: e.message, variant: "destructive" }),
@@ -144,6 +151,7 @@ export default function TaxAuditPage() {
     enabled: Boolean(openCheck),
   });
 
+  const live = useLiveTally();
   const [connectOpen, setConnectOpen] = useState(false);
   const [conn, setConn] = useState({ host: "localhost", port: "9000", company: clientName || "", fromDate: "2025-04-01", toDate: "2026-03-31" });
 
@@ -171,7 +179,7 @@ export default function TaxAuditPage() {
       <PageHeader
         title="Tax Audit & Ledger Scrutiny"
         subtitle={data
-          ? `FY ending ${data.fyEnd} · ${data.stats.flagged} of ${data.stats.total} checks flagged · ${data.stats.highSeverity} high-severity`
+          ? `FY ending ${data.fyEnd} · ${data.stats.flagged} of ${data.stats.total} checks flagged · ${data.stats.highSeverity} high-severity${data.stats.notRun > 0 ? ` · ${data.stats.notRun} could not run` : ""}`
           : "Loading ledger scrutiny…"}
       />
 
@@ -209,13 +217,19 @@ export default function TaxAuditPage() {
           {importMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
           {importMutation.isPending ? "Importing…" : "Import Tally Export (XML)"}
         </button>
-        <button
-          type="button"
-          onClick={() => setConnectOpen(true)}
-          className="inline-flex items-center gap-2 rounded-xl border border-border px-4 py-2 text-sm font-medium hover:bg-muted"
-        >
-          <Plug className="h-4 w-4" /> Connect to Tally
-        </button>
+        {live.checked && !live.available ? (
+          <span className="inline-flex items-center gap-2 px-1 text-xs text-muted-foreground">
+            <Plug className="h-4 w-4" /> Live connection to Tally is not available on this site. Import a Tally export instead.
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setConnectOpen(true)}
+            className="inline-flex items-center gap-2 rounded-xl border border-border px-4 py-2 text-sm font-medium hover:bg-muted"
+          >
+            <Plug className="h-4 w-4" /> Connect to Tally <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-900">Experimental</span>
+          </button>
+        )}
         <button
           type="button"
           onClick={() => packMutation.mutate()}
@@ -235,13 +249,25 @@ export default function TaxAuditPage() {
             <RotateCcw className="h-4 w-4" /> Reset to demo
           </button>
         )}
-        <span className="text-xs text-muted-foreground">Tally → Gateway of Tally → Display → Day Book → Alt+E → XML</span>
+        <span className="text-xs text-muted-foreground">Export the ledger masters (with balances) and the vouchers from Tally as XML. A Day Book alone has no ledger groups or balances, so some checks cannot run.</span>
       </div>
 
       {data?.source === "demo" && (
         <div className="mb-4 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
           <AlertTriangle className="h-4 w-4 shrink-0" />
           Showing <strong>demo data</strong>. Import a Tally export (or connect the Tally Connector) to scrutinise your own books.
+        </div>
+      )}
+
+      {data && data.stats.notRun > 0 && (
+        <div className="mb-4 rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground" data-testid="not-run-banner">
+          <div className="flex items-center gap-2 font-medium text-foreground">
+            <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" />
+            {data.stats.notRun} of {data.stats.total} checks could not run on this data. They are marked <strong>Not run</strong>, not Clear.
+          </div>
+          <ul className="mt-1.5 list-disc space-y-0.5 pl-9 text-xs">
+            {[...new Set(data.summary.filter(c => c.notRun).map(c => c.notRun as string))].map(reason => <li key={reason}>{reason}</li>)}
+          </ul>
         </div>
       )}
 
@@ -268,7 +294,7 @@ export default function TaxAuditPage() {
                       <div className="mb-2 flex items-center justify-between gap-2">
                         <span className="rounded-md bg-primary/10 px-2 py-0.5 text-[11px] font-bold text-primary">{c.clause}</span>
                         <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${SEVERITY_TONE[c.severity]}`}>
-                          {c.count > 0 ? `${c.count} flagged` : "Clear"}
+                          {c.notRun ? "Not run" : c.severity === "info" ? (c.count > 0 ? `${c.count} rows` : "Nothing to show") : c.count > 0 ? `${c.count} flagged` : "Clear"}
                         </span>
                       </div>
                       <div className="mb-1 flex items-center gap-1 font-semibold text-foreground">
@@ -287,11 +313,11 @@ export default function TaxAuditPage() {
 
       {connectOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setConnectOpen(false)}>
-          <div className="w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-xl" onClick={e => e.stopPropagation()}>
+          <div role="dialog" aria-modal="true" aria-label="Connect to Tally" className="w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-xl" onClick={e => e.stopPropagation()}>
             <div className="mb-3 flex items-start justify-between">
               <div>
                 <div className="flex items-center gap-2 text-base font-bold"><Plug className="h-4 w-4 text-primary" /> Connect to Tally</div>
-                <p className="mt-1 text-xs text-muted-foreground">Pull the Day Book live from a running Tally gateway — no manual export.</p>
+                <p className="mt-1 text-xs text-muted-foreground">Pull the Day Book from a Tally running on this computer or network. Experimental: tried with sample data only, not yet with a live TallyPrime.</p>
               </div>
               <button type="button" onClick={() => setConnectOpen(false)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted"><X className="h-4 w-4" /></button>
             </div>
@@ -311,7 +337,7 @@ export default function TaxAuditPage() {
                   <input type="date" value={conn.toDate} onChange={e => setConn(c => ({ ...c, toDate: e.target.value }))} className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm" /></label>
               </div>
               <div className="rounded-lg bg-muted/50 px-3 py-2 text-[11px] text-muted-foreground">
-                In Tally: F1 → Settings → Connectivity → enable "act as server" (default port 9000). Tally must be reachable from the API host.
+                In Tally: F1 → Settings → Connectivity → enable "act as server" (default port 9000). Tally must be reachable from the computer TallyThis runs on; the hosted site cannot reach your computer.
               </div>
               <button type="submit" disabled={syncMutation.isPending || !conn.company.trim()} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-60">
                 {syncMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin" /> Syncing…</> : <><Plug className="h-4 w-4" /> Sync now</>}
@@ -323,7 +349,7 @@ export default function TaxAuditPage() {
 
       {openCheck && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setOpenCheck(null)}>
-          <div className="w-full max-w-4xl rounded-2xl border border-border bg-card p-5 shadow-xl max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+          <div role="dialog" aria-modal="true" aria-label={detail?.check.title ?? "Check details"} className="w-full max-w-4xl rounded-2xl border border-border bg-card p-5 shadow-xl max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="mb-3 flex items-start justify-between gap-3">
               <div>
                 <div className="flex items-center gap-2">
@@ -339,11 +365,17 @@ export default function TaxAuditPage() {
 
             {!detail ? (
               <div className="py-10 text-center text-sm text-muted-foreground">Loading…</div>
+            ) : detail.check.notRun ? (
+              <div className="flex flex-col items-center gap-2 py-10 text-center">
+                <AlertTriangle className="h-8 w-8 text-amber-500" />
+                <div className="text-sm font-medium text-foreground">Not run on this data</div>
+                <div className="max-w-md text-xs text-muted-foreground">{detail.check.notRun}</div>
+              </div>
             ) : detail.check.rows.length === 0 ? (
               <div className="flex flex-col items-center gap-2 py-10 text-center">
                 <ShieldCheck className="h-8 w-8 text-emerald-500" />
-                <div className="text-sm font-medium text-foreground">No exceptions found</div>
-                <div className="text-xs text-muted-foreground">This check passed — nothing to report.</div>
+                <div className="text-sm font-medium text-foreground">{detail.check.severity === "info" ? "Nothing to show for this data" : "No exceptions found in this data"}</div>
+                <div className="text-xs text-muted-foreground">This is not an audit opinion; the CA decides what is reportable.</div>
               </div>
             ) : (
               <div className="overflow-x-auto rounded-xl border border-border">

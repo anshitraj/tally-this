@@ -2,7 +2,8 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useLocation } from "wouter";
 import { motion } from "framer-motion";
 import { ArrowLeft, Database, Eye, EyeOff, Github, Loader2 } from "lucide-react";
-import { login } from "@/lib/auth";
+import { getUser, login, onboardingDoneKey } from "@/lib/auth";
+import { nameFromEmail } from "@/lib/utils";
 import { peekPendingJob } from "@/components/jobs/jobUi";
 import { BrandMark } from "@/components/app/finverify-ui";
 import { ProductDemo } from "@/components/marketing/ProductDemo";
@@ -47,10 +48,6 @@ function appRoute() {
   return job ? `/app/jobs/${job}` : "/app/overview";
 }
 
-function nextRouteFor(email: string) {
-  return localStorage.getItem(`finverify_onboarding_complete:${email}`) === "true" ? appRoute() : "/onboarding";
-}
-
 /** The older email/password sign-in, used when Neon Auth is off or for an older password. */
 async function legacyPost(path: string, body: unknown, timeoutMs = AUTH_TIMEOUT_MS): Promise<TallySession> {
   const controller = new AbortController();
@@ -63,10 +60,17 @@ async function legacyPost(path: string, body: unknown, timeoutMs = AUTH_TIMEOUT_
       signal: controller.signal,
     });
     const data = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(data?.error === "Invalid credentials" ? "That email and password do not match." : data?.error || "Sign-in failed. Please try again.");
+    if (!response.ok) {
+      if (data?.error === "Invalid credentials") throw new Error("That email and password do not match.");
+      if (typeof data?.error === "string" && data.error) throw new Error(data.error);
+      // No message from TallyThis itself: the service is down, restarting, or not connected to this website yet.
+      throw new Error("TallyThis is not available right now. Please try again in a few minutes.");
+    }
     return data;
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") throw new Error("This is taking longer than usual. Please try again in a moment.");
+    // fetch itself failed (no connection, or the address did not answer at all).
+    if (err instanceof TypeError) throw new Error("TallyThis could not be reached. Check your connection and try again.");
     throw err;
   } finally {
     window.clearTimeout(timeout);
@@ -128,6 +132,16 @@ export default function LoginPage() {
     void loadNeonConfig().then(setConfig);
   }, []);
 
+  // Someone already signed in has no use for this page: send them on. Not when they are in the middle of coming back from
+  // Google or GitHub (which finishes the sign-in below), nor when they were sent here because their session ended.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.has("neon_auth_session_verifier") || params.get("reason") === "expired") return;
+    if (getUser()) navigate(appRoute(), { replace: true });
+    // Checked once, on arrival.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // A person returning from Google or GitHub arrives here with a note from Neon in the address.
   useEffect(() => {
     if (!new URLSearchParams(window.location.search).has("neon_auth_session_verifier")) return;
@@ -163,17 +177,14 @@ export default function LoginPage() {
     // Remembered so signing out also ends the Neon sign-in.
     if (viaNeon) localStorage.setItem("finverify_neon", "1");
     login({ token: session.token, expiresAt: session.expiresAt, user: session.user });
+    // Replacing the sign-in page in the history keeps the Back button from returning to it once signed in.
     if (session.created) {
-      navigate("/onboarding");
+      navigate("/onboarding", { replace: true });
       return;
     }
-    if (viaNeon) {
-      // A returning person goes straight to work, on any device.
-      localStorage.setItem(`finverify_onboarding_complete:${session.user.email}`, "true");
-      navigate(appRoute());
-      return;
-    }
-    navigate(nextRouteFor(session.user.email));
+    // A returning person goes straight to work, on any device. Setup is only for a new account.
+    localStorage.setItem(onboardingDoneKey(session.user.email), "true");
+    navigate(appRoute(), { replace: true });
   };
 
   const completeWithNeon = async () => {
@@ -209,8 +220,8 @@ export default function LoginPage() {
       return;
     }
     if (isSignup) {
-      // Name and firm are asked on the next screen, the same as after Google or GitHub.
-      await neonSignUp(email.split("@")[0], email, password);
+      // Name and firm are optional on the next screen, the same as after Google or GitHub.
+      await neonSignUp(nameFromEmail(email), email, password);
       await askForCode("email-verification");
       return;
     }
@@ -257,8 +268,7 @@ export default function LoginPage() {
     setDemoBusy(true);
     try {
       const session = await legacyPost("/api/auth/demo", { intent: "load_demo_workspace" }, DEMO_TIMEOUT_MS);
-      localStorage.setItem(`finverify_onboarding_complete:${session.user.email}`, "true");
-      finishSignIn(session, false);
+      finishSignIn({ ...session, created: false }, false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "The sample workspace could not be opened.");
     } finally {

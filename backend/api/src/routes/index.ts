@@ -27,6 +27,7 @@ import practiceRouter from "./practice";
 import tdsReconRouter from "./tdsRecon";
 import jobsRouter from "./jobs";
 import gstJobsRouter from "./gstJobs";
+import booksJobsRouter from "./booksJobs";
 import jobReportsRouter from "./jobReports";
 import reconExportsRouter from "./reconExports";
 import accountRouter from "./account";
@@ -40,6 +41,7 @@ router.use(demoRouter);
 router.use(uploadsRouter);
 router.use(jobsRouter);
 router.use(gstJobsRouter);
+router.use(booksJobsRouter);
 // jobReports adds /reports/jobs-*; it comes before reportsRouter so nothing there can shadow it.
 router.use(jobReportsRouter);
 router.use(reconExportsRouter);

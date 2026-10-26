@@ -106,10 +106,35 @@ export function notAStatementMessage(file: UploadedFile): string {
   if (kind === "tally_export") return "This looks like a Tally export, not a bank statement. To compare it with your bank, use Bank ↔ Tally and add the bank statement too.";
   if (kind === "marketplace_report") return "This looks like a marketplace sales report, not a bank statement. Use E-commerce GST for it.";
   if (kind === "invoice_register") return "This looks like an invoice list, not a bank statement. Use Invoice ↔ Bank and add the bank statement too.";
+  if (kind === "sales_register") return "This looks like a sales register, not a bank statement. Use Sales → GSTR-1 for it.";
+  if (kind === "purchase_register") return "This looks like a purchase list, not a bank statement. Use Bills → Tally for it.";
+  if (kind === "payroll_sheet") return "This looks like a salary sheet, not a bank statement. Use Payroll for it.";
   return NOT_A_STATEMENT;
 }
 
-export type FileKind = "bank_statement" | "tally_export" | "marketplace_report" | "invoice_register" | "invoice_document" | "unknown";
+export type FileKind =
+  | "bank_statement"
+  | "tally_export"
+  | "marketplace_report"
+  | "invoice_register"
+  | "invoice_document"
+  | "sales_register"
+  | "purchase_register"
+  | "payroll_sheet"
+  | "unknown";
+
+/** A register that carries GST columns is a sales or purchase register, whichever way it is named. */
+function gstRegisterKind(header: string, name: string, preamble: string, text: string): "sales_register" | "purchase_register" | null {
+  if (!/igst|cgst|sgst/.test(header)) return null;
+  if (!/taxable|gross total|invoice value|total/.test(header)) return null;
+  if (!/voucher|invoice|bill|particulars|party|gstin|customer|supplier/.test(header)) return null;
+  const label = `${name} ${preamble} ${header}`;
+  const head = text.split(/\r?\n/).slice(0, 60).join(" ").toLowerCase();
+  const sales = (label.match(/\bsales?\b|customer|buyer|outward|debtor/g) ?? []).length + (head.match(/\bsales?\b/g) ?? []).length;
+  const purchases = (label.match(/\bpurchases?\b|supplier|vendor|inward|creditor/g) ?? []).length + (head.match(/\bpurchases?\b/g) ?? []).length;
+  if (sales === purchases) return null;
+  return sales > purchases ? "sales_register" : "purchase_register";
+}
 
 /** Classifies a file so the home page can send it to the right job without questions. */
 export function detectFileKind(file: UploadedFile): { kind: FileKind; platform?: MarketplacePlatform } {
@@ -134,7 +159,19 @@ export function detectFileKind(file: UploadedFile): { kind: FileKind; platform?:
   }
   const header = (scanCsvTable(text)?.columns ?? []).join(" ").toLowerCase();
   const preamble = text.split(/\r?\n/).slice(0, 8).join(" ").toLowerCase();
-  if (/order id|order_id|sub order|asin|fsn|taxable value|place of supply|tcs/.test(header) || /amazon|flipkart|meesho|myntra|jiomart|glowroad|shop101|paytm|snapdeal|ajio|citymall|limeroad/.test(name)) {
+  const platformByName = /amazon|flipkart|meesho|myntra|jiomart|glowroad|shop101|paytm|snapdeal|ajio|citymall|limeroad/.test(name);
+  if (/order id|order_id|sub order|asin|fsn|\bsku\b/.test(header) || platformByName) {
+    return { kind: "marketplace_report", platform: detectMarketplace(file.originalname, text) };
+  }
+  // A salary sheet has an employee column and pay heads; a bank statement has neither. Its title
+  // lines sit above the heading row, so the first lines of the file are read, not only the heading.
+  const top = text.split(/\r?\n/).slice(0, 30).join("\n").toLowerCase();
+  if (/employee|emp\.? name|staff name/.test(top) && /\bbasic\b|net pay|net salary/.test(top) && /\bpf\b|\besi\b|\bgross\b|net pay|net salary/.test(top) && !/withdrawal|deposit|narration/.test(top)) {
+    return { kind: "payroll_sheet" };
+  }
+  const register = gstRegisterKind(header, name, preamble, text);
+  if (register) return { kind: register };
+  if (/taxable value|place of supply|tcs/.test(header)) {
     return { kind: "marketplace_report", platform: detectMarketplace(file.originalname, text) };
   }
   if (/vch|voucher|particulars/.test(header) && !/balance|withdrawal|deposit/.test(header)) return { kind: "tally_export" };

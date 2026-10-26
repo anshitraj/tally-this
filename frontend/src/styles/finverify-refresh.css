@@ -1382,6 +1382,20 @@
   background: #ffffff15;
   color: var(--fv-white);
 }
+/* The whole account row opens the account menu (Settings, History, Help, Log out). */
+.fv-sidebar-account .fv-account-trigger {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 12px;
+  cursor: pointer;
+}
+.fv-sidebar-account .fv-account-trigger:focus-visible {
+  outline: 2px solid #d2e1ca;
+  outline-offset: 2px;
+}
 .fv-app-topbar {
   height: 68px;
   flex-shrink: 0;

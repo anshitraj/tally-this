@@ -11,7 +11,8 @@ import {
   usersTable,
 } from "@workspace/db";
 import { and, desc, eq } from "drizzle-orm";
-import { getCompanyId, requireAuth, requirePermission } from "../middleware/authz";
+import { auditAction, getCompanyId, requireAuth, requirePermission } from "../middleware/authz";
+import { validateCompanyUpdate } from "../services/companyProfile";
 import { hashPassword, sessionDurationMs, signAuthToken, tokenHash, verifyPassword } from "../services/auth";
 import { defaultRolePermissions } from "../services/permissions";
 import { deleteStoredObject } from "../services/storage";
@@ -20,6 +21,7 @@ import { finishOAuth, oauthProviderStatus, startOAuth } from "../services/oauth"
 import { seedDemoData } from "../lib/seedData";
 import { createLoginThrottle, throttleMessage } from "../services/loginThrottle";
 import { neonAuthConfig } from "../services/neonAuth";
+import { isUniqueViolation } from "../lib/dbErrors";
 
 const router: IRouter = Router();
 
@@ -27,9 +29,8 @@ function demoLoadingAllowed(): boolean {
   return process.env.ALLOW_DEMO_SEED === "true" || process.env.NODE_ENV !== "production";
 }
 
-router.get("/company", requirePermission("settings.manage_company"), async (req, res): Promise<void> => {
-  const [company] = await db.select().from(companiesTable).where(eq(companiesTable.id, getCompanyId(req))).limit(1);
-  res.json(company ? {
+function companyView(company: typeof companiesTable.$inferSelect) {
+  return {
     id: company.id,
     name: company.name,
     industry: company.industry,
@@ -41,7 +42,33 @@ router.get("/company", requirePermission("settings.manage_company"), async (req,
     currency: company.currency,
     dataRetentionDays: company.dataRetentionDays,
     createdAt: company.createdAt.toISOString(),
-  } : null);
+  };
+}
+
+// Settings is about the signed-in person's own workspace. When a CA is working on a client, the client header
+// points every other page at the client's books, but this page must keep showing (and saving) the CA's own firm,
+// the same company PATCH /company writes to.
+router.get("/company", requirePermission("settings.manage_company"), async (req, res): Promise<void> => {
+  const [company] = await db.select().from(companiesTable).where(eq(companiesTable.id, req.auth!.companyId)).limit(1);
+  res.json(company ? companyView(company) : null);
+});
+
+// Settings → Save. Only the fields the companies table stores can be changed (services/companyProfile.ts),
+// and only on the signed-in person's own company, never on a client's.
+router.patch("/company", requirePermission("settings.manage_company"), async (req, res): Promise<void> => {
+  const parsed = validateCompanyUpdate(req.body);
+  if (!parsed.ok) {
+    res.status(400).json({ ok: false, error: parsed.error });
+    return;
+  }
+  const [company] = await db.update(companiesTable).set(parsed.update).where(eq(companiesTable.id, req.auth!.companyId)).returning();
+  if (!company) {
+    res.status(404).json({ ok: false, error: "Company not found." });
+    return;
+  }
+  // The audit trail records which fields changed, not their values.
+  await auditAction(req, "settings.company_updated", "company", company.id, { fields: Object.keys(parsed.update) });
+  res.json({ ok: true, company: companyView(company) });
 });
 
 const loginThrottle = createLoginThrottle({
@@ -292,15 +319,26 @@ router.post("/auth/register", async (req, res): Promise<void> => {
     dataRetentionDays: 365,
   }).returning();
 
-  const [user] = await db.insert(usersTable).values({
-    companyId: company.id,
-    name,
-    email,
-    passwordHash: passwordHash.hash,
-    passwordSalt: passwordHash.salt,
-    role: "founder",
-    status: "active",
-  }).returning();
+  let user: typeof usersTable.$inferSelect;
+  try {
+    [user] = await db.insert(usersTable).values({
+      companyId: company.id,
+      name,
+      email,
+      passwordHash: passwordHash.hash,
+      passwordSalt: passwordHash.salt,
+      role: "founder",
+      status: "active",
+    }).returning();
+  } catch (err) {
+    // Two sign-ups with the same address at the same moment: the second one stops here and leaves nothing behind.
+    await db.delete(companiesTable).where(eq(companiesTable.id, company.id));
+    if (isUniqueViolation(err)) {
+      res.status(409).json({ error: "A user with this email already exists" });
+      return;
+    }
+    throw err;
+  }
 
   await db.insert(rolePermissionsTable).values(defaultRolePermissions(company.id));
 
@@ -409,7 +447,7 @@ router.post("/auth/logout", requireAuth, async (req, res): Promise<void> => {
 });
 
 router.get("/users", requirePermission("settings.manage_company"), async (req, res): Promise<void> => {
-  const users = await db.select().from(usersTable).where(eq(usersTable.companyId, getCompanyId(req))).orderBy(desc(usersTable.createdAt));
+  const users = await db.select().from(usersTable).where(eq(usersTable.companyId, req.auth!.companyId)).orderBy(desc(usersTable.createdAt));
   res.json(users.map(user => ({
     id: user.id,
     companyId: user.companyId,
@@ -423,7 +461,7 @@ router.get("/users", requirePermission("settings.manage_company"), async (req, r
 });
 
 router.post("/roles/backfill", requirePermission("settings.manage_company"), async (req, res): Promise<void> => {
-  const companyId = getCompanyId(req);
+  const companyId = req.auth!.companyId;
   const existing = await db.select({ role: rolePermissionsTable.role, permission: rolePermissionsTable.permission })
     .from(rolePermissionsTable)
     .where(eq(rolePermissionsTable.companyId, companyId));
@@ -437,7 +475,7 @@ router.post("/roles/backfill", requirePermission("settings.manage_company"), asy
 });
 
 router.get("/roles", requirePermission("settings.manage_company"), async (req, res): Promise<void> => {
-  const permissions = await db.select().from(rolePermissionsTable).where(eq(rolePermissionsTable.companyId, getCompanyId(req))).orderBy(rolePermissionsTable.role);
+  const permissions = await db.select().from(rolePermissionsTable).where(eq(rolePermissionsTable.companyId, req.auth!.companyId)).orderBy(rolePermissionsTable.role);
   const grouped = permissions.reduce<Record<string, Array<{ permission: string; enabled: boolean }>>>((acc, item) => {
     acc[item.role] ??= [];
     acc[item.role].push({ permission: item.permission, enabled: item.enabled });
@@ -544,9 +582,10 @@ router.get("/gst-records", requirePermission("risks.read"), async (req, res): Pr
   })));
 });
 
+// Settings pages show the person's own workspace, whichever client is open elsewhere in the app.
 router.get("/audit-logs", requirePermission("settings.manage_company"), async (req, res): Promise<void> => {
   const limit = Math.min(Number(req.query.limit ?? 30), 100);
-  const logs = await db.select().from(auditLogsTable).where(eq(auditLogsTable.companyId, getCompanyId(req))).orderBy(desc(auditLogsTable.createdAt)).limit(limit);
+  const logs = await db.select().from(auditLogsTable).where(eq(auditLogsTable.companyId, req.auth!.companyId)).orderBy(desc(auditLogsTable.createdAt)).limit(limit);
   res.json(logs.map(log => ({
     id: log.id,
     companyId: log.companyId,
@@ -562,7 +601,7 @@ router.get("/audit-logs", requirePermission("settings.manage_company"), async (r
 });
 
 router.get("/security/posture", requirePermission("settings.manage_company"), async (req, res): Promise<void> => {
-  const companyId = getCompanyId(req);
+  const companyId = req.auth!.companyId;
   const users = await db.select().from(usersTable).where(eq(usersTable.companyId, companyId));
   const documents = await db.select().from(documentsTable).where(eq(documentsTable.companyId, companyId));
   const auditLogs = await db.select().from(auditLogsTable).where(eq(auditLogsTable.companyId, companyId)).limit(1);

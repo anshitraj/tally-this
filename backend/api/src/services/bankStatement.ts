@@ -299,6 +299,10 @@ export function counterpartyFrom(narration: string) {
   // Quarterly interest lines differ only by dates; they belong together.
   if (/\bint\.?\s*(pd|paid|cr|credit)\b|credit interest|interest (paid|credit)|\bsb\s*int\b/i.test(narration)) return "Bank interest";
   if (/\bfd\b|fixed deposit|term deposit/i.test(narration)) return "Fixed deposit";
+  // The NPCI layout names the other party in its fourth field, however short:
+  // "UPI/DR/291909379939/VI/YESB/**L3066@PTYBL/SENT USI//...".
+  const upi = /^UPI\/(?:DR|CR|REV)\/\d{6,}\/([^/]{1,40})\//i.exec(narration.trim());
+  if (upi && /[a-z]/i.test(upi[1])) return upi[1].replace(/\s+/g, " ").trim();
   const cleaned = narration.replace(NARRATION_PREFIX, "");
   const segments: string[] = [];
   let vpa: string | null = null;

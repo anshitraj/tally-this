@@ -1,7 +1,10 @@
 /**
- * Tax Audit data loader — db-dependent. Reads a company's Tally data from the
- * tally_* tables, falling back to the embedded demo dataset when empty/missing.
+ * Tax Audit data loader — db-dependent. Reads a company's Tally data from the tally_* tables.
+ * A company that has imported nothing gets the embedded demo dataset, labelled as demo (source "demo").
  * Shared by routes/taxAudit.ts (single company) and routes/practice.ts (per client).
+ *
+ * A database error is not hidden behind the demo data: it reaches the route, which answers with an error, so
+ * nobody mistakes sample figures for their own books.
  */
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
@@ -13,53 +16,52 @@ import {
 export interface TaxAuditData { ledgers: Ledger[]; vouchers: Voucher[]; assets: AssetRow[]; bills: Bill[]; source: "tally" | "demo" }
 
 export async function loadData(companyId: number): Promise<TaxAuditData> {
-  try {
-    const led = await db.execute(sql`SELECT name, "group", opening_balance, closing_balance, prev_year_closing, prev_year_group, is_msme, msme_type, pan FROM tally_ledgers WHERE company_id = ${companyId}`);
-    if (led.rows && led.rows.length > 0) {
-      const vch = await db.execute(sql`SELECT date, type, number, party, narration, amount, mode FROM tally_vouchers WHERE company_id = ${companyId} ORDER BY date`);
-      const lines = await db.execute(sql`SELECT voucher_number, ledger, "group", debit, credit FROM tally_voucher_lines WHERE company_id = ${companyId}`);
-      const linesByVoucher = new Map<string, VoucherLine[]>();
-      for (const l of lines.rows as Record<string, unknown>[]) {
-        const key = String(l.voucher_number);
-        const arr = linesByVoucher.get(key) ?? [];
-        arr.push({ ledger: String(l.ledger), group: String(l.group), debit: Number(l.debit), credit: Number(l.credit) });
-        linesByVoucher.set(key, arr);
-      }
-      const ledgers: Ledger[] = (led.rows as Record<string, unknown>[]).map(r => ({
-        name: String(r.name), group: String(r.group),
-        openingBalance: Number(r.opening_balance), closingBalance: Number(r.closing_balance),
-        prevYearClosing: r.prev_year_closing != null ? Number(r.prev_year_closing) : undefined,
-        prevYearGroup: r.prev_year_group != null ? String(r.prev_year_group) : undefined,
-        isMsme: Boolean(r.is_msme), msmeType: (r.msme_type as Ledger["msmeType"]) ?? null, pan: (r.pan as string) ?? null,
-      }));
-      const vouchers: Voucher[] = (vch.rows as Record<string, unknown>[]).map(r => ({
-        date: String(r.date), type: r.type as VoucherType, number: String(r.number),
-        party: r.party ? String(r.party) : undefined, narration: r.narration ? String(r.narration) : undefined,
-        amount: Number(r.amount), mode: (r.mode as Voucher["mode"]) ?? undefined,
-        lines: linesByVoucher.get(String(r.number)) ?? [],
-      }));
-      let assets = DEMO_ASSETS;
-      try {
-        const a = await db.execute(sql`SELECT name, block, rate, opening_wdv, additions, addition_date, deletions, deletion_date, depreciation, closing_wdv FROM tally_fixed_assets WHERE company_id = ${companyId}`);
-        if (a.rows && a.rows.length > 0) {
-          assets = (a.rows as Record<string, unknown>[]).map(r => ({
-            name: String(r.name), block: String(r.block), rate: Number(r.rate),
-            openingWdv: Number(r.opening_wdv), additions: Number(r.additions), additionDate: r.addition_date ? String(r.addition_date) : undefined,
-            deletions: Number(r.deletions), deletionDate: r.deletion_date ? String(r.deletion_date) : undefined,
-            depreciation: Number(r.depreciation), closingWdv: Number(r.closing_wdv),
-          }));
-        }
-      } catch { /* assets table optional */ }
-      let bills: Bill[] = [];
-      try {
-        const bRes = await db.execute(sql`SELECT party, "group", ref, date, amount, type FROM tally_bills WHERE company_id = ${companyId}`);
-        bills = (bRes.rows as Record<string, unknown>[]).map(r => ({
-          party: String(r.party), group: String(r.group), ref: String(r.ref),
-          date: String(r.date), amount: Number(r.amount), type: (r.type as BillType) ?? "New Ref",
-        }));
-      } catch { /* bills table optional */ }
-      return { ledgers, vouchers, assets, bills, source: "tally" };
-    }
-  } catch { /* tables missing — fall through to demo */ }
-  return { ledgers: DEMO_LEDGERS, vouchers: DEMO_VOUCHERS, assets: DEMO_ASSETS, bills: DEMO_BILLS, source: "demo" };
+  const led = await db.execute(sql`SELECT name, "group", opening_balance, closing_balance, prev_year_closing, prev_year_group, is_msme, msme_type, pan FROM tally_ledgers WHERE company_id = ${companyId}`);
+  const vch = await db.execute(sql`SELECT date, type, number, party, narration, amount, mode FROM tally_vouchers WHERE company_id = ${companyId} ORDER BY date`);
+
+  // Something was imported if there are ledgers or vouchers. A Day Book alone (vouchers, no ledger masters) is still the
+  // company's own data: the checks that need ledger groups and balances say they could not run.
+  if (led.rows.length === 0 && vch.rows.length === 0) {
+    return { ledgers: DEMO_LEDGERS, vouchers: DEMO_VOUCHERS, assets: DEMO_ASSETS, bills: DEMO_BILLS, source: "demo" };
+  }
+
+  const lines = await db.execute(sql`SELECT voucher_number, ledger, "group", debit, credit FROM tally_voucher_lines WHERE company_id = ${companyId}`);
+  const linesByVoucher = new Map<string, VoucherLine[]>();
+  for (const l of lines.rows as Record<string, unknown>[]) {
+    const key = String(l.voucher_number);
+    const arr = linesByVoucher.get(key) ?? [];
+    arr.push({ ledger: String(l.ledger), group: String(l.group), debit: Number(l.debit), credit: Number(l.credit) });
+    linesByVoucher.set(key, arr);
+  }
+  const ledgers: Ledger[] = (led.rows as Record<string, unknown>[]).map(r => ({
+    name: String(r.name), group: String(r.group),
+    openingBalance: Number(r.opening_balance), closingBalance: Number(r.closing_balance),
+    prevYearClosing: r.prev_year_closing != null ? Number(r.prev_year_closing) : undefined,
+    prevYearGroup: r.prev_year_group != null ? String(r.prev_year_group) : undefined,
+    isMsme: Boolean(r.is_msme), msmeType: (r.msme_type as Ledger["msmeType"]) ?? null, pan: (r.pan as string) ?? null,
+  }));
+  const vouchers: Voucher[] = (vch.rows as Record<string, unknown>[]).map(r => ({
+    date: String(r.date), type: r.type as VoucherType, number: String(r.number),
+    party: r.party ? String(r.party) : undefined, narration: r.narration ? String(r.narration) : undefined,
+    amount: Number(r.amount), mode: (r.mode as Voucher["mode"]) ?? undefined,
+    lines: linesByVoucher.get(String(r.number)) ?? [],
+  }));
+
+  // The demo fixed assets belong to the demo company only: an imported company with no schedule has none, and the
+  // depreciation check says so instead of showing someone else's assets.
+  const a = await db.execute(sql`SELECT name, block, rate, opening_wdv, additions, addition_date, deletions, deletion_date, depreciation, closing_wdv FROM tally_fixed_assets WHERE company_id = ${companyId}`);
+  const assets: AssetRow[] = (a.rows as Record<string, unknown>[]).map(r => ({
+    name: String(r.name), block: String(r.block), rate: Number(r.rate),
+    openingWdv: Number(r.opening_wdv), additions: Number(r.additions), additionDate: r.addition_date ? String(r.addition_date) : undefined,
+    deletions: Number(r.deletions), deletionDate: r.deletion_date ? String(r.deletion_date) : undefined,
+    depreciation: Number(r.depreciation), closingWdv: Number(r.closing_wdv),
+  }));
+
+  const bRes = await db.execute(sql`SELECT party, "group", ref, date, amount, type FROM tally_bills WHERE company_id = ${companyId}`);
+  const bills: Bill[] = (bRes.rows as Record<string, unknown>[]).map(r => ({
+    party: String(r.party), group: String(r.group), ref: String(r.ref),
+    date: String(r.date), amount: Number(r.amount), type: (r.type as BillType) ?? "New Ref",
+  }));
+
+  return { ledgers, vouchers, assets, bills, source: "tally" };
 }

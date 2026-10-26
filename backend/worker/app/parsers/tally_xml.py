@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import re
 import xml.etree.ElementTree as ET
+from collections import Counter
 from typing import Any
 
 # Cash / bank ledger group hints, used to infer voucher "mode".
@@ -88,6 +89,7 @@ def parse_tally_xml(content: bytes) -> dict[str, Any]:
     ledger_group: dict[str, str] = {}
     ledgers: list[dict[str, Any]] = []
 
+    closing_given = 0
     for led in root.iter("LEDGER"):
         name = (led.get("NAME") or _text(led.find("NAME")) or "").strip()
         if not name:
@@ -95,6 +97,8 @@ def parse_tally_xml(content: bytes) -> dict[str, Any]:
         group = _text(led.find("PARENT"))
         opening = _num(_text(led.find("OPENINGBALANCE")))
         closing_raw = _text(led.find("CLOSINGBALANCE"))
+        if closing_raw:
+            closing_given += 1
         closing = _num(closing_raw) if closing_raw else opening
         msme_type = _text(led.find("MSMEREGISTRATIONTYPE")) or None
         pan = _text(led.find("INCOMETAXNUMBER")) or _text(led.find("PANNUMBER")) or None
@@ -116,6 +120,11 @@ def parse_tally_xml(content: bytes) -> dict[str, Any]:
     bills: list[dict[str, Any]] = []
     auto_no = 0
 
+    # Tally numbers each voucher type on its own, so "1" is both a Receipt and a Payment. A line is stored against its
+    # voucher's number, so two vouchers must never share one: the type is added where a number repeats, and the date after that.
+    number_count = Counter(_text(v.find("VOUCHERNUMBER")) for v in root.iter("VOUCHER"))
+    used_numbers: set[str] = set()
+
     for vch in root.iter("VOUCHER"):
         vch_type = (vch.get("VCHTYPE") or _text(vch.find("VOUCHERTYPENAME")) or "Journal").strip()
         date = _norm_date(_text(vch.find("DATE")))
@@ -123,6 +132,17 @@ def parse_tally_xml(content: bytes) -> dict[str, Any]:
         if not number:
             auto_no += 1
             number = f"AUTO-{auto_no}"
+        elif number_count[number] > 1:
+            number = f"{_canonical_vch_type(vch_type)} {number}"
+        if number in used_numbers:
+            number = f"{number} ({date})"
+        counter = 2
+        unique = number
+        while unique in used_numbers:
+            unique = f"{number} #{counter}"
+            counter += 1
+        number = unique
+        used_numbers.add(number)
         party = _text(vch.find("PARTYLEDGERNAME")) or None
         narration = _text(vch.find("NARRATION")) or None
 
@@ -188,6 +208,12 @@ def parse_tally_xml(content: bytes) -> dict[str, Any]:
 
     if not ledgers and not vouchers:
         warnings.append("No <LEDGER> or <VOUCHER> nodes found — is this a Tally XML export?")
+    if vouchers and not ledgers:
+        warnings.append("This export has vouchers but no ledger masters (groups and balances), so the checks that need them cannot run. Export the masters and the vouchers together.")
+    if ledgers and not vouchers:
+        warnings.append("This export has ledger masters but no vouchers, so the checks on payments, receipts and journals cannot run.")
+    if ledgers and closing_given == 0:
+        warnings.append("This export has no closing balances, so the checks that use balances cannot run.")
 
     return {
         "ok": bool(ledgers or vouchers),

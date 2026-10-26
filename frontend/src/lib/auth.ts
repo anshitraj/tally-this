@@ -19,6 +19,9 @@ export interface AuthSession {
 
 const AUTH_KEY = "finverify_auth";
 
+/** This browser remembers that a person has finished setting up, so the setup page does not come back. */
+export const onboardingDoneKey = (email: string) => `finverify_onboarding_complete:${email}`;
+
 function readSession(): AuthSession | null {
   try {
     const raw = localStorage.getItem(AUTH_KEY);

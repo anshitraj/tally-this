@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, Loader2, Plug } from "lucide-react";
 import { Choice, Notice, getJson } from "@/components/jobs/jobUi";
+import { useLiveTally } from "@/lib/liveTally";
 
 export interface TallySendResult {
   ok: boolean;
@@ -42,8 +43,15 @@ export function SendToTally({
   defaultBankLedger,
   onLedgers,
   onSend,
+  showBankChoices = true,
+  noun = "entry",
+  nounPlural = "entries",
 }: {
   entries: number;
+  /** Bank statements pick a bank and Suspense ledger; other jobs only need the company. */
+  showBankChoices?: boolean;
+  noun?: string;
+  nounPlural?: string;
   /** Why sending is not allowed yet, e.g. items still under review. */
   blockedReason: string | null;
   /** Words that identify the statement's bank ledger in Tally, e.g. ["DBS", "4321"]. */
@@ -54,6 +62,7 @@ export function SendToTally({
   onLedgers: (names: string[]) => void;
   onSend: (tallyCompany: string, choices: TallyChoices) => Promise<TallySendResult>;
 }) {
+  const live = useLiveTally();
   const [checking, setChecking] = useState(false);
   const [status, setStatus] = useState<TallyStatus | null>(null);
   const [company, setCompany] = useState("");
@@ -110,11 +119,24 @@ export function SendToTally({
   // Entries may already be in Tally when some were created or Tally never confirmed either way.
   const sentBefore = Boolean(result && ((result.created ?? 0) > 0 || (result.created == null && !result.errors?.length)));
 
+  // The hosted site cannot reach the accountant's own TallyPrime. Say so, and point to the file that does work.
+  if (live.checked && !live.available) {
+    return (
+      <div className="space-y-1">
+        <div className="flex items-center gap-2 text-sm font-semibold"><Plug className="h-4 w-4" />Sending straight to Tally is not available on this site</div>
+        <p className="text-xs text-muted-foreground">
+          {live.message || "It only works when TallyThis runs on the same computer as TallyPrime."} In Tally: open the company → Import → Vouchers → choose the downloaded file.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-3">
       <div>
-        <div className="flex items-center gap-2 text-sm font-semibold"><Plug className="h-4 w-4" />Send straight to Tally</div>
+        <div className="flex items-center gap-2 text-sm font-semibold"><Plug className="h-4 w-4" />Send straight to Tally <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-900">Experimental</span></div>
         <p className="mt-1 text-xs text-muted-foreground">
+          Tried with sample data only, not yet with a live TallyPrime. The downloaded Tally file is the safer route.
           Works when TallyPrime is open on this computer with F1 Help → Settings → Connectivity → TallyPrime acts as: Server (port 9000).
           Back up the Tally company first.
         </p>
@@ -136,7 +158,10 @@ export function SendToTally({
             <Choice size="sm" value={company} options={(status?.companies ?? []).map(name => ({ value: name, label: name }))} onChange={setCompany} />
           </div>
           {ledgerError && <Notice tone="warn">{ledgerError} New ledgers will be created where needed.</Notice>}
-          {ledgers && (
+          {ledgers && !showBankChoices && (
+            <p className="text-xs text-muted-foreground">{ledgers.length} ledgers from {company} are available in the ledger lists under More options.</p>
+          )}
+          {ledgers && showBankChoices && (
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="block text-xs font-semibold text-muted-foreground">
                 Bank ledger in Tally
@@ -169,7 +194,7 @@ export function SendToTally({
             </div>
           ) : (
             <button type="button" className="fv-button-primary h-11 px-6" onClick={send} disabled={sending || !company}>
-              {sending ? "Sending to Tally…" : `Send ${entries} ${entries === 1 ? "entry" : "entries"} to ${company || "Tally"}`}
+              {sending ? "Sending to Tally…" : `Send ${entries} ${entries === 1 ? noun : nounPlural} to ${company || "Tally"}`}
             </button>
           )}
         </div>

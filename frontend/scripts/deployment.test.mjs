@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createVercelConfig } from "../vercel.mjs";
+import { SECURITY_HEADERS, createVercelConfig } from "../vercel.mjs";
 
 test("landing-only configuration never rewrites API requests to HTML", () => {
   const config = createVercelConfig("");
@@ -17,6 +17,21 @@ test("API proxy preserves the API prefix and is before application routes", () =
   assert.deepEqual(config.rewrites[0], {
     source: "/api/:path*", destination: "https://gateway.example.test/api/:path*",
   });
+});
+
+test("every page and file carries the basic security headers", () => {
+  for (const origin of ["", "https://gateway.example.test"]) {
+    const config = createVercelConfig(origin);
+    const rule = config.headers.find(item => item.source === "/(.*)");
+    assert.ok(rule, "a rule for every path");
+    const sent = Object.fromEntries(rule.headers.map(header => [header.key, header.value]));
+    assert.equal(sent["X-Content-Type-Options"], "nosniff");
+    assert.equal(sent["X-Frame-Options"], "SAMEORIGIN");
+    assert.match(sent["Referrer-Policy"], /strict-origin/);
+    assert.match(sent["Permissions-Policy"], /camera=\(\)/);
+  }
+  // Nothing in them can break a script, a style or the sign-in redirect.
+  assert.ok(SECURITY_HEADERS.every(header => !/content-security-policy/i.test(header.key)));
 });
 
 test("reject unsafe or malformed backend origins", () => {

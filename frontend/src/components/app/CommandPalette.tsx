@@ -7,6 +7,7 @@ import {
   GST_RECON_JOB,
   JOB_NAV,
   SECONDARY_NAV,
+  TOOLS_ENTRY,
   WORKSPACE_NAV,
   type NavEntry,
 } from "@/lib/navigation";
@@ -132,7 +133,7 @@ export default function CommandPalette({ open, onOpenChange, onNavigate, onSignO
               )}
 
               <Command.Group heading="Go to">
-                {[...WORKSPACE_NAV, ...SECONDARY_NAV].map(entry => entryRow(entry, href => run(() => onNavigate(href))))}
+                {[...WORKSPACE_NAV, ...SECONDARY_NAV, TOOLS_ENTRY].map(entry => entryRow(entry, href => run(() => onNavigate(href))))}
                 <Row
                   value="Add a client new business"
                   keywords={["new", "client", "add", "business"]}

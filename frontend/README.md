@@ -6,8 +6,8 @@ In Vercel select Root Directory **`frontend`**, Vite, Node 22.x and include
 source files outside the Root Directory. Build: `pnpm run build`.
 Output: **`dist/public`**. pnpm is pinned in the repository root.
 
-Set **`BACKEND_ORIGIN`** in Vercel to the public HTTPS Railway gateway origin,
-without `/api`. `vercel.mjs` creates the same-origin `/api` proxy and routes for
+Set **`BACKEND_ORIGIN`** in Vercel to the backend's public HTTPS origin
+(`https://api.tallythis.xyz`), without `/api`. `vercel.mjs` creates the same-origin `/api` proxy and routes for
 login, onboarding and dashboard refreshes. Redeploy after changing this variable.
 Leaving it blank supports the public landing page only.
 

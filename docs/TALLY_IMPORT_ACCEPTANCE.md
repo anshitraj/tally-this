@@ -25,4 +25,20 @@ Without the flag, the runner performs only preflight. With the flag it creates s
 
 The result is `passed_first_import` only when the real acknowledgement and read-back agree. It is deliberately **not** a repeat-import certification. Safe retries, partial imports, ledger-group compatibility, real bank formats and marketplace Sales/Credit Note GST behaviour remain separate release gates. Stop on any mismatch and inspect the test company's books. Do not run an import test against a live client company.
 
+## Purchase and Journal vouchers, and repeat import
+
+Status on 15 October 2026: **not passed, not run**. TallyPrime was installed on the development machine, but it was not running, the single company folder in its data directory is not known to be disposable, and computer control of the application was declined. Nothing was written to any company.
+
+`pnpm --filter @workspace/api-server run verify-tally-books --allow-test-import` (with `TALLY_TEST_URL`, `TALLY_TEST_COMPANY`, `TALLY_TEST_DATE` as above) checks, against the real engine and a disposable company only:
+
+1. A Purchase voucher with its supplier master and bill allocation is acknowledged and read back with the party, purchase, CGST, SGST and round-off lines agreeing to the paise, the voucher type and the date.
+2. The same file sent a second time: what Tally acknowledged, and whether exactly one voucher still carries the reference. A result of two vouchers is recorded as failed, not retried quietly.
+3. A salary Journal voucher with its ledgers is acknowledged.
+
+Every check is recorded with what Tally answered in `dist/TallyThis_books_acceptance.json`. Passing does not certify a client's own masters (GST duty ledgers with their GST settings), several rates on one invoice, or the GST registers; those need a CA's test on that company.
+
+## Where direct sending works
+
+TallyThis can post vouchers straight to TallyPrime's local XML server (Bank → Tally "Send to Tally", Bills, Payroll and the Tax Audit connection), but only when TallyThis runs on the same computer or network as TallyPrime. A hosted server cannot reach an accountant's PC, so on the hosted site these are switched off: the API answers 409, the screens offer the XML download and say how to import it, and the connector is off by default in production (`TALLY_CONNECTOR_ENABLED`). Where it is on, it is marked Experimental, reaches only this computer or hosts in `TALLY_ALLOWED_HOSTS` and port 9000 or `TALLY_ALLOWED_PORTS`, and has not passed the acceptance runs above. Which tests need a real TallyPrime or a database is listed in [TESTING.md](TESTING.md).
+
 Primary output references: [Tally XML examples](https://help.tallysolutions.com/sample-xml/) and [TallyPrime import configuration](https://help.tallysolutions.com/import-data-from-xml-or-json/).

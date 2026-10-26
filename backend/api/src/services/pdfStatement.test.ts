@@ -169,3 +169,54 @@ test("the balance check needs every comparable row to move by its amount", () =>
   assert.equal(checkRunningBalance(rows, 1000).verified, true);
   assert.equal(checkRunningBalance(rows, 1000, { printedClosing: 949 }).verified, false);
 });
+
+// Canara-style passbook: each description is centred on its date and amount line (it starts above
+// it), every block ends with a "Chq:" line, and text wraps at the column's width.
+function canaraLines(): Line[] {
+  const cell = (text: string, x = 107): Cell => ({ text, x });
+  return [
+    { y: 60, cells: [cell("Statement for A/c XXXXXXXXX9240 for the period 15-Sep-2025 to 30-Nov-2025", 36)] },
+    { y: 100, cells: [{ text: "Date", x: 44 }, { text: "Particulars", x: 167 }, { text: "Deposits", x: 321 }, { text: "Withdrawals", x: 413 }, { text: "Balance", x: 517 }] },
+    { y: 120, cells: [{ text: "Opening Balance", x: 306 }, right("1,000.00", 560)] },
+    { y: 140, cells: [cell("UPI/DR/525805739236/COUNTR")] },
+    { y: 152, cells: [cell("YDE/UTIB/**.PAYU@AXISBANK/")] },
+    { y: 164, cells: [{ text: "15-09-2025", x: 27 }, cell("COUNTRY"), right("80.00", 470), right("920.00", 560)] },
+    { y: 176, cells: [cell("4368C85487/15/09/2025")] },
+    { y: 188, cells: [cell("23:31:55")] },
+    { y: 200, cells: [cell("Chq: 525805739236")] },
+    { y: 224, cells: [cell("NEFT CR-AXNGG25963817073-")] },
+    { y: 236, cells: [cell("UTIB0000553-GOOGLE INDIA")] },
+    { y: 248, cells: [{ text: "16-09-2025", x: 27 }, cell("DIGITAL SERVICES PRIVATE"), right("70.00", 380), right("990.00", 560)] },
+    { y: 260, cells: [cell("Chq: 0")] },
+    { y: 284, cells: [cell("UPI/CR/533357815619/SHAHAJ")] },
+    { y: 296, cells: [cell("AD /YESB/**097-")] },
+    { y: 308, cells: [{ text: "29-11-2025", x: 27 }, cell("F744F7CB376374986BCCAB5/2"), right("500.00", 380), right("1,490.00", 560)] },
+    { y: 320, cells: [cell("9/11/2025 13:57:40")] },
+    { y: 332, cells: [cell("Chq: 533357815619")] },
+    { y: 356, cells: [cell("UPI/REV/601314504161/ASHA")] },
+    { y: 368, cells: [{ text: "30-11-2025", x: 27 }, cell("BHAR/CNRB/**07764@PTAXIS/"), right("-40.00", 470), right("1,530.00", 560)] },
+    { y: 380, cells: [cell("Chq: 601314504161")] },
+  ];
+}
+
+test("a passbook whose descriptions start above the amount line keeps every line, its reference and its reversals", async () => {
+  const read = await readStatementPdf(await makePdf(canaraLines(), { font: "Courier" }), { fileName: "canara_epassbook.pdf" });
+  assert.equal(read.status, "ok");
+  const txns = read.summary!.transactions;
+  // The wrapped line "9/11/2025 13:57:40" is part of a description, not a fifth transaction.
+  assert.equal(txns.length, 4);
+  assert.equal(txns[0].narration, "UPI/DR/525805739236/COUNTRYDE/UTIB/**.PAYU@AXISBANK/COUNTRY 4368C85487/15/09/2025 23:31:55");
+  assert.equal(txns[1].narration, "NEFT CR-AXNGG25963817073-UTIB0000553-GOOGLE INDIA DIGITAL SERVICES PRIVATE");
+  assert.equal(txns[2].narration, "UPI/CR/533357815619/SHAHAJAD /YESB/**097- F744F7CB376374986BCCAB5/29/11/2025 13:57:40");
+  assert.match(txns[3].narration, /^UPI\/REV\/601314504161\/ASHA/);
+  assert.deepEqual(txns.map(txn => txn.reference), ["525805739236", null, "533357815619", "601314504161"]);
+  // "-40.00" under Withdrawals raised the balance: it is money back in.
+  assert.deepEqual(txns.map(txn => [txn.date, txn.debit, txn.credit, txn.balance]), [
+    ["2025-09-15", 80, null, 920],
+    ["2025-09-16", null, 70, 990],
+    ["2025-11-29", null, 500, 1490],
+    ["2025-11-30", null, 40, 1530],
+  ]);
+  assert.equal(read.check!.verified, true);
+  assert.equal(read.check!.failed, 0);
+});

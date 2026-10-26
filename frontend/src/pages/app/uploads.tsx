@@ -13,6 +13,7 @@ import ProcessingSteps from "@/components/workflow/ProcessingSteps";
 import AdvancedUploadView from "@/components/uploads/AdvancedUploadView";
 import CurrentUploadedFiles from "@/components/uploads/CurrentUploadedFiles";
 import { isPrivacyOn, usePrivacy } from "@/lib/privacy";
+import { refreshAfterChange } from "@/lib/refresh";
 import { Notice } from "@/components/jobs/jobUi";
 import { Link } from "wouter";
 
@@ -390,14 +391,12 @@ export default function UploadsPage() {
       return result;
     },
     onSuccess: result => {
-      qc.invalidateQueries({ queryKey: ["uploads"] });
-      qc.invalidateQueries({ queryKey: ["overview"] });
-      qc.invalidateQueries({ queryKey: ["transactions"] });
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["ledger"] });
-      qc.invalidateQueries({ queryKey: ["payroll"] });
-      qc.invalidateQueries({ queryKey: ["gateway"] });
-      qc.invalidateQueries({ queryKey: ["reconciliation"] });
+      // The file list, the next-step panel and the action history say what has been uploaded; without a fresh request
+      // they keep saying "nothing yet", even when the page's own first request was still loading as the file went in.
+      void refreshAfterChange(qc, [
+        ["uploads"], ["monthly-close-workflow"], ["action-history"], ["overview"], ["transactions"],
+        ["invoices"], ["ledger"], ["payroll"], ["gateway"], ["reconciliation"],
+      ]);
       const copy = statusCopy(result);
       const importMessage = result.imported?.inserted
         ? ` Imported ${result.imported.inserted} rows into ${result.imported.table?.replace(/_/g, " ")}.`

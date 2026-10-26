@@ -19,6 +19,7 @@ import {
   type NeonUserRecord,
 } from "../services/neonAuth";
 import { logger } from "../lib/logger";
+import { isUniqueViolation } from "../lib/dbErrors";
 
 const router: IRouter = Router();
 
@@ -67,14 +68,26 @@ function liveDeps(req: Request, verify: (token: string) => Promise<string | null
         currency: "INR",
         dataRetentionDays: 365,
       }).returning();
-      const [user] = await db.insert(usersTable).values({
-        companyId: company.id,
-        name: (neon.name ?? "").trim() || neon.email.split("@")[0],
-        email: neon.email.toLowerCase(),
-        neonUserId: neon.id,
-        role: "founder",
-        status: "active",
-      }).returning();
+      let user: typeof usersTable.$inferSelect;
+      try {
+        [user] = await db.insert(usersTable).values({
+          companyId: company.id,
+          name: (neon.name ?? "").trim() || neon.email.split("@")[0],
+          email: neon.email.toLowerCase(),
+          neonUserId: neon.id,
+          role: "founder",
+          status: "active",
+        }).returning();
+      } catch (err) {
+        // The first sign-in was sent twice at once and the other request made the account: drop this copy of the
+        // workspace and carry on with the account that exists.
+        await db.delete(companiesTable).where(eq(companiesTable.id, company.id));
+        if (isUniqueViolation(err)) {
+          const [existing] = await db.select().from(usersTable).where(eq(usersTable.email, neon.email.toLowerCase())).limit(1);
+          if (existing) return existing.id;
+        }
+        throw err;
+      }
       await db.insert(rolePermissionsTable).values(defaultRolePermissions(company.id));
       await db.insert(auditLogsTable).values({
         companyId: company.id,

@@ -97,18 +97,52 @@ async function rasterizePage(tool: Rasterizer, pdfPath: string, page: number, di
   return result.missing || result.code !== 0 ? null : `${prefix}.png`;
 }
 
-/** Runs `work` for every item with at most `size` in flight. */
-async function inPool<T>(items: T[], size: number, work: (item: T) => Promise<void>): Promise<void> {
+/**
+ * Reads pages with at most `concurrency` in flight. `readPage` returns the page's text, or null when
+ * the page could not be read. Pages never attempted (the budget ran out, or nothing at all was
+ * readable) count as not read, so the caller never receives a statement with a missing page.
+ */
+export async function readPagesInPool(input: {
+  pages: number[];
+  concurrency: number;
+  budgetMs: number;
+  readPage: (page: number) => Promise<string | null>;
+  /** Called after each page, with pages finished and pages to read. */
+  onProgress?: (done: number, total: number) => void;
+}): Promise<{ ok: true; texts: Map<number, string> } | { ok: false; failedPages: number[] }> {
+  const texts = new Map<number, string>();
+  const failed: number[] = [];
+  const deadline = Date.now() + input.budgetMs;
   let cursor = 0;
+  let finished = 0;
+  let stopped = false;
+
   const worker = async () => {
     for (;;) {
       const index = cursor;
       cursor += 1;
-      if (index >= items.length) return;
-      await work(items[index]);
+      if (index >= input.pages.length) return;
+      const page = input.pages[index];
+      if (stopped || Date.now() > deadline) {
+        failed.push(page);
+        continue;
+      }
+      let text: string | null = null;
+      try {
+        text = await input.readPage(page);
+      } catch {
+        text = null;
+      }
+      if (text == null) failed.push(page);
+      else texts.set(page, text);
+      finished += 1;
+      input.onProgress?.(finished, input.pages.length);
+      // Nothing is being read at all (engine broken, file unreadable): stop spending time on the rest.
+      if (texts.size === 0 && failed.length >= OCR_PAGE_FAILURES_BEFORE_STOP) stopped = true;
     }
   };
-  await Promise.all(Array.from({ length: Math.max(1, Math.min(size, items.length)) }, worker));
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(input.concurrency, input.pages.length)) }, worker));
+  return failed.length > 0 ? { ok: false, failedPages: failed.sort((a, b) => a - b) } : { ok: true, texts };
 }
 
 export async function recognizeStatement(input: {
@@ -156,38 +190,25 @@ export async function recognizeStatement(input: {
 
     // Tesseract threads itself; with several pages in flight one thread each avoids fighting over cores.
     const env = OCR_PAGES_IN_FLIGHT > 1 ? { OMP_THREAD_LIMIT: "1" } : undefined;
-    const results = new Map<number, string>();
-    const failed: number[] = [];
-    const deadline = Date.now() + OCR_BUDGET_MS;
-    let finished = 0;
-    let stopped = false;
-
-    await inPool(wanted, OCR_PAGES_IN_FLIGHT, async page => {
-      if (stopped || Date.now() > deadline) {
-        failed.push(page);
-        return;
-      }
-      let image: string | null = sourcePath;
-      if (input.kind === "pdf" && rasterizer) image = await rasterizePage(rasterizer, sourcePath, page, dir);
-      let text: string | null = null;
-      if (image) {
+    const outcome = await readPagesInPool({
+      pages: wanted,
+      concurrency: OCR_PAGES_IN_FLIGHT,
+      budgetMs: OCR_BUDGET_MS,
+      onProgress: input.onProgress,
+      readPage: async page => {
+        let image: string | null = sourcePath;
+        if (input.kind === "pdf" && rasterizer) image = await rasterizePage(rasterizer, sourcePath, page, dir);
+        if (!image) return null;
         const read = await run(tesseractBin(), [image, "stdout", "-l", "eng"], { env });
-        if (!read.missing && read.code === 0) text = read.stdout.trim();
         if (input.kind === "pdf") await rm(image, { force: true }).catch(() => undefined);
-      }
-      if (text == null) failed.push(page);
-      else results.set(page, text);
-      finished += 1;
-      input.onProgress?.(finished, wanted.length);
-      // Nothing is being read at all (engine broken, file unreadable): stop spending time on the rest.
-      if (results.size === 0 && failed.length >= OCR_PAGE_FAILURES_BEFORE_STOP) stopped = true;
+        return read.missing || read.code !== 0 ? null : read.stdout.trim();
+      },
     });
-
-    if (failed.length > 0) {
-      const list = pageRanges(failed);
-      return unavailable(`OCR unavailable. Page${failed.length === 1 ? "" : "s"} ${list} of this scan could not be read, so a partial statement was not created.`);
+    if (!outcome.ok) {
+      const failed = outcome.failedPages;
+      return unavailable(`OCR unavailable. Page${failed.length === 1 ? "" : "s"} ${pageRanges(failed)} of this scan could not be read, so a partial statement was not created.`);
     }
-    const pages: OcrPage[] = wanted.map(page => ({ page, text: results.get(page) ?? "" }));
+    const pages: OcrPage[] = wanted.map(page => ({ page, text: outcome.texts.get(page) ?? "" }));
     const text = pages.map(page => page.text).filter(Boolean).join("\n").trim();
     if (!text) {
       return unavailable("OCR unavailable. The scan did not produce text. No transactions were created.");

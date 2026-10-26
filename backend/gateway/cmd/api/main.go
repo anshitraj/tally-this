@@ -10,12 +10,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/joho/godotenv"
 
 	"github.com/finverify/api-go/internal/config"
+	"github.com/finverify/api-go/internal/middleware"
 	"github.com/finverify/api-go/internal/proxy"
 	"github.com/finverify/api-go/internal/routes"
 )
@@ -31,6 +33,14 @@ func main() {
 	}
 
 	cfg := config.Load()
+
+	// A missing or weak signing key must stop the service, not quietly weaken it.
+	if _, err := middleware.SigningSecret(); err != nil {
+		log.Fatalf("[finverify-go] refusing to start: %v", err)
+	}
+	if !middleware.IsProduction() && os.Getenv("JWT_SECRET") == "" && os.Getenv("SESSION_SECRET") == "" {
+		log.Printf("[WARN] JWT_SECRET is not set: using the development signing secret. Never do this in production.")
+	}
 
 	// Connect to Postgres
 	var db *sql.DB
@@ -53,32 +63,17 @@ func main() {
 	mux.HandleFunc("GET /api/health", routes.HealthHandler(cfg, db))
 	mux.HandleFunc("GET /api/healthz", routes.HealthHandler(cfg, db))
 
-	// Workflow runs
+	// Every other route the gateway answers itself needs a signed-in person whose role holds the
+	// permission the Express API requires for the same path (see routes/protected.go). Everything else,
+	// including the fixed addresses a wildcard route would swallow, goes to the TypeScript fallback proxy:
+	// the frontend sees no change, and routes are added to Go incrementally.
+	var authz *routes.Authorizer
+	var protected []routes.ProtectedRoute
 	if db != nil {
-		mux.HandleFunc("GET /api/workflow/runs", routes.ListWorkflowRuns(db))
-		mux.HandleFunc("GET /api/workflow/runs/{id}", routes.GetWorkflowRun(db))
-		mux.HandleFunc("GET /api/workflow/runs/{id}/progress", routes.GetWorkflowRunProgress(db))
-		mux.HandleFunc("GET /api/action-history", routes.ListActionHistory(db))
-
-		// Upload import orchestration
-		mux.HandleFunc("POST /api/uploads/import-selected-sources", routes.ImportSelectedSources(db))
-		mux.HandleFunc("POST /api/uploads/import-all-parsed", routes.ImportAllParsed(db))
-
-		// Reconciliation ownership
-		mux.HandleFunc("GET /api/reconciliation/runs", routes.ListReconciliationFolders(db))
-		mux.HandleFunc("GET /api/reconciliation", routes.ListReconciliationMatches(db))
-		mux.HandleFunc("POST /api/reconciliation/preflight", routes.ReconciliationPreflight(db))
-		mux.HandleFunc("POST /api/reconciliation/run", routes.RunReconciliation(db))
-		mux.HandleFunc("GET /api/reconciliation/run", routes.RunReconciliation(db))
-		mux.HandleFunc("POST /api/reconciliation/{id}/approve", routes.UpdateReconciliationMatch(db, "approved"))
-		mux.HandleFunc("POST /api/reconciliation/{id}/reject", routes.UpdateReconciliationMatch(db, "rejected"))
-		mux.HandleFunc("POST /api/reconciliation/{id}/needs-info", routes.UpdateReconciliationMatch(db, "needs_info"))
-		mux.HandleFunc("POST /api/reconciliation/{id}/send-to-ca", routes.SendMatchToCA(db))
+		authz = routes.NewAuthorizer(db)
+		protected = routes.Protected(db)
 	}
-
-	// ── Everything else → TypeScript fallback proxy ─────────────────────────
-	// Frontend sees no change; routes are added to Go incrementally.
-	mux.Handle("/", tsProxy)
+	routes.Mount(mux, authz, protected, tsProxy)
 
 	addr := ":" + cfg.GoAPIPort
 	log.Printf("[finverify-go] Listening on %s  (TypeScript fallback: %s, Python worker: %s)",
@@ -97,10 +92,24 @@ func main() {
 	}
 }
 
-// corsMiddleware allows the React frontend to call the Go API.
-// It also wraps each request in panic recovery so a handler panic
-// returns 500 instead of crashing the entire gateway process.
+// allowedOrigins reads CORS_ORIGIN, a comma-separated list of the sites that may call this service
+// from a browser.
+func allowedOrigins() map[string]bool {
+	origins := map[string]bool{}
+	for _, origin := range strings.Split(os.Getenv("CORS_ORIGIN"), ",") {
+		if origin = strings.TrimSpace(origin); origin != "" {
+			origins[origin] = true
+		}
+	}
+	return origins
+}
+
+// corsMiddleware lets the React frontend call the Go API. It also wraps each request in panic
+// recovery so a handler panic returns 500 instead of crashing the entire gateway process.
+// In production only the sites listed in CORS_ORIGIN are allowed; the open "any site" setting is
+// kept for a developer machine where CORS_ORIGIN is not set.
 func corsMiddleware(next http.Handler) http.Handler {
+	origins := allowedOrigins()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Panic recovery — keeps the gateway alive on any handler panic.
 		defer func() {
@@ -110,9 +119,16 @@ func corsMiddleware(next http.Handler) http.Handler {
 			}
 		}()
 
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := r.Header.Get("Origin")
+		switch {
+		case len(origins) == 0 && !middleware.IsProduction():
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		case origin != "" && origins[origin]:
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Add("Vary", "Origin")
+		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Client-Company-Id")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return

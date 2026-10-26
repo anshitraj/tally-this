@@ -2,12 +2,14 @@
 package middleware
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"strconv"
@@ -31,6 +33,14 @@ type AuthContext struct {
 	SessionID int
 	Email     string
 	Role      string
+}
+
+type authContextKey struct{}
+
+// WithAuth records a sign-in that has already been checked, so the handler behind a permission
+// check does not repeat the database lookup. Only code inside this process can set it.
+func WithAuth(ctx context.Context, auth AuthContext) context.Context {
+	return context.WithValue(ctx, authContextKey{}, auth)
 }
 
 // ExtractCompanyID returns the company ID from a verified FinVerify bearer JWT.
@@ -83,6 +93,9 @@ func writeClientScopeError(w http.ResponseWriter, status int, message string) {
 
 // AuthenticateRequest verifies the JWT and checks the backing DB session/user.
 func AuthenticateRequest(db *sql.DB, r *http.Request) (AuthContext, bool) {
+	if auth, ok := r.Context().Value(authContextKey{}).(AuthContext); ok {
+		return auth, true
+	}
 	token := bearerToken(r)
 	if token == "" {
 		return AuthContext{}, false
@@ -140,8 +153,13 @@ func verifyToken(token string) (jwtClaims, bool) {
 		return jwtClaims{}, false
 	}
 
+	// No usable signing key means no token can be trusted. Never sign or check with an empty key.
+	secret, err := SigningSecret()
+	if err != nil {
+		return jwtClaims{}, false
+	}
 	unsigned := parts[0] + "." + parts[1]
-	mac := hmac.New(sha256.New, []byte(jwtSecret()))
+	mac := hmac.New(sha256.New, []byte(secret))
 	_, _ = mac.Write([]byte(unsigned))
 	expectedSignature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 	if !hmac.Equal([]byte(parts[2]), []byte(expectedSignature)) {
@@ -164,12 +182,44 @@ func verifyToken(token string) (jwtClaims, bool) {
 	return claims, true
 }
 
-func jwtSecret() string {
-	if secret := os.Getenv("JWT_SECRET"); secret != "" {
-		return secret
+// developmentSecret is published in this repository. It is only ever used on a developer machine.
+const developmentSecret = "finverify-dev-session-secret-change-me"
+
+// sampleSecret is the placeholder in .env.example. It is longer than the minimum, so length alone
+// would not catch a copied .env.example.
+const sampleSecret = "replace-with-a-long-random-secret"
+
+const minProductionSecretLength = 32
+
+// IsProduction reports whether this process is a production service.
+func IsProduction() bool {
+	for _, key := range []string{"APP_ENV", "NODE_ENV"} {
+		if strings.EqualFold(strings.TrimSpace(os.Getenv(key)), "production") {
+			return true
+		}
 	}
-	if secret := os.Getenv("SESSION_SECRET"); secret != "" {
-		return secret
+	return false
+}
+
+// SigningSecret is the key sessions are signed with. A developer machine may run without one;
+// production may not: it needs a real key of at least 32 characters that is not the published
+// development value, otherwise anyone could sign their own session token.
+func SigningSecret() (string, error) {
+	secret := os.Getenv("JWT_SECRET")
+	if secret == "" {
+		secret = os.Getenv("SESSION_SECRET")
 	}
-	return "finverify-dev-session-secret-change-me"
+	if !IsProduction() {
+		if secret == "" {
+			return developmentSecret, nil
+		}
+		return secret, nil
+	}
+	if secret == "" {
+		return "", errors.New("JWT_SECRET or SESSION_SECRET must be set in production")
+	}
+	if secret == developmentSecret || secret == sampleSecret || len(secret) < minProductionSecretLength {
+		return "", errors.New("the production signing secret must be at least 32 characters and not a value published in this repository")
+	}
+	return secret, nil
 }

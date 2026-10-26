@@ -34,6 +34,7 @@ import { getActiveClient } from "@/lib/activeClient";
 import { getUser } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useLiveTally } from "@/lib/liveTally";
 
 interface BankTxn {
   date: string;
@@ -118,7 +119,9 @@ export default function BankToTallyPage() {
   const [totalsConfirmed, setTotalsConfirmed] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [resultView, setResultView] = useState<"statement" | "review" | "export">("statement");
-  const [useReviewedLedgers, setUseReviewedLedgers] = useState(false);
+  // Ledgers the rules are sure of, the client used before, or the person confirmed go into every
+  // export; everything else stays in Suspense. Turning this off gives a conversion-only file.
+  const [useReviewedLedgers, setUseReviewedLedgers] = useState(true);
   const [aiReview, setAiReview] = useState(false);
   const [aiMessage, setAiMessage] = useState("");
   const jobVersion = useRef(0);
@@ -143,6 +146,9 @@ export default function BankToTallyPage() {
   // The statement opens full screen as soon as it is read, like an editor.
   const [viewerOpen, setViewerOpen] = useState(false);
   const [tallyOpen, setTallyOpen] = useState(false);
+  // The hosted site cannot reach the accountant's own TallyPrime, so it does not offer to send there.
+  const liveTally = useLiveTally();
+  const canSendToTally = !(liveTally.checked && !liveTally.available);
   // Ledger names from the connected Tally company, offered alongside the standard list.
   const [tallyLedgerNames, setTallyLedgerNames] = useState<string[]>([]);
   const reviewRef = useRef<HTMLDivElement>(null);
@@ -172,7 +178,7 @@ export default function BankToTallyPage() {
     setAiReview(false);
     setAiMessage("");
     setSuggesting(false);
-    setUseReviewedLedgers(false);
+    setUseReviewedLedgers(true);
     setFile(picked);
     setStage("working");
     setError("");
@@ -560,7 +566,7 @@ export default function BankToTallyPage() {
     setAiReview(false);
     setAiMessage("");
     setSuggesting(false);
-    setUseReviewedLedgers(false);
+    setUseReviewedLedgers(true);
     setStage("idle");
     setResult(null);
     setFile(null);
@@ -591,7 +597,7 @@ export default function BankToTallyPage() {
     closeViewer();
     setResultView(view);
     if (view === "review") setReviewOpen(true);
-    else setTallyOpen(true);
+    else setTallyOpen(canSendToTally);
   };
 
   const bankChoices = useMemo(() => {
@@ -731,6 +737,7 @@ export default function BankToTallyPage() {
               <p className="mt-3 text-sm font-medium">{groupsToReview.length} {groupsToReview.length === 1 ? "party ledger needs" : "party ledgers need"} choosing or confirming. This is separate from the transaction checks.</p>
             )}
             <p className="mt-3 text-xs text-muted-foreground">{useReviewedLedgers ? "XML uses confirmed ledger choices; other entries go to Suspense." : "Conversion-only XML uses Suspense. Ledger choices are optional in Review."}</p>
+            {resultView === "export" && !canSendToTally && <p className="mt-2 text-xs text-muted-foreground">Sending straight to Tally is not available on this site. Download the Tally XML and import it in Tally: open the company → Import → Vouchers.</p>}
             {sourceChecks > 0 && !proofFailure && <p className="mt-3 text-sm text-amber-900">Some statement values need checking before XML. <button type="button" className="font-medium underline" onClick={() => { setResultView("review"); setReviewOpen(true); }}>Check source values</button></p>}
             <label className="mt-3 flex items-center gap-2 text-sm"><input type="checkbox" checked={aiReview} disabled={Boolean(result.privacy) || suggesting} onChange={event => {
               setAiReview(event.target.checked);
@@ -854,7 +861,7 @@ export default function BankToTallyPage() {
               backLabel="Back to results"
               downloads={downloads}
               review={{ count: attentionItems, onClick: () => leaveViewerFor("review") }}
-              actions={<button type="button" onClick={() => leaveViewerFor("export")} className="inline-flex h-9 items-center rounded-lg border border-border bg-card px-3 text-sm font-semibold hover:bg-muted">Send to Tally</button>}
+              actions={<button type="button" onClick={() => leaveViewerFor("export")} className="inline-flex h-9 items-center rounded-lg border border-border bg-card px-3 text-sm font-semibold hover:bg-muted">{canSendToTally ? "Send to Tally" : "Export"}</button>}
               notice={error || generated ? (
                 <>
                   {error && <Notice tone="error" onClose={() => setError("")}>{error}</Notice>}
@@ -881,7 +888,7 @@ export default function BankToTallyPage() {
           <MoreOptions>
             <button type="button" className="text-sm font-medium text-[var(--fv-accent-dark)] hover:underline" onClick={reset}>Upload another statement</button>
             {balanceProven && !statementEdited && <StatementProof check={result.check} />}
-            {resultView === "export" && !tallyOpen && <button type="button" className="block text-sm font-medium text-[var(--fv-accent-dark)] hover:underline" onClick={() => setTallyOpen(true)}>Send straight to Tally</button>}
+            {resultView === "export" && !tallyOpen && canSendToTally && <button type="button" className="block text-sm font-medium text-[var(--fv-accent-dark)] hover:underline" onClick={() => setTallyOpen(true)}>Send straight to Tally</button>}
             <div>
               <div className="text-sm font-semibold">Bank ledger name in Tally</div>
               <p className="mb-2 text-xs text-muted-foreground">Pick the name your Tally company uses for this bank account.</p>

@@ -116,10 +116,22 @@ export function requirePermission(permission: string) {
   };
 }
 
+/**
+ * Events about the person's own workspace (signing in, settings, their list of clients) belong to that workspace. Everything
+ * else is work on somebody's books (a bank statement read, a decision, a download) and is recorded against the books it was
+ * done on: the client's when a CA is working on a client, which is what that client's Activity page lists.
+ */
+const OWN_WORKSPACE_EVENTS = /^(auth|settings|practice|account|roles)\./;
+
+export function auditCompanyId(req: Request, action: string): number {
+  if (!req.auth) throw new Error("Authenticated company context is required");
+  return OWN_WORKSPACE_EVENTS.test(action) ? req.auth.companyId : req.booksCompanyId ?? req.auth.companyId;
+}
+
 export async function auditAction(req: Request, action: string, entityType: string, entityId?: number | null, metadata?: Record<string, unknown>) {
   if (!req.auth) return;
   await db.insert(auditLogsTable).values({
-    companyId: req.auth.companyId,
+    companyId: auditCompanyId(req, action),
     userId: req.auth.userId,
     actorEmail: req.auth.email,
     action,

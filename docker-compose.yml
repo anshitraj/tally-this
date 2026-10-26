@@ -1,5 +1,5 @@
 # Local full-stack development using the existing Neon database from .env.
-# Cloud deployment: Vercel frontend + three Railway services; see docs/DEPLOYMENT.md.
+# Cloud deployment: Vercel frontend + one Google Cloud VM (deploy/vm/compose.yaml); see docs/DEPLOYMENT.md.
 services:
   typescript-api:
     build:

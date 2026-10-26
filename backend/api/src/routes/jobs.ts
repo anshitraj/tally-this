@@ -15,6 +15,7 @@ import { resolveBooksCompanyId } from "../services/companyScope";
 import { parseBankStatement, unifyParties, type BankStatementSummary, type NormalizedBankTxn } from "../services/bankStatement";
 import { buildTallyVoucherXml, LEDGER_OPTIONS, suggestLedger, type LedgerMapping, type TallyBankTxn, type TallyXmlInput } from "../services/tallyVoucherXml";
 import { sendVouchersToTally, tallyLedgers, tallyStatus } from "../services/tallyPush";
+import { liveTallyBlocked } from "../services/tallyTarget";
 import { applyDecision, compareBankWithTally, parseTallyLedgerCsv, type ReviewStatus } from "../services/statementCompare";
 import { buildGstDraftJson, mergeEcommercePacks, normalizeMarketplaceCsv, salesToCsv, type EcommercePack, type MarketplacePlatform } from "../services/ecommerceGst";
 import { compareInvoicesWithBank, parseInvoiceCsv, type InvoiceRow } from "../services/invoiceVerify";
@@ -169,12 +170,15 @@ router.post("/jobs/detect", requirePermission("uploads.read"), upload.array("fil
     return { fileName: file.originalname, ...(peek === "unknown" ? byName : { kind: peek } as typeof byName) };
   }));
   const kinds = new Set(detected.map(item => item.kind));
+  const hasBills = kinds.has("invoice_register") || kinds.has("invoice_document") || kinds.has("purchase_register");
   let job: string | null = null;
-  if (kinds.has("bank_statement") && kinds.has("tally_export")) job = "bank-tally";
-  else if (kinds.has("bank_statement") && (kinds.has("invoice_register") || kinds.has("invoice_document"))) job = "invoice-bank";
+  if (kinds.has("payroll_sheet")) job = "payroll";
+  else if (kinds.has("bank_statement") && kinds.has("tally_export")) job = "bank-tally";
+  else if (kinds.has("bank_statement") && hasBills) job = "invoice-bank";
+  else if (kinds.has("sales_register")) job = "gst-sales";
   else if (kinds.has("marketplace_report")) job = "ecommerce-gst";
   else if (kinds.has("tally_export")) job = "bank-tally";
-  else if (kinds.has("invoice_register") || kinds.has("invoice_document")) job = "invoice-bank";
+  else if (hasBills) job = "bills-tally";
   else if (kinds.has("bank_statement")) job = "bank-to-tally";
   res.json({ ok: true, files: detected, job });
 });
@@ -287,13 +291,29 @@ function bankTallyInput(req: Request): TallyXmlInput {
 router.get("/jobs/tally/status", requirePermission("uploads.read"), async (req, res): Promise<void> => {
   const companyId = await resolveBooksCompanyId(req, res);
   if (companyId == null) return;
-  res.json({ ok: true, ...(await tallyStatus()) });
+  // A cloud server cannot reach the accountant's own TallyPrime, so the feature is not offered there.
+  const off = liveTallyBlocked();
+  if (off) {
+    res.json({ ok: true, available: false, running: false, companies: [], message: off });
+    return;
+  }
+  // ?check=0 only asks whether the feature is offered, without contacting Tally.
+  if (req.query.check === "0") {
+    res.json({ ok: true, available: true });
+    return;
+  }
+  res.json({ ok: true, available: true, ...(await tallyStatus()) });
 });
 
 // The ledgers already in a Tally company, for mapping rows, the bank and Suspense to real names.
 router.get("/jobs/tally/ledgers", requirePermission("uploads.read"), async (req, res): Promise<void> => {
   const companyId = await resolveBooksCompanyId(req, res);
   if (companyId == null) return;
+  const off = liveTallyBlocked();
+  if (off) {
+    res.status(409).json({ ok: false, message: off });
+    return;
+  }
   const company = typeof req.query.company === "string" ? req.query.company.trim().slice(0, 200) : "";
   if (!company) {
     res.status(400).json({ ok: false, message: "Choose the Tally company first." });
@@ -310,6 +330,11 @@ router.get("/jobs/tally/ledgers", requirePermission("uploads.read"), async (req,
 router.post("/jobs/bank-to-tally/send", requirePermission("uploads.create"), async (req, res): Promise<void> => {
   const companyId = await resolveBooksCompanyId(req, res);
   if (companyId == null) return;
+  const off = liveTallyBlocked();
+  if (off) {
+    res.status(409).json({ ok: false, message: off });
+    return;
+  }
   const gate = await privacyGate(req, res);
   if (!gate) return;
   const input = bankTallyInput(req);
@@ -582,19 +607,26 @@ router.get("/jobs/history", requirePermission("uploads.read"), async (req, res):
                 'counts', ra.json_data->'comparison'->'counts',
                 'entries', jsonb_array_length(COALESCE(ra.json_data->'comparison'->'items', '[]'::jsonb)),
                 'matched', (SELECT count(*) FROM jsonb_array_elements(COALESCE(ra.json_data->'comparison'->'items', '[]'::jsonb)) item WHERE item->>'bucket' IN ('matched', 'confirmed')),
+                'attention', (SELECT count(*) FROM jsonb_array_elements(COALESCE(ra.json_data->'comparison'->'items', '[]'::jsonb)) item WHERE item->>'bucket' NOT IN ('matched', 'confirmed', 'no_invoice_expected')),
                 'summary', ra.json_data->'summary',
-                'platform', ra.json_data->>'platform')
+                'platform', ra.json_data->>'platform',
+                'bills', jsonb_array_length(COALESCE(ra.json_data->'bills', '[]'::jsonb)),
+                'employees', jsonb_array_length(COALESCE(ra.json_data->'employees', '[]'::jsonb)),
+                'documents', ra.json_data->'gstr1'->'counts'->>'documents',
+                'period', COALESCE(ra.json_data->'gstr1'->>'period', ra.json_data->>'month'),
+                'employer', ra.json_data->'employer'->>'name',
+                'netPay', ra.json_data->'statutory'->>'net')
               FROM run_artifacts ra
-              WHERE ra.run_id = wr.id AND ra.artifact_type IN ('bank_statement', 'bank_tally_comparison', 'invoice_bank_comparison', 'ecommerce_gst', 'gstr2b_comparison')
+              WHERE ra.run_id = wr.id AND ra.artifact_type IN ('bank_statement', 'bank_tally_comparison', 'invoice_bank_comparison', 'ecommerce_gst', 'gstr2b_comparison', 'purchase_bills', 'gstr1_working', 'payroll_register')
               ORDER BY ra.created_at ASC LIMIT 1) AS info
       FROM workflow_runs wr
       LEFT JOIN users u ON u.id = wr.created_by
       WHERE wr.company_id = ${companyId}
         AND (COALESCE(wr.metadata_json->>'clientId','') = '' OR wr.metadata_json->>'clientId' = ${String(companyId)})
-        AND NOT EXISTS (SELECT 1 FROM run_artifacts a WHERE a.run_id = wr.id AND a.artifact_type = 'ledger_mappings')
+        AND NOT EXISTS (SELECT 1 FROM run_artifacts a WHERE a.run_id = wr.id AND a.artifact_type IN ('ledger_mappings', 'client_profile'))
         AND wr.created_at >= ${cutoff}::timestamptz
         AND (${type} = '' OR wr.run_type = ${type}
-             OR (${type} = 'other' AND wr.run_type NOT IN ('bank_to_tally', 'bank_tally_reconciliation', 'ecommerce_gst', 'bank_invoice_reconciliation', 'gstr_2b_reconciliation')))
+             OR (${type} = 'other' AND wr.run_type NOT IN ('bank_to_tally', 'bank_tally_reconciliation', 'ecommerce_gst', 'bank_invoice_reconciliation', 'gstr_2b_reconciliation', 'bills_to_tally', 'gst_sales_register', 'payroll_register')))
         AND (${search} = '' OR wr.title ILIKE ${pattern})
       ORDER BY wr.created_at DESC
       LIMIT ${limit + 1} OFFSET ${offset}
@@ -607,7 +639,7 @@ router.get("/jobs/history", requirePermission("uploads.read"), async (req, res):
         SELECT count(*)::int AS n FROM workflow_runs wr
         WHERE wr.company_id = ${companyId}
           AND (COALESCE(wr.metadata_json->>'clientId','') = '' OR wr.metadata_json->>'clientId' = ${String(companyId)})
-          AND NOT EXISTS (SELECT 1 FROM run_artifacts a WHERE a.run_id = wr.id AND a.artifact_type = 'ledger_mappings')
+          AND NOT EXISTS (SELECT 1 FROM run_artifacts a WHERE a.run_id = wr.id AND a.artifact_type IN ('ledger_mappings', 'client_profile'))
           AND wr.created_at < ${cutoff}::timestamptz
       `);
       olderCount = Number((older.rows[0] as { n?: number } | undefined)?.n ?? 0);
