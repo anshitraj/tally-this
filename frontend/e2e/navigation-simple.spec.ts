@@ -20,7 +20,7 @@ async function signIn(page: Page) {
   });
 }
 
-const MENU = ["Clients", "Bank → Tally", "Bank ↔ Tally", "E-commerce GST", "Invoice ↔ Bank", "Reports", "Activity", "Advanced"];
+const MENU = ["Clients", "Bank → Tally", "Bank ↔ Tally", "E-commerce", "Invoice ↔ Bank", "Reports", "Activity", "Advanced"];
 
 async function menuLabels(page: Page, scope = 'nav[aria-label="Main"]') {
   return (await page.locator(`${scope} button`).allInnerTexts()).map(text => text.trim());

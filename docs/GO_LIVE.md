@@ -24,7 +24,7 @@ Steps 1 to 5 change shared systems, so each needs the owner's go-ahead. The orde
    DATABASE_URL=<the production address> pnpm --filter @workspace/db run migrate -- --remote
    ```
 
-   Keep the address in the environment; the runner never reads a `.env` file. The live database has never been through the runner, so `--check` lists all four files; applying records 0001 to 0003 (they only create what already exists) and applies 0004.
+   Keep the address in the environment; the runner never reads a `.env` file. The live database has never been through the runner, so `--check` lists all the files; applying records 0001 to 0003 (they only create what already exists) and applies 0004 and 0005. `0005_marketplace.sql` (added 21 November 2026 with the Meesho workspace) only creates six new `marketplace_*` tables; a backend with the E-commerce module must not be deployed before it is applied.
 3. **Deploy the backend** from the branch (it needs no new settings or secrets). It sends only committed files, builds on the VM, and puts the previous release back by itself if the new one does not become healthy:
 
    ```bash

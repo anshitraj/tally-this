@@ -207,7 +207,7 @@ test("client switching retains navigation to all seven main screens", async ({
     ["Clients", "Clients"],
     ["Bank → Tally", "Bank Statement → Tally"],
     ["Bank ↔ Tally", "Bank ↔ Tally"],
-    ["E-commerce GST", "E-commerce GST"],
+    ["E-commerce", "E-commerce"],
     ["Invoice ↔ Bank", "Invoice ↔ Bank"],
     ["Reports", "Reports"],
     ["Activity", "Activity"],

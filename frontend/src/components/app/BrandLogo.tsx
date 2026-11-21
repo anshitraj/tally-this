@@ -1,13 +1,11 @@
 import type { CSSProperties } from "react";
 import type { IconType } from "react-icons";
 import {
-  SiFlipkart,
   SiGooglepay,
   SiPaytm,
   SiPhonepe,
   SiQuickbooks,
   SiRazorpay,
-  SiShopify,
   SiStripe,
   SiWoocommerce,
   SiXero,
@@ -23,6 +21,8 @@ interface LogoDef {
   label: string;
   /** Official artwork kept in public/brands, shown exactly as published. */
   file?: string;
+  /** The artwork is a symbol without the name, so the name is written beside it. */
+  iconOnly?: boolean;
   /** A single-colour glyph from the open Simple Icons set. */
   icon?: IconType;
   /** Used only to tint a glyph or an initials tile. */
@@ -46,15 +46,15 @@ const LOGOS: Record<string, LogoDef> = {
   idfc: { label: "IDFC FIRST Bank", file: "idfc.svg" },
   dbs: { label: "DBS Bank India", file: "dbs.svg" },
   // Marketplaces
-  amazon: { label: "Amazon", color: "#ff9900", initials: "a" },
-  flipkart: { label: "Flipkart", icon: SiFlipkart, color: "#2874f0" },
-  meesho: { label: "Meesho", color: "#9f2089", initials: "M" },
-  myntra: { label: "Myntra", color: "#ff3f6c", initials: "My" },
+  amazon: { label: "Amazon", file: "amazon.svg" },
+  flipkart: { label: "Flipkart", file: "flipkart.png", iconOnly: true },
+  meesho: { label: "Meesho", file: "meesho.png", iconOnly: true },
+  myntra: { label: "Myntra", file: "myntra.png" },
   jiomart: { label: "JioMart", color: "#0078ad", initials: "JM" },
   snapdeal: { label: "Snapdeal", color: "#e40046", initials: "Sd" },
   ajio: { label: "AJIO", color: "#2c4152", initials: "AJ" },
   paytm: { label: "Paytm", icon: SiPaytm, color: "#00baf2" },
-  shopify: { label: "Shopify", icon: SiShopify, color: "#5e8e3e" },
+  shopify: { label: "Shopify", file: "shopify.svg", iconOnly: true },
   woocommerce: { label: "WooCommerce", icon: SiWoocommerce, color: "#96588a" },
   glowroad: { label: "GlowRoad", initials: "GR" },
   shop101: { label: "Shop101", initials: "S1" },
@@ -128,8 +128,9 @@ export function BrandLogo({ name, size = "md", withName = true, muted = false, c
 
   if (def?.file) {
     return (
-      <span className={cn("fv-logo is-artwork", `is-${size}`, muted && "is-muted", className)} title={label}>
+      <span className={cn("fv-logo is-artwork", def.iconOnly && "is-symbol", `is-${size}`, muted && "is-muted", className)} title={label}>
         <img src={`${BASE}brands/${def.file}`} alt={label} loading="lazy" decoding="async" />
+        {def.iconOnly && withName && <span className="fv-logo-name" aria-hidden="true">{label}</span>}
       </span>
     );
   }

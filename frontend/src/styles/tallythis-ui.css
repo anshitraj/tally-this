@@ -185,6 +185,12 @@
   width: 140px;
   height: 42px;
 }
+/* A square symbol (an app icon) sits at the height of its row, with the name beside it. */
+.fv-logo.is-symbol img {
+  aspect-ratio: 1;
+  width: auto;
+  border-radius: 22%;
+}
 .fv-logo.is-muted img {
   filter: grayscale(1) contrast(0.92);
   opacity: 0.62;

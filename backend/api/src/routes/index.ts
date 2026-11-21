@@ -32,6 +32,7 @@ import jobReportsRouter from "./jobReports";
 import reconExportsRouter from "./reconExports";
 import accountRouter from "./account";
 import neonAuthRouter from "./neonAuth";
+import ecommerceRouter from "./ecommerce";
 
 const router: IRouter = Router();
 
@@ -47,6 +48,7 @@ router.use(jobReportsRouter);
 router.use(reconExportsRouter);
 router.use(accountRouter);
 router.use(neonAuthRouter);
+router.use(ecommerceRouter);
 router.use(transactionsRouter);
 router.use(invoicesRouter);
 router.use(ledgerRouter);

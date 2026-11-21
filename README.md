@@ -21,7 +21,7 @@ Upload a bank statement, Tally export, marketplace report, invoice register, or 
 
 - Bank Statement → Tally
 - Bank ↔ Tally
-- E-commerce GST
+- E-commerce: a Meesho workspace (upload the Supplier Panel GST reports; sales, returns, GST and HSN, review, approval, working papers; see [`docs/ECOMMERCE_MEESHO.md`](docs/ECOMMERCE_MEESHO.md)), other marketplaces listed as coming soon, and the one-off E-commerce GST file for any marketplace report
 - Invoice ↔ Bank
 - GSTR-2B ↔ Books, Bills → Tally, Sales → GSTR-1 & 3B and Payroll (offered on Home and in search; the side menu lists them under Advanced → More jobs)
 - Clients, Reports, Activity, Settings
@@ -35,7 +35,7 @@ Wider competitor research and implementation priorities: [`docs/COMPETITOR_REVIE
 
 ## Interface and product walkthroughs
 
-The landing page and workspace share a forest green and white visual system, a custom TallyThis wordmark and T/check symbol, and responsive layouts. The main navigation shows Clients, Bank → Tally, Bank ↔ Tally, E-commerce GST, Invoice ↔ Bank, Reports and Activity. The logo opens the workspace home. Settings, History and Help are in the account menu at the bottom of the side menu; every other page is on one Advanced page (a single entry in the menu), grouped, with a search box, and also found by Ctrl K search. Reports links directly to saved job outputs, offers a CA review PDF, and keeps individual reports under More options.
+The landing page and workspace share a forest green and white visual system, a custom TallyThis wordmark and T/check symbol, and responsive layouts. The main navigation shows Clients, Bank → Tally, Bank ↔ Tally, E-commerce, Invoice ↔ Bank, Reports and Activity. The logo opens the workspace home. Settings, History and Help are in the account menu at the bottom of the side menu; every other page is on one Advanced page (a single entry in the menu), grouped, with a search box, and also found by Ctrl K search. Reports links directly to saved job outputs, offers a CA review PDF, and keeps individual reports under More options.
 
 Landing and sign-in animations are **illustrative sample walkthroughs**, implemented as local UI timelines with typing, row checks, review choices and export states. They do not run parsers, upload sample files or create accounting records. They pause offscreen or in background tabs, have pause/replay controls, and show a static completed illustration when reduced motion is requested. Real file uploads continue into the existing accounting jobs, including files selected before sign-in.
 

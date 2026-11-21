@@ -41,6 +41,8 @@ const ToolsPage = lazy(() => import("@/pages/app/tools"));
 const BankToTallyPage = lazy(() => import("@/pages/app/jobs/bank-to-tally"));
 const BankTallyPage = lazy(() => import("@/pages/app/jobs/bank-tally"));
 const EcommerceGstPage = lazy(() => import("@/pages/app/jobs/ecommerce-gst"));
+const EcommerceHubPage = lazy(() => import("@/pages/app/ecommerce"));
+const EcommerceWorkspacePage = lazy(() => import("@/pages/app/ecommerce/workspace"));
 const InvoiceBankPage = lazy(() => import("@/pages/app/jobs/invoice-bank"));
 const Gstr2bJobPage = lazy(() => import("@/pages/app/jobs/gstr-2b"));
 const BillsTallyPage = lazy(() => import("@/pages/app/jobs/bills-tally"));
@@ -127,6 +129,8 @@ function AppArea() {
         <Route path="/app/jobs/bank-to-tally" component={BankToTallyPage} />
         <Route path="/app/jobs/bank-tally" component={BankTallyPage} />
         <Route path="/app/jobs/ecommerce-gst" component={EcommerceGstPage} />
+        <Route path="/app/ecommerce" component={EcommerceHubPage} />
+        <Route path="/app/ecommerce/:marketplace" component={EcommerceWorkspacePage} />
         <Route path="/app/jobs/invoice-bank" component={InvoiceBankPage} />
         <Route path="/app/jobs/gstr-2b" component={Gstr2bJobPage} />
         <Route path="/app/jobs/bills-tally" component={BillsTallyPage} />

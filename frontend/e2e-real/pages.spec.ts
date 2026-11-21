@@ -12,6 +12,9 @@ const PAGES: Array<{ path: string; heading: string | RegExp }> = [
   { path: "/app/tools", heading: "Advanced" },
   { path: "/app/jobs/bank-to-tally", heading: "Bank Statement → Tally" },
   { path: "/app/jobs/bank-tally", heading: "Bank ↔ Tally" },
+  { path: "/app/ecommerce", heading: /^E-commerce$/ },
+  { path: "/app/ecommerce/meesho", heading: "Meesho" },
+  { path: "/app/ecommerce/amazon", heading: "Amazon" },
   { path: "/app/jobs/ecommerce-gst", heading: "E-commerce GST" },
   { path: "/app/jobs/invoice-bank", heading: "Invoice ↔ Bank" },
   { path: "/app/jobs/gstr-2b", heading: "GSTR-2B ↔ Books" },
@@ -112,7 +115,7 @@ test.describe("every page", () => {
   test("every item in the menu opens its page", async ({ page }) => {
     await signedUpAccount(page, "menu", "Menu Client");
     const entries: Array<[string, RegExp | string]> = [
-      ["Clients", "Clients"], ["Bank → Tally", "Bank Statement → Tally"], ["Bank ↔ Tally", "Bank ↔ Tally"], ["E-commerce GST", "E-commerce GST"],
+      ["Clients", "Clients"], ["Bank → Tally", "Bank Statement → Tally"], ["Bank ↔ Tally", "Bank ↔ Tally"], ["E-commerce", /^E-commerce$/],
       ["Invoice ↔ Bank", "Invoice ↔ Bank"], ["Reports", "Reports"], ["Activity", "Activity"], ["Advanced", "Advanced"],
     ];
     for (const [label, heading] of entries) {

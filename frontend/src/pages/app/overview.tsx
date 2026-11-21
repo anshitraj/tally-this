@@ -45,9 +45,9 @@ export const AUTOMATIONS: Array<{
   },
   {
     id: "ecommerce-gst",
-    title: "E-commerce GST",
-    detail: "Turn Amazon, Flipkart and Meesho reports into GSTR-1 data.",
-    href: "/app/jobs/ecommerce-gst",
+    title: "E-commerce",
+    detail: "Reconcile Meesho sales, returns and GST, or turn any marketplace report into GSTR-1 data.",
+    href: "/app/ecommerce",
     icon: ShoppingBag,
   },
   {

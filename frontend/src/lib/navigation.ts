@@ -74,11 +74,11 @@ export const JOB_NAV: NavEntry[] = [
     hint: "Find entries missing in Tally or in the bank",
   },
   {
-    label: "E-commerce GST",
-    href: "/app/jobs/ecommerce-gst",
+    label: "E-commerce",
+    href: "/app/ecommerce",
     icon: ShoppingBag,
-    keywords: "amazon flipkart meesho gstr-1 tcs marketplace hsn b2c",
-    hint: "Marketplace reports to GST-ready data",
+    keywords: "meesho amazon flipkart myntra ajio shopify marketplace sales returns gst reconciliation gstr-1 tcs hsn",
+    hint: "Import marketplace reports and reconcile sales, returns and GST",
   },
   {
     label: "Invoice ↔ Bank",
@@ -88,6 +88,15 @@ export const JOB_NAV: NavEntry[] = [
     hint: "See which invoices are paid and which payments lack a bill",
   },
 ];
+
+/** The one-off marketplace-to-GST file, without a saved workspace. Reached from the E-commerce page, Advanced and search. */
+export const ECOMMERCE_QUICK_JOB: NavEntry = {
+  label: "E-commerce GST file",
+  href: "/app/jobs/ecommerce-gst",
+  icon: ShoppingBag,
+  keywords: "amazon flipkart meesho gstr-1 tcs marketplace hsn b2c quick one-off",
+  hint: "Any marketplace report to GST-ready data, without a workspace",
+};
 
 export const SECONDARY_NAV: NavEntry[] = [
   {
@@ -158,7 +167,7 @@ export const PAYROLL_JOB: NavEntry = {
 };
 
 /** The jobs beyond the four everyday ones. Home and search offer them; the menu keeps them under Advanced. */
-export const MORE_JOBS: NavEntry[] = [BILLS_JOB, GST_SALES_JOB, GST_RECON_JOB, PAYROLL_JOB];
+export const MORE_JOBS: NavEntry[] = [BILLS_JOB, GST_SALES_JOB, GST_RECON_JOB, PAYROLL_JOB, ECOMMERCE_QUICK_JOB];
 
 /** Everything else. Listed on the Advanced page (and found by search), never in the side menu itself. */
 export const ADVANCED_GROUPS: NavGroup[] = [
