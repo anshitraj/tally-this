@@ -7,7 +7,8 @@ import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAx
 import EmptyPanel from "@/components/app/EmptyPanel";
 import { BrandLogo } from "@/components/app/BrandLogo";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Notice } from "@/components/jobs/jobUi";
+import { DropZone, Notice, takePendingFiles } from "@/components/jobs/jobUi";
+import { REPORT_FILE, useFileDrop } from "@/components/ecommerce/useFileDrop";
 import { useToast } from "@/hooks/use-toast";
 import { refreshAfterChange } from "@/lib/refresh";
 import { ExceptionsPanel } from "@/components/ecommerce/ExceptionsPanel";
@@ -15,7 +16,7 @@ import { GstPanel } from "@/components/ecommerce/GstPanel";
 import { ImportProgress, UploadDialog } from "@/components/ecommerce/ImportFlow";
 import { ReportsPanel } from "@/components/ecommerce/ReportsPanel";
 import { Tone, TransactionsPanel } from "@/components/ecommerce/TransactionsPanel";
-import { REPORT_STATUS, api, financialYearOf, maskGstin, periodLabel, rupeesFromPaise, rupeesFromText, type ImportJob, type Workspace } from "@/lib/ecommerce";
+import { REPORT_STATUS, api, financialYearOf, maskGstin, periodLabel, rupeesFromPaise, rupeesFromText, uploadReports, type ImportJob, type Workspace } from "@/lib/ecommerce";
 import { cn } from "@/lib/utils";
 
 const TABS = [
@@ -68,6 +69,39 @@ export default function EcommerceWorkspacePage() {
       if (running) setActiveJob(running.id);
     }
   }, [data?.jobs, activeJob]);
+
+  // Dropping files starts the import at once: the month comes from each row and the GSTIN from the workspace.
+  const [uploading, setUploading] = useState<{ names: string[]; percent: number } | null>(null);
+  const canImport = Boolean(data?.can.import && data.marketplace.status === "available");
+  const knownGstin = data ? (data.sellerGstins.length === 1 ? data.sellerGstins[0] : data.sellerGstins.length > 1 ? null : data.company.gstin) : null;
+  const startImport = useCallback(async (dropped: File[]) => {
+    const files = dropped.filter(f => REPORT_FILE.test(f.name));
+    const skipped = dropped.filter(f => !REPORT_FILE.test(f.name));
+    if (files.length === 0) {
+      toast({ title: "Those files cannot be imported", description: "Drop the Excel, CSV or ZIP reports from the Meesho Supplier Panel.", variant: "destructive" });
+      return;
+    }
+    if (skipped.length > 0) toast({ title: `${skipped.length} file(s) left out`, description: `${skipped.map(f => f.name).join(", ")}: only Excel, CSV and ZIP files are read.` });
+    setUploading({ names: files.map(f => f.name), percent: 0 });
+    const result = await uploadReports(marketplace, files, { sellerGstin: knownGstin ?? undefined }, percent => setUploading(current => current && { ...current, percent }));
+    setUploading(null);
+    if (!result.ok || !result.jobId) {
+      toast({ title: "The upload did not go through", description: result.message, variant: "destructive" });
+      return;
+    }
+    setActiveJob(result.jobId);
+    void refreshAfterChange(qc, [["ecommerce", marketplace, "workspace"]]);
+  }, [knownGstin, marketplace, qc, toast]);
+  const dragging = useFileDrop(canImport && !uploading && !uploadOpen, files => void startImport(files));
+
+  // Files dropped on the E-commerce page or on Home arrive here and are imported straight away.
+  const [tookPending, setTookPending] = useState(false);
+  useEffect(() => {
+    if (tookPending || !canImport) return;
+    setTookPending(true);
+    const pending = takePendingFiles(marketplace);
+    if (pending?.length) void startImport(pending);
+  }, [canImport, marketplace, startImport, tookPending]);
 
   const finished = useCallback(async (job: ImportJob) => {
     const counted = job.counted ?? 0;
@@ -147,6 +181,30 @@ export default function EcommerceWorkspacePage() {
         </div>
       </header>
 
+      {canImport && !empty && !uploading && !activeJob && (
+        <p className="mt-2 text-xs text-muted-foreground">Tip: drop new {info.name} report files anywhere on this page to import them.</p>
+      )}
+
+      {dragging && (
+        <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-6 backdrop-blur-sm motion-safe:animate-in motion-safe:fade-in-0" data-testid="drop-overlay">
+          <div className="flex w-full max-w-lg flex-col items-center rounded-3xl border-2 border-dashed border-[var(--fv-accent)] bg-card px-8 py-14 text-center shadow-[var(--fv-shadow-float)]">
+            <UploadCloud className="h-10 w-10 text-[var(--fv-accent)]" aria-hidden="true" />
+            <p className="mt-3 text-lg font-semibold">Drop to import {info.name} reports</p>
+            <p className="mt-1 text-sm text-muted-foreground">Sales, returns or a ZIP of them. Each row keeps its own month; nothing is counted twice.</p>
+          </div>
+        </div>
+      )}
+
+      {uploading && (
+        <section className="fv-reveal mt-5 rounded-2xl border border-border bg-card p-5" role="status" aria-live="polite" data-testid="upload-progress">
+          <div className="flex items-center justify-between gap-3 text-sm">
+            <span className="min-w-0 truncate font-semibold">Uploading {uploading.names.join(", ")}</span>
+            <span className="tabular-nums text-muted-foreground">{uploading.percent}%</span>
+          </div>
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-[var(--fv-accent)] transition-[width] duration-200" style={{ width: `${uploading.percent}%` }} /></div>
+        </section>
+      )}
+
       {activeJob && (
         <div className="mt-5">
           <ImportProgress key={activeJob} marketplace={marketplace} jobId={activeJob} stages={data.stages} onFinished={finished} onDismiss={() => { setActiveJob(null); void refreshAfterChange(qc, [["ecommerce"]]); }} />
@@ -154,7 +212,7 @@ export default function EcommerceWorkspacePage() {
       )}
 
       {empty ? (
-        !activeJob && <Onboarding name={info.name} sourceFiles={info.sourceFiles} canImport={data.can.import} onUpload={openUpload} />
+        !activeJob && !uploading && <Onboarding name={info.name} sourceFiles={info.sourceFiles} canImport={canImport} onFiles={files => void startImport(files)} onMoreOptions={openUpload} />
       ) : shownPeriod && data.data ? (
         <Tabs value={tab} onValueChange={value => setTab(value as TabId)} className="mt-6">
           <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
@@ -211,8 +269,8 @@ function BackLink() {
   );
 }
 
-/** The first visit: what to download, where from, and one button. It is a report import, not a live connection. */
-function Onboarding({ name, sourceFiles, canImport, onUpload }: { name: string; sourceFiles: string[]; canImport: boolean; onUpload: () => void }) {
+/** The first visit: what to download, where from, and one place to drop it. It is a report import, not a live connection. */
+function Onboarding({ name, sourceFiles, canImport, onFiles, onMoreOptions }: { name: string; sourceFiles: string[]; canImport: boolean; onFiles: (files: File[]) => void; onMoreOptions: () => void }) {
   const reduce = useReducedMotion();
   const steps = [
     { title: `Download your ${name} reports`, body: `In the ${name} Supplier Panel, open GST Reports and download the month's sales and returns files.`, files: sourceFiles },
@@ -234,7 +292,16 @@ function Onboarding({ name, sourceFiles, canImport, onUpload }: { name: string; 
         ))}
       </ol>
       {canImport ? (
-        <button type="button" className="fv-button-primary mt-6 h-11" onClick={onUpload}><UploadCloud className="h-4 w-4" aria-hidden="true" />Upload {name} reports</button>
+        <div className="mt-6">
+          <DropZone
+            label={`Drop your ${name} reports here`}
+            hint="Excel, CSV or ZIP · several files and months at once · or tap to choose"
+            accept=".xlsx,.xls,.csv,.zip"
+            multiple
+            onFiles={onFiles}
+          />
+          <button type="button" className="mt-3 text-sm font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline" onClick={onMoreOptions}>Choose the month and GSTIN first</button>
+        </div>
       ) : (
         <p className="mt-6 text-sm text-muted-foreground">Ask an admin of this workspace to upload the reports.</p>
       )}

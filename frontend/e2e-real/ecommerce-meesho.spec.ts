@@ -91,6 +91,23 @@ async function call(page: Page, method: "GET" | "POST", path: string, body?: unk
   return api(page, method, path, { body, headers: client ? { "X-Client-Company-Id": String(client) } : {} });
 }
 
+/** Drags files from the desktop and lets go over `selector` (as a person does), with real File objects. */
+async function dropFiles(page: Page, selector: string, files: Array<ReturnType<typeof xlsxFile>>) {
+  const payload = files.map(f => ({ name: f.name, type: f.mimeType, data: f.buffer.toString("base64") }));
+  await page.evaluate(async ({ selector, payload }) => {
+    const transfer = new DataTransfer();
+    for (const f of payload) {
+      const bytes = Uint8Array.from(atob(f.data), c => c.charCodeAt(0));
+      transfer.items.add(new File([bytes], f.name, { type: f.type }));
+    }
+    const target = document.querySelector(selector) ?? document.body;
+    for (const type of ["dragenter", "dragover", "drop"]) {
+      target.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: transfer }));
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+  }, { selector, payload });
+}
+
 const kpi = (page: Page, label: string) => settledText(page.getByText(label, { exact: true }).locator("xpath=following-sibling::*[1]"));
 
 test.describe("Meesho workspace", () => {
@@ -140,15 +157,26 @@ test.describe("Meesho workspace", () => {
     await page.getByRole("tab", { name: /Reconciliation/ }).click();
     const items = page.getByRole("list", { name: "Review items" }).getByRole("listitem");
     await expect(items).toHaveCount(3);
-    for (const [kind, action] of [["Tax differs from rate", "Accept"], ["HSN missing", "Resolve"], ["Return without its sale", "Accept"]] as const) {
-      await items.filter({ hasText: kind }).getByRole("button", { name: action, exact: true }).click();
+    for (const kind of ["Tax differs from rate", "Return without its sale"]) {
+      await items.filter({ hasText: kind }).getByRole("button", { name: "Accept", exact: true }).click();
       const dialog = page.getByRole("dialog");
       await dialog.getByLabel("Note").fill(`${kind}: checked with the client`);
-      await dialog.getByRole("button", { name: action === "Accept" ? "Accept this item" : "Mark as resolved" }).click();
+      await dialog.getByRole("button", { name: "Accept this item" }).click();
       await expect(dialog).toBeHidden();
       await expect(items.filter({ hasText: kind })).toHaveCount(0);
     }
+    // The missing HSN is filled in, not just waved through: Fix opens the editor, pick a code used this month.
+    await items.filter({ hasText: "HSN missing" }).getByRole("button", { name: "Fix", exact: true }).click();
+    const editor = page.getByRole("dialog").getByRole("region", { name: "Fix details" });
+    await expect(editor.getByRole("heading", { name: "Fill in what the file is missing" })).toBeVisible();
+    await editor.getByRole("group", { name: "HSN codes used this month" }).getByRole("button", { name: "610910" }).click();
+    await editor.getByRole("button", { name: "Save correction" }).click();
+    await expect(page.getByRole("dialog").getByTestId("corrected-note")).toContainText("The file's HSN: blank");
+    await page.getByRole("dialog").getByRole("button", { name: "Close" }).click();
     await expect(page.getByText("Nothing needs review")).toBeVisible();
+    const fixed = await call(page, "GET", "/api/ecommerce/meesho/summary?period=2026-08");
+    expect(fixed.json.hsn.map((h: { hsn: string }) => h.hsn)).not.toContain("(no HSN)");
+    expect(fixed.json.overview.sales.taxable).toBe(305238); // a correction never changes the amounts
 
     await page.getByRole("tab", { name: "Reports" }).click();
     await expect(page.getByTestId("report-status-text")).toContainText("Nothing needs review");
@@ -207,7 +235,7 @@ test.describe("Meesho workspace", () => {
     await openWorkspace(page);
     const renamed = HEAD.map(h => (h === "end_customer_state_new" ? "Buyer region" : h));
     const file = xlsxFile("tcs_sales.xlsx", [renamed, AUGUST_SALES[0], AUGUST_SALES[2]]);
-    await page.getByRole("button", { name: /Upload Meesho reports/ }).click();
+    await page.getByRole("button", { name: "Upload reports" }).click();
     const dialog = page.getByRole("dialog");
     await dialog.locator("input[type=file]").setInputFiles([file]);
     await dialog.locator("input[type=month]").fill("2026-08");
@@ -268,6 +296,31 @@ test.describe("Meesho workspace", () => {
     const done = await call(page, "GET", "/api/ecommerce/meesho/report?period=2026-08");
     expect(done.json.state.status).toBe("reconciled");
     expect((await call(page, "GET", "/api/ecommerce/meesho/summary?period=2026-08")).json.overview.net.taxable).toBe(151000 - 50000);
+  });
+
+  test("files dropped on the Meesho card, on Home, or anywhere on the workspace are imported straight away", async ({ page }) => {
+    await signedUpAccount(page, "meesho-drop");
+    // On the E-commerce page, onto the Meesho card: no dialog, no questions; the month comes from the rows.
+    await page.goto("/app/ecommerce");
+    await expect(page.getByTestId("marketplace-meesho")).toBeVisible();
+    await dropFiles(page, '[data-testid="marketplace-meesho"]', [xlsxFile("tcs_sales.xlsx", [HEAD, AUGUST_SALES[0]])]);
+    await expect(page).toHaveURL(/\/app\/ecommerce\/meesho/);
+    await expect(page.getByTestId("import-progress").getByText("Import finished")).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByTestId("import-summary")).toContainText("1 transaction imported");
+
+    // Anywhere on the workspace: the page shows where the files will go, then imports them.
+    await page.getByTestId("import-progress").getByRole("button", { name: "Dismiss" }).click();
+    await dropFiles(page, "main", [xlsxFile("tcs_sales_return.xlsx", [RETURN_HEAD, ret("2001_1", "2026-08-03", "2026-08-21", "1000.00", "50.00", "1050.00", "Delhi", "8")])]);
+    await expect(page.getByTestId("import-progress").getByText("Import finished")).toBeVisible({ timeout: 60_000 });
+    const s = await call(page, "GET", "/api/ecommerce/meesho/summary?period=2026-08");
+    expect(s.json.overview.net.taxable).toBe(0); // the return matched its sale and cancelled it out
+
+    // On Home: Meesho's own report names go to the Meesho workspace, not the one-off job.
+    await page.goto("/app/overview");
+    await page.locator("input[type=file]").first().setInputFiles([xlsxFile("tcs_sales.xlsx", [HEAD, AUGUST_SALES[2]])]);
+    await expect(page).toHaveURL(/\/app\/ecommerce\/meesho/);
+    await expect(page.getByTestId("import-progress").getByText("Import finished")).toBeVisible({ timeout: 60_000 });
+    expect((await call(page, "GET", "/api/ecommerce/meesho/summary?period=2026-08")).json.overview.sales.taxable).toBe(150000);
   });
 
   test("another workspace cannot read or change these books, and signed-out requests are refused", async ({ page, browser }) => {

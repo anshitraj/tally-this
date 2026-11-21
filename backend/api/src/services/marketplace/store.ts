@@ -15,7 +15,7 @@ import {
   marketplaceSourceFilesTable as files,
   type MarketplaceEvent,
 } from "@workspace/db";
-import { parseRate } from "./gstEngine";
+import { parseRate, splitTax, supplyType } from "./gstEngine";
 import { textToPaise } from "./money";
 import { eventIdentity } from "./pipeline";
 import { matchReturns } from "./returns";
@@ -183,7 +183,7 @@ export async function refreshStatuses(companyId: number, marketplace: string) {
       WHEN EXISTS (SELECT 1 FROM marketplace_exceptions x WHERE x.event_id = e.id AND x.status = 'open' AND x.kind IN (${list(STATUS_KINDS.missing_info)})) THEN 'missing_info'
       WHEN EXISTS (SELECT 1 FROM marketplace_exceptions x WHERE x.event_id = e.id AND x.status = 'open' AND x.kind IN (${list(STATUS_KINDS.tax_mismatch)})) THEN 'tax_mismatch'
       WHEN EXISTS (SELECT 1 FROM marketplace_exceptions x WHERE x.event_id = e.id AND x.status = 'open' AND x.kind IN (${list(STATUS_KINDS.return_mismatch)})) THEN 'return_mismatch'
-      WHEN EXISTS (SELECT 1 FROM marketplace_reviews r WHERE r.event_id = e.id AND r.action IN ('confirm', 'classify', 'accept_difference')
+      WHEN EXISTS (SELECT 1 FROM marketplace_reviews r WHERE r.event_id = e.id AND r.action IN ('confirm', 'classify', 'correct', 'accept_difference')
           AND NOT EXISTS (SELECT 1 FROM marketplace_reviews later WHERE later.event_id = e.id AND later.action = 'reopen' AND later.id > r.id))
         OR EXISTS (SELECT 1 FROM marketplace_exceptions x WHERE x.event_id = e.id AND x.status IN ('resolved', 'accepted') AND x.resolved_by IS NOT NULL) THEN 'reviewed'
       WHEN e.event_type <> 'sale' AND e.related_event_id IS NOT NULL
@@ -196,59 +196,97 @@ export async function refreshStatuses(companyId: number, marketplace: string) {
   `);
 }
 
-/** The latest classification a reviewer gave each event, unless the event was reopened after it. */
-export async function classifications(eventIds: number[]): Promise<Map<number, string>> {
-  const map = new Map<number, string>();
+/** What a reviewer changed on an event: its type, and details the file had missing or wrong. The file is never edited. */
+export interface Override {
+  eventType?: string;
+  hsn?: string;
+  placeOfSupply?: string;
+}
+
+/** Review actions that carry an event's whole override (each one repeats the earlier changes), and the one that clears it. */
+export const OVERRIDE_ACTIONS = ["classify", "correct", "reopen"];
+
+/** Each event's current override: the latest classify or correct decision, unless the event was reopened after it. */
+export async function overridesFor(eventIds: number[]): Promise<Map<number, Override>> {
+  const map = new Map<number, Override>();
   for (const batch of chunk(eventIds, 1000)) {
-    const rows = await db.select({ eventId: reviews.eventId, data: reviews.data, action: reviews.action, id: reviews.id }).from(reviews)
-      .where(and(inArray(reviews.eventId, batch), inArray(reviews.action, ["classify", "reopen"]))).orderBy(reviews.id);
+    const rows = await db.select({ eventId: reviews.eventId, data: reviews.data, action: reviews.action }).from(reviews)
+      .where(and(inArray(reviews.eventId, batch), inArray(reviews.action, OVERRIDE_ACTIONS))).orderBy(reviews.id);
     for (const row of rows) {
       if (!row.eventId) continue;
       if (row.action === "reopen") {
         map.delete(row.eventId);
         continue;
       }
-      const type = (row.data as { eventType?: string }).eventType;
-      if (type) map.set(row.eventId, type);
+      const data = row.data as Override;
+      const next: Override = {};
+      if (data.eventType) next.eventType = data.eventType;
+      if (data.hsn) next.hsn = data.hsn;
+      if (data.placeOfSupply) next.placeOfSupply = data.placeOfSupply;
+      map.set(row.eventId, next);
     }
   }
   return map;
 }
 
-export function toSummaryEvent(e: MarketplaceEvent, override?: string): SummaryEvent {
+/** The latest classification a reviewer gave each event, unless the event was reopened after it. */
+export async function classifications(eventIds: number[]): Promise<Map<number, string>> {
+  const out = new Map<number, string>();
+  for (const [id, o] of await overridesFor(eventIds)) if (o.eventType) out.set(id, o.eventType);
+  return out;
+}
+
+/**
+ * An event as the summaries see it, with a reviewer's override applied. A corrected customer State changes whether the
+ * tax is IGST or CGST + SGST; the amount of tax stays what the report says.
+ */
+export function toSummaryEvent(e: MarketplaceEvent, override?: Override): SummaryEvent {
   const tax = textToPaise(e.sourceTax ?? e.computedTax ?? "0");
+  const cess = textToPaise(e.cess);
+  let kind = ((e.supplyType as SummaryEvent["supplyType"]) ?? "unknown") as SummaryEvent["supplyType"];
+  let igst = textToPaise(e.igst);
+  let cgst = textToPaise(e.cgst);
+  let sgst = textToPaise(e.sgst);
+  const pos = override?.placeOfSupply ?? e.placeOfSupply;
+  if (override?.placeOfSupply && override.placeOfSupply !== e.placeOfSupply) {
+    kind = supplyType(e.sellerGstin, pos);
+    const split = kind === "unknown" ? { igst: 0, cgst: 0, sgst: 0 } : splitTax(tax - cess, kind);
+    igst = split.igst;
+    cgst = split.cgst;
+    sgst = split.sgst;
+  }
   return {
     id: e.id,
-    eventType: override ?? e.eventType,
+    eventType: override?.eventType ?? e.eventType,
     sellerGstin: e.sellerGstin,
     orderId: e.orderId,
     subOrderId: e.subOrderId,
     reportPeriod: e.reportPeriod,
-    hsn: e.hsn,
+    hsn: override?.hsn ?? e.hsn,
     description: e.description,
     uqc: e.uqc,
     quantity: Number(e.quantity ?? 0),
     taxable: textToPaise(e.taxableValue),
     rateMilli: e.gstRate == null ? null : parseRate(e.gstRate),
-    igst: textToPaise(e.igst),
-    cgst: textToPaise(e.cgst),
-    sgst: textToPaise(e.sgst),
-    cess: textToPaise(e.cess),
+    igst,
+    cgst,
+    sgst,
+    cess,
     invoiceValue: textToPaise(e.invoiceValue),
-    placeOfSupply: e.placeOfSupply,
-    supplyType: (e.supplyType as SummaryEvent["supplyType"]) ?? "unknown",
+    placeOfSupply: pos,
+    supplyType: kind,
     ecoGstin: e.ecoGstin,
     documentNumber: e.documentNumber,
-    unsplitTax: e.supplyType === "unknown" ? tax : 0,
+    unsplitTax: kind === "unknown" ? tax : 0,
   };
 }
 
-/** Counted (non-duplicate) events of a period with reviewers' classifications applied. */
-export async function periodEvents(companyId: number, marketplace: string, period: string): Promise<{ rows: MarketplaceEvent[]; summary: SummaryEvent[]; overrides: Map<number, string> }> {
+/** Counted (non-duplicate) events of a period with reviewers' classifications and corrections applied. */
+export async function periodEvents(companyId: number, marketplace: string, period: string): Promise<{ rows: MarketplaceEvent[]; summary: SummaryEvent[]; overrides: Map<number, Override> }> {
   const rows = await db.select().from(events)
     .where(and(eq(events.companyId, companyId), eq(events.marketplace, marketplace), eq(events.reportPeriod, period), isNull(events.duplicateOf)))
     .orderBy(events.id);
-  const overrides = await classifications(rows.map(r => r.id));
+  const overrides = await overridesFor(rows.map(r => r.id));
   return { rows, summary: rows.map(r => toSummaryEvent(r, overrides.get(r.id))), overrides };
 }
 
@@ -287,7 +325,7 @@ export async function dataVersion(companyId: number, marketplace: string, period
       (SELECT coalesce(string_agg(id::text || ':' || status, ',' ORDER BY id), '') FROM marketplace_exceptions
         WHERE company_id = ${companyId} AND marketplace = ${marketplace} AND period = ${period} AND severity IN ('error', 'warning')) AS exceptions,
       (SELECT coalesce(max(r.id), 0) FROM marketplace_reviews r JOIN marketplace_events e ON e.id = r.event_id
-        WHERE e.company_id = ${companyId} AND e.marketplace = ${marketplace} AND e.report_period = ${period} AND r.action IN ('classify', 'reopen')) AS classified`);
+        WHERE e.company_id = ${companyId} AND e.marketplace = ${marketplace} AND e.report_period = ${period} AND r.action IN ('classify', 'correct', 'reopen')) AS classified`);
   const row = result.rows[0] as Record<string, unknown>;
   return createHash("sha256").update(JSON.stringify(row)).digest("hex").slice(0, 32);
 }

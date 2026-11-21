@@ -3,6 +3,7 @@ import { useLocation } from "wouter";
 import { ArrowRight, ShoppingBag, Zap } from "lucide-react";
 import EmptyPanel from "@/components/app/EmptyPanel";
 import { MarketplaceCard } from "@/components/ecommerce/MarketplaceCard";
+import { setPendingFiles } from "@/components/jobs/jobUi";
 import { api, type MarketplaceInfo } from "@/lib/ecommerce";
 
 /** The E-commerce page: one card per marketplace, each opening its own workspace. */
@@ -34,7 +35,17 @@ export default function EcommerceHubPage() {
       ) : (
         <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {list.map((marketplace, index) => (
-            <MarketplaceCard key={marketplace.id} marketplace={marketplace} index={index} onOpen={() => navigate(`/app/ecommerce/${marketplace.id}`)} />
+            <MarketplaceCard
+              key={marketplace.id}
+              marketplace={marketplace}
+              index={index}
+              onOpen={() => navigate(`/app/ecommerce/${marketplace.id}`)}
+              onFiles={files => {
+                // The workspace picks these up and imports them as it opens.
+                setPendingFiles(marketplace.id, files);
+                navigate(`/app/ecommerce/${marketplace.id}`);
+              }}
+            />
           ))}
         </div>
       )}

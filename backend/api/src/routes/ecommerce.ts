@@ -10,10 +10,10 @@ import { auditLogsTable, companiesTable, db, rolePermissionsTable, usersTable } 
 import { auditAction, requirePermission } from "../middleware/authz";
 import { resolveBooksCompanyId } from "../services/companyScope";
 import { MAX_UPLOAD_BYTES } from "../lib/uploadLimit";
-import { stateName } from "../services/gstStates";
+import { GST_STATES, stateName } from "../services/gstStates";
 import { buildPdf, buildWorkbook, type ExportEvent, type ReportData } from "../services/marketplace/exports";
-import { financialYearOf, isValidGstin, parseRate, type RoundingMode } from "../services/marketplace/gstEngine";
-import { textToPaise } from "../services/marketplace/money";
+import { financialYearOf, hsnStatus, isValidGstin, type RoundingMode } from "../services/marketplace/gstEngine";
+import { paiseToText, textToPaise } from "../services/marketplace/money";
 import { MARKETPLACES, adapterFor, marketplaceInfo, type MarketplaceInfo } from "../services/marketplace/registry";
 import { STAGES, createImportJob, deleteImport, markStaleJob, runImport, stageLabel } from "../services/marketplace/runner";
 import {
@@ -29,6 +29,7 @@ import {
   files,
   holdIssues,
   jobs,
+  overridesFor,
   periodEvents,
   periodsOf,
   recentJobs,
@@ -38,6 +39,7 @@ import {
   reportState,
   reports,
   reviews,
+  toSummaryEvent,
 } from "../services/marketplace/store";
 import { compareWithCa, gstr1Working, hsnSummary, overview, stateSummary } from "../services/marketplace/summaries";
 import type { CanonicalField, EventType } from "../services/marketplace/types";
@@ -144,8 +146,13 @@ function publicJob(job: typeof jobs.$inferSelect) {
   };
 }
 
-/** The type a reviewer gave the event, else the one read from the file. */
-const effectiveType = sql<string>`coalesce((SELECT r.data->>'eventType' FROM marketplace_reviews r WHERE r.event_id = e.id AND r.action IN ('classify', 'reopen') ORDER BY r.id DESC LIMIT 1), e.event_type)`;
+/** A reviewer's value for a field (from the latest classify/correct decision, cleared by a reopen), else the file's. */
+function effective(field: "eventType" | "hsn" | "placeOfSupply", column: SQL) {
+  return sql<string>`coalesce((SELECT r.data->>${field} FROM marketplace_reviews r WHERE r.event_id = e.id AND r.action IN ('classify', 'correct', 'reopen') ORDER BY r.id DESC LIMIT 1), ${column})`;
+}
+const effectiveType = effective("eventType", sql`e.event_type`);
+const effectiveHsn = effective("hsn", sql`e.hsn`);
+const effectivePos = effective("placeOfSupply", sql`e.place_of_supply`);
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Marketplaces and workspace
@@ -370,8 +377,8 @@ router.delete("/ecommerce/:marketplace/imports/:jobId", requirePermission("uploa
 const SORTS: Record<string, SQL> = {
   date: sql`coalesce(e.return_date, e.order_date)`,
   taxable: sql`e.taxable_value`,
-  hsn: sql`e.hsn`,
-  state: sql`e.place_of_supply`,
+  hsn: effectiveHsn,
+  state: effectivePos,
   status: sql`e.recon_status`,
   id: sql`e.id`,
 };
@@ -393,13 +400,13 @@ function transactionFilters(req: Request, s: Scope, period: string): SQL[] {
   if (type === "reduction") where.push(sql`${effectiveType} IN ('return', 'cancellation', 'credit_note')`);
   else if (EVENT_TYPES.includes(type as EventType)) where.push(sql`${effectiveType} = ${type}`);
   const hsn = text(req.query.hsn);
-  if (hsn) where.push(sql`e.hsn = ${hsn}`);
+  if (hsn) where.push(sql`${effectiveHsn} = ${hsn}`);
   const state = text(req.query.state);
-  if (state) where.push(sql`e.place_of_supply = ${state}`);
+  if (state) where.push(sql`${effectivePos} = ${state}`);
   const search = text(req.query.search).slice(0, 80);
   if (search) {
     const like = `%${search.replace(/[\\%_]/g, m => `\\${m}`)}%`;
-    where.push(sql`(e.order_id ILIKE ${like} OR e.sub_order_id ILIKE ${like} OR e.document_number ILIKE ${like} OR e.hsn ILIKE ${like})`);
+    where.push(sql`(e.order_id ILIKE ${like} OR e.sub_order_id ILIKE ${like} OR e.document_number ILIKE ${like} OR ${effectiveHsn} ILIKE ${like})`);
   }
   return where;
 }
@@ -421,9 +428,9 @@ router.get("/ecommerce/:marketplace/transactions", requirePermission("uploads.re
   const [{ n }] = (await db.execute(sql`SELECT count(*)::int AS n FROM marketplace_events e WHERE ${where}`)).rows as Array<{ n: number }>;
   const rows = await db.execute(sql`
     SELECT e.id, ${effectiveType} AS "eventType", e.event_type AS "sourceType", e.order_id AS "orderId", e.sub_order_id AS "subOrderId",
-      e.order_date AS "orderDate", e.return_date AS "returnDate", e.document_number AS "documentNumber", e.hsn, e.description,
+      e.order_date AS "orderDate", e.return_date AS "returnDate", e.document_number AS "documentNumber", ${effectiveHsn} AS hsn, e.description,
       e.quantity, e.taxable_value AS taxable, e.gst_rate AS rate, e.igst, e.cgst, e.sgst, e.cess, e.invoice_value AS "invoiceValue",
-      e.source_tax AS "sourceTax", e.computed_tax AS "computedTax", e.place_of_supply AS "placeOfSupply", e.supply_type AS "supplyType",
+      e.source_tax AS "sourceTax", e.computed_tax AS "computedTax", ${effectivePos} AS "placeOfSupply", e.supply_type AS "supplyType",
       e.recon_status AS status, e.duplicate_of AS "duplicateOf", e.related_event_id AS "relatedEventId", e.source_row AS "sourceRow",
       f.file_name AS "fileName", f.sheet_name AS "sheetName",
       (SELECT count(*)::int FROM marketplace_exceptions x WHERE x.event_id = e.id AND x.status = 'open' AND x.severity IN ('error', 'warning')) AS "openExceptions"
@@ -457,10 +464,35 @@ router.get("/ecommerce/:marketplace/transactions/:id", requirePermission("upload
   const linked = await db.select({ id: events.id, eventType: events.eventType, reportPeriod: events.reportPeriod, taxable: events.taxableValue, quantity: events.quantity, orderDate: events.orderDate, returnDate: events.returnDate, duplicateOf: events.duplicateOf, relatedEventId: events.relatedEventId })
     .from(events).where(and(eq(events.companyId, s.companyId), eq(events.marketplace, s.info.id), sql`(${events.id} IN (${sql.join([...relatedIds, -1].map(v => sql`${v}`), sql`, `)}) OR ${events.relatedEventId} = ${event.id} OR ${events.duplicateOf} = ${event.id})`))
     .orderBy(events.id);
-  const overrides = await classifications([event.id]);
+  const override = (await overridesFor([event.id])).get(event.id) ?? {};
+  const shown = toSummaryEvent(event, override);
+  // Pick-lists for the correction editor: every State, and the HSN codes already used this month (most used first).
+  const hsnRows = await db.execute(sql`SELECT hsn, count(*)::int AS n FROM marketplace_events
+    WHERE company_id = ${s.companyId} AND marketplace = ${s.info.id} AND report_period = ${event.reportPeriod} AND hsn IS NOT NULL AND hsn <> ''
+    GROUP BY hsn ORDER BY n DESC, hsn LIMIT 12`);
+  const paise = (p: number) => paiseToText(p);
   res.json({
     ok: true,
-    event: { ...event, eventType: overrides.get(event.id) ?? event.eventType, sourceType: event.eventType, taxable: event.taxableValue, rate: event.gstRate, status: event.reconStatus, posName: event.placeOfSupply ? stateName(event.placeOfSupply) : null },
+    event: {
+      ...event,
+      eventType: shown.eventType,
+      sourceType: event.eventType,
+      hsn: shown.hsn,
+      placeOfSupply: shown.placeOfSupply,
+      supplyType: shown.supplyType,
+      igst: paise(shown.igst),
+      cgst: paise(shown.cgst),
+      sgst: paise(shown.sgst),
+      taxable: event.taxableValue,
+      rate: event.gstRate,
+      status: event.reconStatus,
+      posName: shown.placeOfSupply ? stateName(shown.placeOfSupply) : null,
+      corrected: { hsn: override.hsn ? event.hsn : undefined, placeOfSupply: override.placeOfSupply ? event.placeOfSupply : undefined },
+    },
+    options: {
+      states: Object.entries(GST_STATES).filter(([code]) => /^\d{2}$/.test(code) && Number(code) <= 38).map(([code, name]) => ({ code, name })),
+      hsns: (hsnRows.rows as Array<{ hsn: string; n: number }>).filter(r => hsnStatus(r.hsn) === "valid").map(r => r.hsn),
+    },
     file: file ?? null,
     exceptions: exceptionRows,
     reviews: reviewRows.map(r => ({ id: r.id, action: r.action, note: r.note, data: r.data, actor: r.actorEmail, at: r.createdAt })),
@@ -523,6 +555,29 @@ router.post("/ecommerce/:marketplace/transactions/:id/review", canReview, async 
     }
     await db.insert(reviews).values({ ...actor, action: "confirm", note, data: { closed: open.map(x => x.id) } });
     if (open.length > 0) await db.update(exceptions).set({ status: "resolved", note: note ?? "Confirmed by reviewer.", resolvedBy: req.auth!.userId, resolvedAt: now }).where(inArray(exceptions.id, open.map(x => x.id)));
+  } else if (action === "correct") {
+    // Fills in what the file had missing or wrong. Stored as a decision; the imported row is left exactly as it was.
+    const hsn = text(body.hsn).replace(/\s+/g, "");
+    const pos = text(body.placeOfSupply);
+    if (!hsn && !pos) {
+      res.status(400).json({ ok: false, message: "Choose the HSN code or the customer's State." });
+      return;
+    }
+    if (hsn && hsnStatus(hsn) !== "valid") {
+      res.status(400).json({ ok: false, message: "An HSN code has 4, 6 or 8 digits." });
+      return;
+    }
+    if (pos && (!/^\d{2}$/.test(pos) || !stateName(pos))) {
+      res.status(400).json({ ok: false, message: "Choose the State from the list." });
+      return;
+    }
+    const previous = (await overridesFor([event.id])).get(event.id) ?? {};
+    const next = { ...previous, ...(hsn ? { hsn } : {}), ...(pos ? { placeOfSupply: pos } : {}) };
+    await db.insert(reviews).values({ ...actor, action: "correct", note, data: { ...next, from: { hsn: event.hsn, placeOfSupply: event.placeOfSupply } } });
+    const fixed = [...(hsn ? ["missing_hsn", "invalid_hsn"] : []), ...(pos ? ["unknown_state"] : [])];
+    const closing = open.filter(x => fixed.includes(x.kind));
+    const words = [hsn ? `HSN ${hsn}` : "", pos ? `State ${pos} ${stateName(pos)}` : ""].filter(Boolean).join(", ");
+    if (closing.length > 0) await db.update(exceptions).set({ status: "resolved", note: note ? `Corrected to ${words}. ${note}` : `Corrected to ${words}.`, resolvedBy: req.auth!.userId, resolvedAt: now }).where(inArray(exceptions.id, closing.map(x => x.id)));
   } else if (action === "classify") {
     const type = text(body.eventType) as EventType;
     if (!EVENT_TYPES.includes(type)) {
@@ -533,7 +588,8 @@ router.post("/ecommerce/:marketplace/transactions/:id/review", canReview, async 
       res.status(400).json({ ok: false, message: "Add a note saying why the classification changes." });
       return;
     }
-    await db.insert(reviews).values({ ...actor, action: "classify", note, data: { eventType: type, from: event.eventType } });
+    const previous = (await overridesFor([event.id])).get(event.id) ?? {};
+    await db.insert(reviews).values({ ...actor, action: "classify", note, data: { ...previous, eventType: type, from: event.eventType } });
     const unclear = open.filter(x => x.kind === "unclear_classification");
     if (unclear.length > 0) await db.update(exceptions).set({ status: "resolved", note, resolvedBy: req.auth!.userId, resolvedAt: now }).where(inArray(exceptions.id, unclear.map(x => x.id)));
   } else if (action === "accept_difference") {
@@ -823,7 +879,7 @@ function csv(header: string[], rows: unknown[][]): string {
 
 async function reportData(s: Scope, period: string, rounding: RoundingMode): Promise<ReportData> {
   const all = await db.select().from(events).where(and(eq(events.companyId, s.companyId), eq(events.marketplace, s.info.id), eq(events.reportPeriod, period))).orderBy(events.id);
-  const overrides = await classifications(all.map(e => e.id));
+  const overrides = await overridesFor(all.map(e => e.id));
   const counted = all.filter(e => e.duplicateOf == null);
   const { summary } = await periodEvents(s.companyId, s.info.id, period);
   const fileRows = await db.select().from(files).where(and(eq(files.companyId, s.companyId), eq(files.marketplace, s.info.id), inArray(files.jobId, db.selectDistinct({ j: events.jobId }).from(events).where(and(eq(events.companyId, s.companyId), eq(events.marketplace, s.info.id), eq(events.reportPeriod, period)))))).orderBy(files.id);
@@ -842,28 +898,35 @@ async function reportData(s: Scope, period: string, rounding: RoundingMode): Pro
   const gstins = [...new Set(counted.map(e => e.sellerGstin).filter((g): g is string => Boolean(g)))];
   const exportEvents: ExportEvent[] = all.map(e => {
     const f = fileById.get(e.sourceFileId);
+    const o = overrides.get(e.id);
+    const v = toSummaryEvent(e, o);
+    const changed = [
+      o?.eventType ? `type ${o.eventType} (file: ${e.eventType})` : "",
+      o?.hsn ? `HSN ${o.hsn} (file: ${e.hsn || "blank"})` : "",
+      o?.placeOfSupply ? `State ${o.placeOfSupply} (file: ${e.placeOfSupply || "not recognised"})` : "",
+    ].filter(Boolean);
     return {
       id: e.id,
-      eventType: overrides.get(e.id) ?? e.eventType,
+      eventType: v.eventType,
       orderId: e.orderId,
       subOrderId: e.subOrderId,
       orderDate: e.orderDate,
       returnDate: e.returnDate,
       documentNumber: e.documentNumber,
       reportPeriod: e.reportPeriod,
-      hsn: e.hsn,
-      quantity: Number(e.quantity ?? 0),
-      taxable: textToPaise(e.taxableValue),
-      rateMilli: e.gstRate == null ? null : parseRate(e.gstRate),
-      igst: textToPaise(e.igst),
-      cgst: textToPaise(e.cgst),
-      sgst: textToPaise(e.sgst),
-      cess: textToPaise(e.cess),
-      invoiceValue: textToPaise(e.invoiceValue),
+      hsn: v.hsn,
+      quantity: v.quantity,
+      taxable: v.taxable,
+      rateMilli: v.rateMilli,
+      igst: v.igst,
+      cgst: v.cgst,
+      sgst: v.sgst,
+      cess: v.cess,
+      invoiceValue: v.invoiceValue,
       sourceTax: e.sourceTax == null ? null : textToPaise(e.sourceTax),
       computedTax: e.computedTax == null ? null : textToPaise(e.computedTax),
-      placeOfSupply: e.placeOfSupply,
-      supplyType: e.supplyType,
+      placeOfSupply: v.placeOfSupply,
+      supplyType: v.supplyType,
       ecoGstin: e.ecoGstin,
       status: e.reconStatus,
       duplicateOf: e.duplicateOf,
@@ -872,7 +935,7 @@ async function reportData(s: Scope, period: string, rounding: RoundingMode): Pro
       sheetName: f?.sheetName ?? null,
       sourceRow: e.sourceRow,
       raw: e.raw,
-      notes: [...e.notes, ...(overrides.has(e.id) ? [`Classified by reviewer as ${overrides.get(e.id)} (was ${e.eventType}).`] : [])],
+      notes: [...e.notes, ...(changed.length ? [`Changed by a reviewer: ${changed.join("; ")}.`] : [])],
     };
   });
   return {
@@ -930,10 +993,14 @@ router.get("/ecommerce/:marketplace/export", requirePermission("reports.export")
   }
   if (format === "transactions_csv") {
     const all = await db.select().from(events).where(and(eq(events.companyId, s.companyId), eq(events.marketplace, s.info.id), eq(events.reportPeriod, period))).orderBy(events.id);
-    const overrides = await classifications(all.map(e => e.id));
+    const overrides = await overridesFor(all.map(e => e.id));
     const body = csv(
-      ["Event ID", "Type", "Order", "Sub-order", "Order date", "Return date", "Document no.", "Period", "HSN", "Qty", "Rate %", "Taxable value", "IGST", "CGST", "SGST/UTGST", "Cess", "Invoice value", "Tax in report", "Tax recalculated", "Place of supply", "Supply", "Operator GSTIN", "Status", "Duplicate of", "Matched to"],
-      all.map(e => [e.id, overrides.get(e.id) ?? e.eventType, e.orderId, e.subOrderId, e.orderDate, e.returnDate, e.documentNumber, e.reportPeriod, e.hsn, e.quantity, e.gstRate, e.taxableValue, e.igst, e.cgst, e.sgst, e.cess, e.invoiceValue, e.sourceTax, e.computedTax, e.placeOfSupply, e.supplyType, e.ecoGstin, e.reconStatus, e.duplicateOf, e.relatedEventId]),
+      ["Event ID", "Type", "Order", "Sub-order", "Order date", "Return date", "Document no.", "Period", "HSN", "Qty", "Rate %", "Taxable value", "IGST", "CGST", "SGST/UTGST", "Cess", "Invoice value", "Tax in report", "Tax recalculated", "Place of supply", "Supply", "Operator GSTIN", "Status", "Duplicate of", "Matched to", "Changed by reviewer"],
+      all.map(e => {
+        const o = overrides.get(e.id);
+        const v = toSummaryEvent(e, o);
+        return [e.id, v.eventType, e.orderId, e.subOrderId, e.orderDate, e.returnDate, e.documentNumber, e.reportPeriod, v.hsn, e.quantity, e.gstRate, e.taxableValue, paiseToText(v.igst), paiseToText(v.cgst), paiseToText(v.sgst), e.cess, e.invoiceValue, e.sourceTax, e.computedTax, v.placeOfSupply, v.supplyType, e.ecoGstin, e.reconStatus, e.duplicateOf, e.relatedEventId, o ? "yes" : ""];
+      }),
     );
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", `attachment; filename="${base}-transactions.csv"`);

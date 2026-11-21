@@ -221,7 +221,8 @@ function sumText(values: Array<string | null>): string {
 }
 
 interface Detail {
-  event: TransactionRow & { raw: Record<string, string>; notes: string[]; reportPeriod: string; ecoGstin: string | null; sellerGstin: string | null; shippingTaxable: string | null; sourceStatus: string | null; reconStatus: string };
+  event: TransactionRow & { raw: Record<string, string>; notes: string[]; reportPeriod: string; ecoGstin: string | null; sellerGstin: string | null; shippingTaxable: string | null; sourceStatus: string | null; reconStatus: string; corrected: { hsn?: string | null; placeOfSupply?: string | null } };
+  options: { states: Array<{ code: string; name: string }>; hsns: string[] };
   file: { fileName: string; containerName: string | null; sheetName: string | null; reportType: string } | null;
   exceptions: ExceptionRow[];
   reviews: Array<{ id: number; action: string; note: string | null; data: Record<string, unknown>; actor: string | null; at: string }>;
@@ -238,8 +239,63 @@ const ACTION_TEXT: Record<string, string> = {
   exception_accept: "Item accepted",
   exception_reopen: "Item reopened",
   use_instead: "These figures counted instead",
+  correct: "Details corrected",
   keep_earlier: "Earlier figures kept",
 };
+
+/**
+ * The editor for what a file had missing or wrong: the HSN (pick one already used this month, or type it) and the
+ * customer's State (pick from the list). Opens by itself when the row needs it; otherwise it sits behind "Edit details".
+ */
+function FixDetails({ hsn, pos, options, needsHsn, needsState, busy, onSave }: {
+  hsn: string | null;
+  pos: string | null;
+  options: { states: Array<{ code: string; name: string }>; hsns: string[] };
+  needsHsn: boolean;
+  needsState: boolean;
+  busy: boolean;
+  onSave: (hsn: string, pos: string) => void;
+}) {
+  const needed = needsHsn || needsState;
+  const [open, setOpen] = useState(needed);
+  const [hsnValue, setHsnValue] = useState(hsn ?? "");
+  const [posValue, setPosValue] = useState(pos ?? "");
+  const hsnOk = !hsnValue || /^(\d{4}|\d{6}|\d{8})$/.test(hsnValue);
+  const changed = (hsnValue && hsnValue !== (hsn ?? "")) || (posValue && posValue !== (pos ?? ""));
+  if (!open) {
+    return <button type="button" className="text-sm font-medium text-[var(--fv-secondary)] underline-offset-2 hover:underline" onClick={() => setOpen(true)}>Edit details</button>;
+  }
+  return (
+    <section className={cn("space-y-3 rounded-xl border p-4", needed ? "border-amber-200 bg-amber-50/50" : "border-border")} aria-label="Fix details">
+      <div>
+        <h3 className="text-sm font-semibold">{needed ? "Fill in what the file is missing" : "Edit details"}</h3>
+        <p className="text-xs text-muted-foreground">Saved as your correction; the imported row stays as it was.</p>
+      </div>
+      <div className="space-y-1.5">
+        <label className="block text-xs font-medium" htmlFor="fix-hsn">HSN code{needsHsn && <span className="text-red-700"> · needed</span>}</label>
+        {options.hsns.length > 0 && (
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label="HSN codes used this month">
+            {options.hsns.map(code => (
+              <button key={code} type="button" aria-pressed={hsnValue === code} onClick={() => setHsnValue(code)} className={cn("rounded-full border px-2.5 py-0.5 font-mono text-xs transition-colors", hsnValue === code ? "border-[var(--fv-accent)] bg-orange-50 text-orange-900" : "border-border bg-card hover:border-foreground/30")}>{code}</button>
+            ))}
+          </div>
+        )}
+        <input id="fix-hsn" inputMode="numeric" maxLength={8} value={hsnValue} onChange={event => setHsnValue(event.target.value.replace(/\D/g, ""))} placeholder="Or type 4, 6 or 8 digits" className={cn("h-9 w-full rounded-lg border bg-background px-3 font-mono text-sm", hsnOk ? "border-border" : "border-red-300")} aria-invalid={!hsnOk} />
+      </div>
+      <div className="space-y-1.5">
+        <label className="block text-xs font-medium" htmlFor="fix-state">Customer's State{needsState && <span className="text-red-700"> · needed</span>}</label>
+        <select id="fix-state" value={posValue} onChange={event => setPosValue(event.target.value)} className="h-9 w-full rounded-lg border border-border bg-background px-2 text-sm">
+          <option value="">{pos ? "Keep as it is" : "Choose the State…"}</option>
+          {options.states.map(s => <option key={s.code} value={s.code}>{s.code} · {s.name}</option>)}
+        </select>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <button type="button" className="fv-button-primary h-9" disabled={busy || !changed || !hsnOk} onClick={() => onSave(hsnValue !== (hsn ?? "") ? hsnValue : "", posValue !== (pos ?? "") ? posValue : "")}>Save correction</button>
+        {!needed && <button type="button" className="fv-button-ghost h-9" onClick={() => setOpen(false)}>Cancel</button>}
+      </div>
+    </section>
+  );
+}
 
 /** The side panel for one transaction: its figures, the source row exactly as the file had it, issues and decisions. */
 export function TransactionDetail({ marketplace, id, onClose, canReview }: { marketplace: string; id: number | null; onClose: () => void; canReview: boolean }) {
@@ -268,7 +324,7 @@ export function TransactionDetail({ marketplace, id, onClose, canReview }: { mar
     }
     setNote("");
     setClassifyTo("");
-    toast({ title: action === "note" ? "Note added" : action === "reopen" ? "Reopened for review" : "Decision saved" });
+    toast({ title: action === "note" ? "Note added" : action === "reopen" ? "Reopened for review" : action === "correct" ? "Correction saved" : "Decision saved" });
     await refreshAfterChange(qc, [["ecommerce", marketplace]]);
   };
 
@@ -315,7 +371,25 @@ export function TransactionDetail({ marketplace, id, onClose, canReview }: { mar
               ))}
             </dl>
 
+            {(e.corrected?.hsn !== undefined || e.corrected?.placeOfSupply !== undefined) && (
+              <p className="text-xs text-muted-foreground" data-testid="corrected-note">
+                Corrected by a reviewer.{e.corrected.hsn !== undefined ? ` The file's HSN: ${e.corrected.hsn || "blank"}.` : ""}{e.corrected.placeOfSupply !== undefined ? ` The file's State: ${e.corrected.placeOfSupply || "not recognised"}.` : ""}
+              </p>
+            )}
             {e.notes.length > 0 && <ul className="space-y-1 text-xs text-muted-foreground">{e.notes.map(n => <li key={n}>• {n}</li>)}</ul>}
+
+            {canReview && !isDuplicate && (
+              <FixDetails
+                key={`${e.id}-${e.hsn}-${e.placeOfSupply}`}
+                hsn={e.hsn}
+                pos={e.placeOfSupply}
+                options={data.options}
+                needsHsn={open.some(x => x.kind === "missing_hsn" || x.kind === "invalid_hsn")}
+                needsState={open.some(x => x.kind === "unknown_state")}
+                busy={busy}
+                onSave={(hsn, pos) => void act("correct", { hsn: hsn || undefined, placeOfSupply: pos || undefined })}
+              />
+            )}
 
             {data.exceptions.length > 0 && (
               <section>

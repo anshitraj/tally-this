@@ -21,6 +21,19 @@ From the Meesho Supplier Panel:
 Accepted: XLSX, XLS, CSV, and ZIP files of those (no nested ZIPs, no encrypted entries). PDF reports are refused with a
 note to download Excel. Several files and several months can go in one upload.
 
+### Getting files in
+
+Drop them; nothing else is asked. Each row's month comes from the row, and the seller GSTIN from the workspace.
+
+- Anywhere on the Meesho workspace (the page shows a drop target while files are held over it), or on the drop box of
+  the first-visit screen.
+- On the Meesho card of the E-commerce page: the workspace opens and the import starts.
+- On Home: files named like Meesho's own GST reports (`tcs_sales…`, `tcs_sales_return…`, `Tax_invoice_details…`) go to
+  the Meesho workspace; anything else goes through the usual detection. In Incognito they go to the one-off job, because
+  a workspace keeps what it imports (the workspace itself refuses Incognito uploads with that reason).
+- **Upload reports** (or "Choose the month and GSTIN first") opens the same upload with the month and GSTIN to set by
+  hand.
+
 Also recognised: a combined "working" sheet with a `Sales Return` YES/NO column (as CAs often keep), and a CA's
 HSN-wise pivot (HSN, taxable, integrated, central, state tax columns), which is used only for the comparison on the
 GST & HSN tab.
@@ -70,6 +83,12 @@ taxable-value column can be found, the file is reported as not a Meesho report.
 Only items that need a person are shown: missing or invalid HSN, unknown state or rate, other GSTIN, tax or invoice
 differences, unclear sale/return, returns without their sale, returns above the sale, rows with different figures.
 Information-only notes (earlier-month returns, duplicates, extra columns) never block.
+
+A missing or wrong HSN and an unrecognised customer State are **fixed in place**: **Fix** opens the transaction with an
+editor (HSN codes already used that month as one-tap choices, or typed; the State from a list). The correction is a
+decision record: the imported row keeps the file's value, the summaries and downloads use the correction, a changed
+State moves the tax between IGST and CGST + SGST without changing its amount, and the Excel notes say what changed.
+Other items are confirmed, accepted with a note (one note can cover every item of a kind), reclassified or reopened.
 
 Month status:
 

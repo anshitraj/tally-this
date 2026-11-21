@@ -114,7 +114,9 @@ export function ExceptionsPanel({ marketplace, period, canReview }: { marketplac
                   {item.note && item.status !== "open" && <p className="mt-1 text-xs">Note: {item.note}</p>}
                 </div>
                 <div className="flex shrink-0 flex-wrap gap-2">
-                  {item.eventId && <button type="button" className="fv-button-ghost h-8 px-3 text-xs" onClick={() => setEventId(item.eventId)}>Open</button>}
+                  {item.eventId && (canReview && item.status === "open" && ["missing_hsn", "invalid_hsn", "unknown_state"].includes(item.kind)
+                    ? <button type="button" className="fv-button-primary h-8 px-3 text-xs" onClick={() => setEventId(item.eventId)}>Fix</button>
+                    : <button type="button" className="fv-button-ghost h-8 px-3 text-xs" onClick={() => setEventId(item.eventId)}>Open</button>)}
                   {canReview && item.status === "open" && item.severity !== "info" && <button type="button" className="fv-button-secondary h-8 px-3 text-xs" onClick={() => setActing({ item, action: "accept" })}>Accept</button>}
                   {canReview && item.status === "open" && <button type="button" className="fv-button-ghost h-8 px-3 text-xs" onClick={() => setActing({ item, action: "resolve" })}>Resolve</button>}
                   {canReview && item.status !== "open" && <button type="button" className="fv-button-ghost h-8 px-3 text-xs" onClick={() => setActing({ item, action: "reopen" })}>Reopen</button>}

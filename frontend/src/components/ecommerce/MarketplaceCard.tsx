@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import { ArrowRight, FileSpreadsheet } from "lucide-react";
+import { ArrowRight, FileSpreadsheet, UploadCloud } from "lucide-react";
 import { BrandLogo } from "@/components/app/BrandLogo";
 import type { MarketplaceInfo } from "@/lib/ecommerce";
 import { cn } from "@/lib/utils";
@@ -21,22 +22,39 @@ const CAPABILITY_TEXT: Record<string, string> = {
  * One marketplace on the E-commerce page. It says how data arrives (a report you import, never a live connection),
  * what the import covers, and the one thing to do next. A marketplace that cannot import yet says so and offers nothing.
  */
-export function MarketplaceCard({ marketplace, index, onOpen }: { marketplace: MarketplaceInfo; index: number; onOpen: () => void }) {
+export function MarketplaceCard({ marketplace, index, onOpen, onFiles }: { marketplace: MarketplaceInfo; index: number; onOpen: () => void; onFiles?: (files: File[]) => void }) {
   const reduce = useReducedMotion();
   const available = marketplace.status === "available";
   const usage = marketplace.usage;
+  const [over, setOver] = useState(false);
+  const takesFiles = available && Boolean(onFiles);
   return (
     <motion.article
       initial={reduce ? false : { opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.22, delay: reduce ? 0 : index * 0.05, ease: "easeOut" }}
+      onDragOver={takesFiles ? event => { if (Array.from(event.dataTransfer.types).includes("Files")) { event.preventDefault(); setOver(true); } } : undefined}
+      onDragLeave={takesFiles ? event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOver(false); } : undefined}
+      onDrop={takesFiles ? event => {
+        event.preventDefault();
+        setOver(false);
+        const files = Array.from(event.dataTransfer.files);
+        if (files.length > 0) onFiles!(files);
+      } : undefined}
       className={cn(
         "group relative flex h-full flex-col rounded-2xl border bg-card p-5 transition-[box-shadow,border-color,transform] duration-200",
         available ? "border-border hover:-translate-y-0.5 hover:border-foreground/20 hover:shadow-[var(--fv-shadow-card)] motion-reduce:hover:translate-y-0" : "border-dashed border-border/80 bg-card/60",
+        over && "border-[var(--fv-accent)] bg-orange-50/60 ring-2 ring-[var(--fv-accent)]/30",
       )}
       aria-label={marketplace.name}
       data-testid={`marketplace-${marketplace.id}`}
     >
+      {over && (
+        <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center rounded-2xl bg-orange-50/90 text-center">
+          <UploadCloud className="h-8 w-8 text-[var(--fv-accent)]" aria-hidden="true" />
+          <p className="mt-2 text-sm font-semibold text-orange-950">Drop to import {marketplace.name} reports</p>
+        </div>
+      )}
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
           <span className={cn("flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border bg-white", !available && "opacity-80")}>
@@ -66,6 +84,7 @@ export function MarketplaceCard({ marketplace, index, onOpen }: { marketplace: M
       )}
 
       <div className="mt-auto pt-5">
+        {takesFiles && !usage && <p className="mb-3 text-xs text-muted-foreground">Or drop the report files on this card.</p>}
         {usage && (
           <p className="mb-3 text-xs text-muted-foreground">
             {usage.transactions.toLocaleString("en-IN")} transactions · {usage.periods} {usage.periods === 1 ? "month" : "months"} imported

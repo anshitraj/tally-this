@@ -5,6 +5,7 @@
 import { getAuthToken } from "@/lib/auth";
 import { getActiveClient } from "@/lib/activeClient";
 import { readJson } from "@/lib/api";
+import { isPrivacyOn } from "@/lib/privacy";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -204,6 +205,8 @@ export function uploadReports(
     const form = new FormData();
     for (const file of files) form.append("files", file);
     for (const [key, value] of Object.entries(fields)) if (value) form.append(key, value);
+    // The server refuses this in Incognito with a plain reason: a workspace keeps what it imports.
+    if (isPrivacyOn()) form.append("privacy", "1");
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `${BASE}/api/ecommerce/${encodeURIComponent(marketplace)}/imports`);
     const token = getAuthToken();

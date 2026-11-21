@@ -26,6 +26,8 @@ import {
   useClients,
 } from "@/components/jobs/jobUi";
 import { getUser } from "@/lib/auth";
+import { isPrivacyOn } from "@/lib/privacy";
+import { MEESHO_REPORT_NAME } from "@/components/ecommerce/useFileDrop";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -145,6 +147,13 @@ export default function OverviewPage() {
     .slice(0, 6);
 
   const onDrop = async (files: File[]) => {
+    // Meesho's own GST reports (tcs_sales, tcs_sales_return, Tax_invoice_details) go to the Meesho workspace.
+    // Not in Incognito: a workspace keeps what it imports, so those files go to the one-off job, which saves nothing.
+    if (!isPrivacyOn() && files.length > 0 && files.every(file => MEESHO_REPORT_NAME.test(file.name))) {
+      setPendingFiles("meesho", files);
+      navigate("/app/ecommerce/meesho");
+      return;
+    }
     setBusy(true);
     setNotice("");
     const response = await postFiles<DetectResponse>("/api/jobs/detect", {
